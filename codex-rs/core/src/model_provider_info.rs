@@ -37,6 +37,9 @@ pub enum WireApi {
     /// Regular Chat Completions compatible with `/v1/chat/completions`.
     #[default]
     Chat,
+
+    /// Anthropic Messages API at `/v1/messages`.
+    Anthropic,
 }
 
 /// Serializable representation of a provider definition.
@@ -119,7 +122,17 @@ impl ModelProviderInfo {
         let mut builder = client.post(url);
 
         if let Some(auth) = effective_auth.as_ref() {
-            builder = builder.bearer_auth(auth.get_token().await?);
+            match self.wire_api {
+                WireApi::Anthropic => {
+                    // Anthropic uses x-api-key header instead of Authorization
+                    let token = auth.get_token().await?;
+                    builder = builder.header("x-api-key", token);
+                }
+                _ => {
+                    // OpenAI and others use Bearer token
+                    builder = builder.bearer_auth(auth.get_token().await?);
+                }
+            }
         }
 
         Ok(self.apply_http_headers(builder))
@@ -159,6 +172,7 @@ impl ModelProviderInfo {
         match self.wire_api {
             WireApi::Responses => format!("{base_url}/responses{query_string}"),
             WireApi::Chat => format!("{base_url}/chat/completions{query_string}"),
+            WireApi::Anthropic => format!("{base_url}/v1/messages{query_string}"),
         }
     }
 
@@ -297,6 +311,32 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
                 stream_max_retries: None,
                 stream_idle_timeout_ms: None,
                 requires_openai_auth: true,
+            },
+        ),
+        (
+            "anthropic",
+            P {
+                name: "Anthropic".into(),
+                base_url: std::env::var("ANTHROPIC_BASE_URL")
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+                    .or_else(|| Some("https://api.anthropic.com".to_string())),
+                env_key: Some("ANTHROPIC_API_KEY".to_string()),
+                env_key_instructions: Some(
+                    "Get your API key from https://console.anthropic.com/settings/keys".to_string(),
+                ),
+                wire_api: WireApi::Anthropic,
+                query_params: None,
+                http_headers: Some(
+                    [("anthropic-version".to_string(), "2023-06-01".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                env_http_headers: None,
+                request_max_retries: None,
+                stream_max_retries: None,
+                stream_idle_timeout_ms: None,
+                requires_openai_auth: false,
             },
         ),
         (BUILT_IN_OSS_MODEL_PROVIDER_ID, create_oss_provider()),
