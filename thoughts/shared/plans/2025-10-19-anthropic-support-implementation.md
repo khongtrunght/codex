@@ -198,9 +198,9 @@ if let Some(api_key) = &effective_auth.api_key {
 - [x] Pattern match exhaustiveness check passes
 
 #### Manual Verification:
-- [ ] Provider appears in available providers list
-- [ ] Configuration loads correctly from TOML
-- [ ] API key loads from environment variable
+- [x] Provider appears in available providers list
+- [x] Configuration loads correctly from TOML
+- [x] API key loads from environment variable
 
 ---
 
@@ -265,9 +265,9 @@ mod anthropic_messages;
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Unit tests for request conversion pass
-- [ ] Unit tests for SSE parsing pass
-- [ ] Integration test with mock Anthropic server passes
+- [x] Unit tests for request conversion pass
+- [x] Unit tests for SSE parsing pass
+- [x] Integration test with mock Anthropic server passes
 
 #### Manual Verification:
 - [ ] Basic prompt works with Claude model
