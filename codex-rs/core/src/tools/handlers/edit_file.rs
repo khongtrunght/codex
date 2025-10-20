@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::fs;
@@ -36,6 +34,7 @@ impl ToolHandler for EditFileHandler {
             payload,
             session,
             call_id,
+            turn,
             ..
         } = invocation;
 
@@ -60,7 +59,8 @@ impl ToolHandler for EditFileHandler {
             new_text,
         } = args;
 
-        let path = PathBuf::from(&file_path);
+        // Resolve relative paths against cwd
+        let path = turn.resolve_path(Some(file_path.clone()));
 
         // Emit FileEditBeginEvent
         {
@@ -101,12 +101,6 @@ impl ToolHandler for EditFileHandler {
 
         // Execute the actual file edit
         let result = async {
-            if !path.is_absolute() {
-                return Err(FunctionCallError::RespondToModel(
-                    "file_path must be an absolute path".to_string(),
-                ));
-            }
-
             // Re-read the file (in case it changed)
             let content = fs::read_to_string(&path).await.map_err(|err| {
                 FunctionCallError::RespondToModel(format!("failed to read file: {err}"))

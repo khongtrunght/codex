@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::fs;
@@ -20,6 +18,7 @@ struct WriteFileArgs {
     /// Absolute path to the file that will be written.
     file_path: String,
     /// Content to write to the file.
+    #[serde(alias = "file_content")]
     content: String,
 }
 
@@ -34,6 +33,7 @@ impl ToolHandler for WriteFileHandler {
             payload,
             session,
             call_id,
+            turn,
             ..
         } = invocation;
 
@@ -58,6 +58,9 @@ impl ToolHandler for WriteFileHandler {
             content: file_content,
         } = args;
 
+        // Resolve relative paths against cwd
+        let path = turn.resolve_path(Some(file_path.clone()));
+
         // Emit FileEditBeginEvent
         {
             use codex_protocol::protocol::Event;
@@ -68,7 +71,7 @@ impl ToolHandler for WriteFileHandler {
 
             let mut changes = HashMap::new();
             changes.insert(
-                PathBuf::from(&file_path),
+                path.clone(),
                 FileChange::Add {
                     content: file_content.clone(),
                 },
@@ -87,13 +90,6 @@ impl ToolHandler for WriteFileHandler {
 
         // Execute the actual file write
         let result = async {
-            let path = PathBuf::from(&file_path);
-            if !path.is_absolute() {
-                return Err(FunctionCallError::RespondToModel(
-                    "file_path must be an absolute path".to_string(),
-                ));
-            }
-
             // Create parent directories if they don't exist
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).await.map_err(|err| {

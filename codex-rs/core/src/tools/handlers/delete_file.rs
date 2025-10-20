@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::fs;
@@ -31,6 +29,7 @@ impl ToolHandler for DeleteFileHandler {
             payload,
             session,
             call_id,
+            turn,
             ..
         } = invocation;
 
@@ -50,7 +49,8 @@ impl ToolHandler for DeleteFileHandler {
         })?;
 
         let DeleteFileArgs { file_path } = args;
-        let path = PathBuf::from(&file_path);
+        // Resolve relative paths against cwd
+        let path = turn.resolve_path(Some(file_path.clone()));
 
         // Read file content before deletion for the begin event
         let file_content = fs::read_to_string(&path).await.unwrap_or_default();
@@ -84,12 +84,6 @@ impl ToolHandler for DeleteFileHandler {
 
         // Execute the actual file deletion
         let result = async {
-            if !path.is_absolute() {
-                return Err(FunctionCallError::RespondToModel(
-                    "file_path must be an absolute path".to_string(),
-                ));
-            }
-
             // Check if the file exists
             if !path.exists() {
                 return Err(FunctionCallError::RespondToModel(format!(
