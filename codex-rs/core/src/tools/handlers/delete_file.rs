@@ -27,7 +27,12 @@ impl ToolHandler for DeleteFileHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, .. } = invocation;
+        let ToolInvocation {
+            payload,
+            session,
+            call_id,
+            ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -45,40 +50,99 @@ impl ToolHandler for DeleteFileHandler {
         })?;
 
         let DeleteFileArgs { file_path } = args;
-
         let path = PathBuf::from(&file_path);
-        if !path.is_absolute() {
-            return Err(FunctionCallError::RespondToModel(
-                "file_path must be an absolute path".to_string(),
-            ));
+
+        // Read file content before deletion for the begin event
+        let file_content = fs::read_to_string(&path).await.unwrap_or_default();
+
+        // Emit FileEditBeginEvent
+        {
+            use codex_protocol::protocol::Event;
+            use codex_protocol::protocol::EventMsg;
+            use codex_protocol::protocol::FileChange;
+            use codex_protocol::protocol::FileEditBeginEvent;
+            use std::collections::HashMap;
+
+            let mut changes = HashMap::new();
+            changes.insert(
+                path.clone(),
+                FileChange::Delete {
+                    content: file_content,
+                },
+            );
+
+            let begin_event = Event {
+                id: call_id.clone(),
+                msg: EventMsg::FileEditBegin(FileEditBeginEvent {
+                    call_id: call_id.clone(),
+                    auto_approved: true,
+                    changes,
+                }),
+            };
+            session.send_event(begin_event).await;
         }
 
-        // Check if the file exists
-        if !path.exists() {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "file does not exist: {file_path}"
-            )));
+        // Execute the actual file deletion
+        let result = async {
+            if !path.is_absolute() {
+                return Err(FunctionCallError::RespondToModel(
+                    "file_path must be an absolute path".to_string(),
+                ));
+            }
+
+            // Check if the file exists
+            if !path.exists() {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "file does not exist: {file_path}"
+                )));
+            }
+
+            // Check if it's a file (not a directory)
+            let metadata = fs::metadata(&path).await.map_err(|err| {
+                FunctionCallError::RespondToModel(format!("failed to get file metadata: {err}"))
+            })?;
+
+            if !metadata.is_file() {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "path is not a file: {file_path}"
+                )));
+            }
+
+            // Delete the file
+            fs::remove_file(&path).await.map_err(|err| {
+                FunctionCallError::RespondToModel(format!("failed to delete file: {err}"))
+            })?;
+
+            Ok(ToolOutput::Function {
+                content: format!("Successfully deleted {file_path}"),
+                success: Some(true),
+            })
+        }
+        .await;
+
+        // Emit FileEditEndEvent
+        {
+            use codex_protocol::protocol::Event;
+            use codex_protocol::protocol::EventMsg;
+            use codex_protocol::protocol::FileEditEndEvent;
+
+            let (success, stderr) = match &result {
+                Ok(_) => (true, String::new()),
+                Err(FunctionCallError::RespondToModel(msg)) => (false, msg.clone()),
+                Err(e) => (false, format!("{e:?}")),
+            };
+
+            let end_event = Event {
+                id: call_id.clone(),
+                msg: EventMsg::FileEditEnd(FileEditEndEvent {
+                    call_id,
+                    success,
+                    stderr,
+                }),
+            };
+            session.send_event(end_event).await;
         }
 
-        // Check if it's a file (not a directory)
-        let metadata = fs::metadata(&path).await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to get file metadata: {err}"))
-        })?;
-
-        if !metadata.is_file() {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "path is not a file: {file_path}"
-            )));
-        }
-
-        // Delete the file
-        fs::remove_file(&path).await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to delete file: {err}"))
-        })?;
-
-        Ok(ToolOutput::Function {
-            content: format!("Successfully deleted {file_path}"),
-            success: Some(true),
-        })
+        result
     }
 }

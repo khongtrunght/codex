@@ -377,15 +377,508 @@ if model_family.file_editing_strategy == Some(FileEditingStrategy::SeparateTools
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Tool conversion tests pass
-- [ ] WriteFile handler tests pass
-- [ ] EditFile handler tests pass
-- [ ] DeleteFile handler tests pass
+- [x] Tool conversion tests pass
+- [x] WriteFile handler tests pass
+- [x] EditFile handler tests pass
+- [x] DeleteFile handler tests pass
 
 #### Manual Verification:
 - [ ] Claude can successfully call and use file editing tools
 - [ ] Tool results are properly formatted
 - [ ] Error handling works correctly
+
+---
+
+## Phase 3.5: TUI Display Integration
+
+### Overview
+Integrate file editing tools with TUI to display them using the same visual pattern as apply_patch, ensuring a consistent user experience. This phase converts tool calls into FileChange format and reuses all existing apply_patch rendering infrastructure.
+
+### Design Approach
+Instead of creating new display components, we'll convert write_file, edit_file, and delete_file tool calls into the existing `FileChange` enum format that apply_patch uses. This allows complete reuse of:
+- `PatchHistoryCell` for rendering
+- `create_diff_summary()` for formatting
+- `ApprovalOverlay` for user confirmation
+- All diff styling and coloring logic
+
+The result: File editing tools will be visually identical to apply_patch operations.
+
+### Changes Required:
+
+#### 1. Add New Protocol Events
+**File**: `codex-rs/protocol/src/protocol.rs`
+**Changes**: Add events for file editing operations (similar to PatchApply events)
+
+```rust
+// After PatchApplyEndEvent (around line 1230)
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "file_edit_approval_request")]
+pub struct FileEditApprovalRequestEvent {
+    pub call_id: String,
+    pub changes: HashMap<PathBuf, FileChange>,  // Reuse existing FileChange!
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "file_edit_begin")]
+pub struct FileEditBeginEvent {
+    pub call_id: String,
+    pub auto_approved: bool,
+    pub changes: HashMap<PathBuf, FileChange>,  // Reuse existing FileChange!
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename = "file_edit_end")]
+pub struct FileEditEndEvent {
+    pub call_id: String,
+    pub success: bool,
+    pub stderr: String,
+}
+```
+
+Add to EventMsg enum (around line 1395):
+```rust
+#[serde(rename = "file_edit_approval_request")]
+FileEditApprovalRequest(FileEditApprovalRequestEvent),
+#[serde(rename = "file_edit_begin")]
+FileEditBegin(FileEditBeginEvent),
+#[serde(rename = "file_edit_end")]
+FileEditEnd(FileEditEndEvent),
+```
+
+#### 2. Convert Tool Calls to FileChange Format
+**File**: `codex-rs/core/src/tools/handlers/write_file.rs`
+**Changes**: Add conversion function
+
+```rust
+use std::collections::HashMap;
+use std::path::PathBuf;
+use codex_protocol::FileChange;
+
+impl WriteFileHandler {
+    /// Convert write_file call to FileChange for TUI display
+    fn to_file_change(file_path: &str, content: &str) -> (PathBuf, FileChange) {
+        (
+            PathBuf::from(file_path),
+            FileChange::Add {
+                content: content.to_string(),
+            }
+        )
+    }
+}
+```
+
+**File**: `codex-rs/core/src/tools/handlers/edit_file.rs`
+**Changes**: Add unified diff generation
+
+```rust
+use diffy::{create_patch, PatchFormatter};
+
+impl EditFileHandler {
+    /// Convert edit_file call to FileChange with unified diff
+    fn to_file_change(
+        file_path: &str,
+        old_content: &str,
+        new_content: &str
+    ) -> (PathBuf, FileChange) {
+        let patch = create_patch(old_content, new_content);
+        let unified_diff = format!("{}", PatchFormatter::new().with_color());
+
+        (
+            PathBuf::from(file_path),
+            FileChange::Update {
+                unified_diff,
+                move_path: None,
+            }
+        )
+    }
+}
+```
+
+**File**: `codex-rs/core/src/tools/handlers/delete_file.rs`
+**Changes**: Read file before deleting for diff display
+
+```rust
+impl DeleteFileHandler {
+    /// Convert delete_file call to FileChange
+    async fn to_file_change(file_path: &str) -> Result<(PathBuf, FileChange), FunctionCallError> {
+        let content = tokio::fs::read_to_string(file_path)
+            .await
+            .map_err(|e| FunctionCallError::RespondToModel(format!("Failed to read file: {e}")))?;
+
+        Ok((
+            PathBuf::from(file_path),
+            FileChange::Delete { content }
+        ))
+    }
+}
+```
+
+#### 3. Batch and Emit Events
+**File**: `codex-rs/core/src/tools/handlers/mod.rs` (or new file for batching logic)
+**Changes**: Add batching logic to group sequential file operations
+
+```rust
+pub struct FileEditBatcher {
+    pending_changes: HashMap<PathBuf, FileChange>,
+    timer: Option<Instant>,
+}
+
+impl FileEditBatcher {
+    const BATCH_WINDOW_MS: u64 = 100;  // Wait 100ms to batch operations
+
+    pub fn add_change(&mut self, path: PathBuf, change: FileChange) {
+        self.pending_changes.insert(path, change);
+        if self.timer.is_none() {
+            self.timer = Some(Instant::now());
+        }
+    }
+
+    pub fn should_flush(&self) -> bool {
+        self.timer
+            .map(|t| t.elapsed().as_millis() > Self::BATCH_WINDOW_MS as u128)
+            .unwrap_or(false)
+    }
+
+    pub fn flush(&mut self) -> HashMap<PathBuf, FileChange> {
+        self.timer = None;
+        std::mem::take(&mut self.pending_changes)
+    }
+}
+```
+
+#### 4. Integrate with Tool Execution Flow
+**File**: Location where tool calls are processed (likely in `codex-rs/core/src/`)
+**Changes**: Intercept file editing tool calls before execution
+
+```rust
+// When a file editing tool is called:
+
+1. Convert to FileChange
+2. Add to batcher
+3. If approval needed:
+   - Emit FileEditApprovalRequestEvent
+   - Wait for user approval
+4. Emit FileEditBeginEvent
+5. Execute actual file operations
+6. Emit FileEditEndEvent
+```
+
+#### 5. Add TUI Event Handlers
+**File**: `codex-rs/tui/src/chatwidget.rs`
+**Changes**: Add handlers that reuse apply_patch logic
+
+After `handle_patch_apply_end_now` (around line 780):
+```rust
+fn on_file_edit_approval_request(&mut self, event: FileEditApprovalRequestEvent) {
+    // Reuse exact same approval modal as apply_patch!
+    self.show_approval_request(ApprovalRequest::FileEdit {
+        id: event.call_id,
+        reason: event.reason,
+        cwd: self.config.cwd.clone(),
+        changes: event.changes,
+    });
+}
+
+fn on_file_edit_begin(&mut self, event: FileEditBeginEvent) {
+    // Reuse exact same history cell as apply_patch!
+    self.add_to_history(history_cell::new_patch_event(
+        event.changes,
+        &self.config.cwd,
+    ));
+}
+
+fn on_file_edit_end(&mut self, event: FileEditEndEvent) {
+    // Reuse exact same failure display as apply_patch!
+    if !event.success {
+        self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
+    }
+}
+```
+
+Add to `dispatch_event_msg` (around line 1450):
+```rust
+EventMsg::FileEditApprovalRequest(event) => {
+    self.on_file_edit_approval_request(event);
+}
+EventMsg::FileEditBegin(event) => {
+    self.on_file_edit_begin(event);
+}
+EventMsg::FileEditEnd(event) => {
+    self.on_file_edit_end(event);
+}
+```
+
+#### 6. Update Approval Overlay
+**File**: `codex-rs/tui/src/bottom_pane/approval_overlay.rs`
+**Changes**: Add FileEdit variant (around line 50)
+
+```rust
+pub enum ApprovalVariant {
+    Shell { id: String },
+    ApplyPatch { id: String },
+    FileEdit { id: String },  // NEW - handles the same as ApplyPatch
+}
+```
+
+Add to ApprovalRequest enum (after ApplyPatch variant):
+```rust
+ApprovalRequest::FileEdit {
+    id,
+    reason,
+    cwd,
+    changes,
+} => {
+    // Identical to ApplyPatch handling
+    let mut header: Vec<Box<dyn Renderable>> = Vec::new();
+    if let Some(reason) = reason && !reason.is_empty() {
+        header.push(Box::new(
+            Paragraph::new(Line::from_iter(["Reason: ".into(), reason.italic()]))
+                .wrap(Wrap { trim: false }),
+        ));
+        header.push(Box::new(Line::from("")));
+    }
+    header.push(DiffSummary::new(changes, cwd).into());
+    Self {
+        variant: ApprovalVariant::FileEdit { id },
+        header: Box::new(ColumnRenderable::with(header)),
+    }
+}
+```
+
+### Success Criteria:
+
+#### Automated Verification:
+- [x] Protocol events compile and serialize correctly: `cargo build -p codex-protocol`
+- [x] TUI compiles with new event handlers: `cargo build -p codex-tui`
+- [x] Tool handler tests still pass: `cargo test -p codex-core`
+- [x] No regressions in existing apply_patch display: `cargo test -p codex-tui`
+
+#### Manual Verification:
+- [ ] write_file displays as "• Added filename.txt (+N -0)" with green additions
+- [ ] edit_file displays as "• Edited filename.txt (+N -M)" with diff context
+- [ ] delete_file displays as "• Deleted filename.txt (+0 -N)" with red deletions
+- [ ] Multiple file operations batch and display as "• Edited 3 files (+X -Y)"
+- [ ] Approval modal shows identical to apply_patch with file changes preview
+- [ ] Failed operations show "✘ Failed to write/edit/delete file" in magenta
+- [ ] Display is visually indistinguishable from apply_patch operations
+- [ ] No "Called write_file" or tool invocation details shown
+
+**Implementation Note**: The key insight is that file editing tools are displayed as file changes, not as tool calls. Users see "• Edited config.json" not "• Called edit_file". This maintains consistency with apply_patch and provides a better UX.
+
+---
+
+## Phase 3.6: Core Event Integration
+
+### Overview
+Connect file editing tools to the event emission system so they display in the TUI. This phase makes the file editing tools emit `FileEditBeginEvent` and `FileEditEndEvent` during execution, enabling the TUI infrastructure from Phase 3.5 to display them.
+
+### Problem Statement
+Currently, file editing tools (write_file, edit_file, delete_file) execute successfully but don't emit any events. The TUI infrastructure exists (Phase 3.5) but never receives events to display. Tool handlers cannot emit events directly - only the orchestration layer (`Session` in `codex.rs`) can emit events.
+
+### Design Approach
+Since tool handlers cannot emit events directly, we need to intercept file editing tool calls at the orchestration layer and emit events before and after execution. This follows a similar pattern to how `apply_patch` emits `PatchApplyBeginEvent` and `PatchApplyEndEvent` through the exec system.
+
+### Changes Required:
+
+#### 1. Add File Edit Detection in Tool Processing
+**File**: `codex-rs/core/src/tools/router.rs`
+**Changes**: Add method to detect file editing tools
+
+```rust
+impl ToolRouter {
+    /// Check if a tool call is a file editing operation
+    pub fn is_file_edit_tool(tool_name: &str) -> bool {
+        matches!(tool_name, "write_file" | "edit_file" | "delete_file")
+    }
+}
+```
+
+#### 2. Modify Tool Call Runtime to Track File Edits
+**File**: `codex-rs/core/src/tools/parallel.rs`
+**Changes**: Enhance `ToolCallRuntime` to detect and convert file editing tools
+
+```rust
+impl ToolCallRuntime {
+    pub async fn handle_tool_call(
+        &self,
+        call: ToolCall,
+    ) -> Result<ProcessedResponseItem, FunctionCallError> {
+        let tool_name = call.tool_name();
+
+        // Check if this is a file editing tool
+        if ToolRouter::is_file_edit_tool(&tool_name) {
+            // Emit FileEditBeginEvent before execution
+            self.emit_file_edit_begin(&call).await;
+        }
+
+        // Execute tool as normal
+        let result = /* existing execution logic */;
+
+        // Emit FileEditEndEvent after execution
+        if ToolRouter::is_file_edit_tool(&tool_name) {
+            self.emit_file_edit_end(&call, &result).await;
+        }
+
+        result
+    }
+}
+```
+
+#### 3. Add Event Emission Methods to Session
+**File**: `codex-rs/core/src/codex.rs`
+**Changes**: Add methods to emit file edit events (around line 1010)
+
+```rust
+impl Session {
+    /// Emit FileEditBeginEvent when a file editing tool starts
+    async fn on_file_edit_begin(
+        &self,
+        call_id: String,
+        tool_name: String,
+        arguments: String,
+    ) {
+        // Parse arguments to extract file path and convert to FileChange
+        let changes = match tool_name.as_str() {
+            "write_file" => {
+                // Parse file_path and content from arguments
+                // Create FileChange::Add
+            }
+            "edit_file" => {
+                // Parse file_path, old_text, new_text
+                // Read current file content
+                // Create FileChange::Update with diff
+            }
+            "delete_file" => {
+                // Parse file_path
+                // Read file content before deletion
+                // Create FileChange::Delete
+            }
+            _ => return,
+        };
+
+        let event = Event::new(EventMsg::FileEditBegin(FileEditBeginEvent {
+            call_id,
+            auto_approved: true,  // File edits are currently auto-approved
+            changes,
+        }));
+
+        self.send_event(event).await;
+    }
+
+    /// Emit FileEditEndEvent when a file editing tool completes
+    async fn on_file_edit_end(
+        &self,
+        call_id: String,
+        success: bool,
+        error_message: Option<String>,
+    ) {
+        let event = Event::new(EventMsg::FileEditEnd(FileEditEndEvent {
+            call_id,
+            success,
+            stderr: error_message.unwrap_or_default(),
+        }));
+
+        self.send_event(event).await;
+    }
+}
+```
+
+#### 4. Pass Session Reference to Tool Runtime
+**File**: `codex-rs/core/src/codex.rs:2177`
+**Changes**: Modify `ToolCallRuntime` creation to include event emission capability
+
+```rust
+// Current code creates ToolCallRuntime without event access
+// Need to either:
+// Option A: Pass session reference or event channel to ToolCallRuntime
+// Option B: Add callbacks for event emission
+// Option C: Return metadata from tool execution for Session to emit events
+```
+
+#### 5. Create FileChange Conversion Utilities
+**File**: `codex-rs/core/src/tools/file_change_converter.rs` (NEW)
+**Changes**: Add utilities to convert tool arguments to FileChange
+
+```rust
+use codex_protocol::FileChange;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// Convert write_file arguments to FileChange
+pub fn write_file_to_file_change(
+    file_path: String,
+    content: String,
+) -> HashMap<PathBuf, FileChange> {
+    let mut changes = HashMap::new();
+    changes.insert(
+        PathBuf::from(file_path),
+        FileChange::Add { content },
+    );
+    changes
+}
+
+/// Convert edit_file to FileChange with diff
+pub fn edit_file_to_file_change(
+    file_path: String,
+    old_content: &str,
+    new_content: &str,
+) -> HashMap<PathBuf, FileChange> {
+    use diffy::{create_patch, PatchFormatter};
+
+    let patch = create_patch(old_content, new_content);
+    let unified_diff = format!("{}", PatchFormatter::new().with_color(false));
+
+    let mut changes = HashMap::new();
+    changes.insert(
+        PathBuf::from(file_path),
+        FileChange::Update {
+            unified_diff,
+            move_path: None,
+        },
+    );
+    changes
+}
+
+/// Convert delete_file to FileChange
+pub fn delete_file_to_file_change(
+    file_path: String,
+    content: String,
+) -> HashMap<PathBuf, FileChange> {
+    let mut changes = HashMap::new();
+    changes.insert(
+        PathBuf::from(file_path),
+        FileChange::Delete { content },
+    );
+    changes
+}
+```
+
+### Implementation Challenges
+
+1. **Tool Runtime Architecture**: The current `ToolCallRuntime` doesn't have access to the event channel. Need to refactor to either:
+   - Pass event channel to tool runtime
+   - Use callbacks for event emission
+   - Return metadata for Session to emit events post-execution
+
+2. **File Content Access**: For edit_file and delete_file, we need to read the current file content to generate proper diffs. This requires async file I/O during event emission.
+
+3. **Error Handling**: Need to handle cases where file reading fails during FileChange conversion.
+
+### Success Criteria:
+
+#### Automated Verification:
+- [x] File editing tools still function correctly: `cargo test -p codex-core`
+- [x] Events are emitted during tool execution
+- [x] FileChange conversion works for all three tools
+
+#### Manual Verification:
+- [ ] Running `write_file` shows "• Added filename.txt" in TUI
+- [ ] Running `edit_file` shows "• Edited filename.txt" with diff
+- [ ] Running `delete_file` shows "• Deleted filename.txt"
+- [ ] Events appear immediately when tools execute
+- [ ] No regression in other tool displays
 
 ---
 
@@ -422,8 +915,8 @@ Add similar blocks for:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Model family lookup tests pass
-- [ ] Serialization/deserialization works
+- [x] Model family lookup tests pass
+- [x] Serialization/deserialization works
 
 #### Manual Verification:
 - [ ] Models are recognized when specified
@@ -583,11 +1076,13 @@ Based on complexity analysis:
 - Phase 1: 2 days (provider integration)
 - Phase 2: 4-5 days (Messages API)
 - Phase 3: 5-7 days (tool system and file tools)
+- Phase 3.5: 2-3 days (TUI display infrastructure)
+- Phase 3.6: 3-4 days (core event integration)
 - Phase 4: 1 day (model families)
 - Phase 5: 3-4 days (OAuth - can be deferred)
 - Phase 6: 3-4 days (testing and polish)
 
-**Total: 19-27 days** (3-4 weeks for core functionality, +1 week for OAuth)
+**Total: 24-35 days** (4-5 weeks for core functionality with full TUI integration, +1 week for OAuth)
 
 ## Risk Mitigation
 

@@ -30,7 +30,12 @@ impl ToolHandler for WriteFileHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, .. } = invocation;
+        let ToolInvocation {
+            payload,
+            session,
+            call_id,
+            ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -41,46 +46,111 @@ impl ToolHandler for WriteFileHandler {
             }
         };
 
+        // Parse arguments first
         let args: WriteFileArgs = serde_json::from_str(&arguments).map_err(|err| {
             FunctionCallError::RespondToModel(format!(
                 "failed to parse function arguments: {err:?}"
             ))
         })?;
 
-        let WriteFileArgs { file_path, content } = args;
+        let WriteFileArgs {
+            file_path,
+            content: file_content,
+        } = args;
 
-        let path = PathBuf::from(&file_path);
-        if !path.is_absolute() {
-            return Err(FunctionCallError::RespondToModel(
-                "file_path must be an absolute path".to_string(),
-            ));
+        // Emit FileEditBeginEvent
+        {
+            use codex_protocol::protocol::Event;
+            use codex_protocol::protocol::EventMsg;
+            use codex_protocol::protocol::FileChange;
+            use codex_protocol::protocol::FileEditBeginEvent;
+            use std::collections::HashMap;
+
+            let mut changes = HashMap::new();
+            changes.insert(
+                PathBuf::from(&file_path),
+                FileChange::Add {
+                    content: file_content.clone(),
+                },
+            );
+
+            let begin_event = Event {
+                id: call_id.clone(),
+                msg: EventMsg::FileEditBegin(FileEditBeginEvent {
+                    call_id: call_id.clone(),
+                    auto_approved: true,
+                    changes,
+                }),
+            };
+            session.send_event(begin_event).await;
         }
 
-        // Create parent directories if they don't exist
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.map_err(|err| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to create parent directories: {err}"
-                ))
+        // Execute the actual file write
+        let result = async {
+            let path = PathBuf::from(&file_path);
+            if !path.is_absolute() {
+                return Err(FunctionCallError::RespondToModel(
+                    "file_path must be an absolute path".to_string(),
+                ));
+            }
+
+            // Create parent directories if they don't exist
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).await.map_err(|err| {
+                    FunctionCallError::RespondToModel(format!(
+                        "failed to create parent directories: {err}"
+                    ))
+                })?;
+            }
+
+            // Write the file
+            let mut file = fs::File::create(&path).await.map_err(|err| {
+                FunctionCallError::RespondToModel(format!("failed to create file: {err}"))
             })?;
+
+            file.write_all(file_content.as_bytes())
+                .await
+                .map_err(|err| {
+                    FunctionCallError::RespondToModel(format!("failed to write file: {err}"))
+                })?;
+
+            file.flush().await.map_err(|err| {
+                FunctionCallError::RespondToModel(format!("failed to flush file: {err}"))
+            })?;
+
+            Ok(ToolOutput::Function {
+                content: format!(
+                    "Successfully wrote {} bytes to {file_path}",
+                    file_content.len()
+                ),
+                success: Some(true),
+            })
+        }
+        .await;
+
+        // Emit FileEditEndEvent
+        {
+            use codex_protocol::protocol::Event;
+            use codex_protocol::protocol::EventMsg;
+            use codex_protocol::protocol::FileEditEndEvent;
+
+            let (success, stderr) = match &result {
+                Ok(_) => (true, String::new()),
+                Err(FunctionCallError::RespondToModel(msg)) => (false, msg.clone()),
+                Err(e) => (false, format!("{e:?}")),
+            };
+
+            let end_event = Event {
+                id: call_id.clone(),
+                msg: EventMsg::FileEditEnd(FileEditEndEvent {
+                    call_id,
+                    success,
+                    stderr,
+                }),
+            };
+            session.send_event(end_event).await;
         }
 
-        // Write the file
-        let mut file = fs::File::create(&path).await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to create file: {err}"))
-        })?;
-
-        file.write_all(content.as_bytes()).await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to write file: {err}"))
-        })?;
-
-        file.flush().await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to flush file: {err}"))
-        })?;
-
-        Ok(ToolOutput::Function {
-            content: format!("Successfully wrote {} bytes to {file_path}", content.len()),
-            success: Some(true),
-        })
+        result
     }
 }
