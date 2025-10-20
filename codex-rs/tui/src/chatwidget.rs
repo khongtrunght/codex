@@ -576,6 +576,13 @@ impl ChatWidget {
         ));
     }
 
+    fn on_file_edit_begin(&mut self, event: codex_core::protocol::FileEditBeginEvent) {
+        self.add_to_history(history_cell::new_patch_event(
+            event.changes,
+            &self.config.cwd,
+        ));
+    }
+
     fn on_view_image_tool_call(&mut self, event: ViewImageToolCallEvent) {
         self.flush_answer_stream_with_separator();
         self.add_to_history(history_cell::new_view_image_tool_call(
@@ -590,6 +597,14 @@ impl ChatWidget {
         self.defer_or_handle(
             |q| q.push_patch_end(event),
             |s| s.handle_patch_apply_end_now(ev2),
+        );
+    }
+
+    fn on_file_edit_end(&mut self, event: codex_core::protocol::FileEditEndEvent) {
+        let ev2 = event.clone();
+        self.defer_or_handle(
+            |q| q.push_file_edit_end(event),
+            |s| s.handle_file_edit_end_now(ev2),
         );
     }
 
@@ -772,6 +787,17 @@ impl ChatWidget {
         event: codex_core::protocol::PatchApplyEndEvent,
     ) {
         // If the patch was successful, just let the "Edited" block stand.
+        // Otherwise, add a failure block.
+        if !event.success {
+            self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
+        }
+    }
+
+    pub(crate) fn handle_file_edit_end_now(
+        &mut self,
+        event: codex_core::protocol::FileEditEndEvent,
+    ) {
+        // If the file edit was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if !event.success {
             self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
@@ -1476,10 +1502,16 @@ impl ChatWidget {
             EventMsg::ApplyPatchApprovalRequest(ev) => {
                 self.on_apply_patch_approval_request(id.unwrap_or_default(), ev)
             }
+            EventMsg::FileEditApprovalRequest(_ev) => {
+                // TODO: Implement file edit approval handling
+                // For now, file edits are auto-approved
+            }
             EventMsg::ExecCommandBegin(ev) => self.on_exec_command_begin(ev),
             EventMsg::ExecCommandOutputDelta(delta) => self.on_exec_command_output_delta(delta),
             EventMsg::PatchApplyBegin(ev) => self.on_patch_apply_begin(ev),
             EventMsg::PatchApplyEnd(ev) => self.on_patch_apply_end(ev),
+            EventMsg::FileEditBegin(ev) => self.on_file_edit_begin(ev),
+            EventMsg::FileEditEnd(ev) => self.on_file_edit_end(ev),
             EventMsg::ExecCommandEnd(ev) => self.on_exec_command_end(ev),
             EventMsg::ViewImageToolCall(ev) => self.on_view_image_tool_call(ev),
             EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),

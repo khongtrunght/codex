@@ -499,6 +499,12 @@ pub enum EventMsg {
     /// Notification that a patch application has finished.
     PatchApplyEnd(PatchApplyEndEvent),
 
+    FileEditApprovalRequest(FileEditApprovalRequestEvent),
+
+    FileEditBegin(FileEditBeginEvent),
+
+    FileEditEnd(FileEditEndEvent),
+
     TurnDiff(TurnDiffEvent),
 
     /// Response to GetHistoryEntryRequest.
@@ -1231,6 +1237,28 @@ pub struct PatchApplyEndEvent {
     pub stderr: String,
     /// Whether the patch was applied successfully.
     pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct FileEditApprovalRequestEvent {
+    pub call_id: String,
+    pub changes: HashMap<PathBuf, FileChange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct FileEditBeginEvent {
+    pub call_id: String,
+    pub auto_approved: bool,
+    pub changes: HashMap<PathBuf, FileChange>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct FileEditEndEvent {
+    pub call_id: String,
+    pub success: bool,
+    pub stderr: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]

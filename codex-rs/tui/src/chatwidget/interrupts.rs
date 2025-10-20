@@ -4,6 +4,7 @@ use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
+use codex_core::protocol::FileEditEndEvent;
 use codex_core::protocol::McpToolCallBeginEvent;
 use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::PatchApplyEndEvent;
@@ -19,6 +20,7 @@ pub(crate) enum QueuedInterrupt {
     McpBegin(McpToolCallBeginEvent),
     McpEnd(McpToolCallEndEvent),
     PatchEnd(PatchApplyEndEvent),
+    FileEditEnd(FileEditEndEvent),
 }
 
 #[derive(Default)]
@@ -71,6 +73,10 @@ impl InterruptManager {
         self.queue.push_back(QueuedInterrupt::PatchEnd(ev));
     }
 
+    pub(crate) fn push_file_edit_end(&mut self, ev: FileEditEndEvent) {
+        self.queue.push_back(QueuedInterrupt::FileEditEnd(ev));
+    }
+
     pub(crate) fn flush_all(&mut self, chat: &mut ChatWidget) {
         while let Some(q) = self.queue.pop_front() {
             match q {
@@ -83,6 +89,7 @@ impl InterruptManager {
                 QueuedInterrupt::McpBegin(ev) => chat.handle_mcp_begin_now(ev),
                 QueuedInterrupt::McpEnd(ev) => chat.handle_mcp_end_now(ev),
                 QueuedInterrupt::PatchEnd(ev) => chat.handle_patch_apply_end_now(ev),
+                QueuedInterrupt::FileEditEnd(ev) => chat.handle_file_edit_end_now(ev),
             }
         }
     }

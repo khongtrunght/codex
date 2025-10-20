@@ -222,6 +222,15 @@ async fn run_codex_tool_session_inner(
                         .await;
                         continue;
                     }
+                    EventMsg::FileEditApprovalRequest(_) => {
+                        // TODO: Implement file edit approval handling
+                        // For now, file edits are auto-approved
+                        continue;
+                    }
+                    EventMsg::FileEditBegin(_) | EventMsg::FileEditEnd(_) => {
+                        // Ignore file edit progress events
+                        continue;
+                    }
                     EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message }) => {
                         let text = match last_agent_message {
                             Some(msg) => msg,

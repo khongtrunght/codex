@@ -417,6 +417,15 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             EventMsg::ApplyPatchApprovalRequest(_) => {
                 // Should we exit?
             }
+            EventMsg::FileEditApprovalRequest(_) => {
+                // Should we exit?
+            }
+            EventMsg::FileEditBegin(_) => {
+                // File edit begin - similar to patch apply begin but simpler
+            }
+            EventMsg::FileEditEnd(_) => {
+                // File edit end - similar to patch apply end but simpler
+            }
             EventMsg::AgentReasoning(agent_reasoning_event) => {
                 if self.show_agent_reasoning {
                     ts_msg!(
