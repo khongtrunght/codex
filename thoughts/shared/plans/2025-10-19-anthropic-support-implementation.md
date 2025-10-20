@@ -872,6 +872,7 @@ pub fn delete_file_to_file_change(
 - [x] File editing tools still function correctly: `cargo test -p codex-core`
 - [x] Events are emitted during tool execution
 - [x] FileChange conversion works for all three tools
+- [x] All file_edit_tools tests pass
 
 #### Manual Verification:
 - [ ] Running `write_file` shows "• Added filename.txt" in TUI
@@ -879,6 +880,8 @@ pub fn delete_file_to_file_change(
 - [ ] Running `delete_file` shows "• Deleted filename.txt"
 - [ ] Events appear immediately when tools execute
 - [ ] No regression in other tool displays
+
+**Implementation Note**: Phase 3.6 was found to be already implemented. The file editing tools (write_file, edit_file, delete_file) already emit FileEditBeginEvent and FileEditEndEvent. The only issue was that the tools didn't properly handle relative paths - they needed to use `turn.resolve_path()` to resolve paths against the cwd. This has been fixed and all tests now pass.
 
 ---
 
