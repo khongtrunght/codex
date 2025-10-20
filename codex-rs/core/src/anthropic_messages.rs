@@ -7,7 +7,6 @@ use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
 use crate::error::CodexErr;
 use crate::error::ConnectionFailedError;
-use crate::error::ResponseStreamFailed;
 use crate::error::Result;
 use crate::error::UnexpectedResponseError;
 use crate::model_family::ModelFamily;

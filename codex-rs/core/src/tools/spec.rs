@@ -31,6 +31,7 @@ pub(crate) struct ToolsConfig {
     pub include_view_image_tool: bool,
     pub experimental_unified_exec_tool: bool,
     pub experimental_supported_tools: Vec<String>,
+    pub file_editing_strategy: Option<crate::model_family::FileEditingStrategy>,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -79,6 +80,7 @@ impl ToolsConfig {
             include_view_image_tool,
             experimental_unified_exec_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
+            file_editing_strategy: model_family.file_editing_strategy,
         }
     }
 }
@@ -467,6 +469,95 @@ fn create_read_file_tool() -> ToolSpec {
     })
 }
 
+fn create_write_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some("Absolute path to the file to write".to_string()),
+        },
+    );
+    properties.insert(
+        "content".to_string(),
+        JsonSchema::String {
+            description: Some("Content to write to the file".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "write_file".to_string(),
+        description: "Writes content to a file, creating it if it doesn't exist or overwriting it if it does."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["file_path".to_string(), "content".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_edit_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some("Absolute path to the file to edit".to_string()),
+        },
+    );
+    properties.insert(
+        "old_text".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "The text to search for and replace. Must be unique within the file.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "new_text".to_string(),
+        JsonSchema::String {
+            description: Some("The text to replace old_text with".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "edit_file".to_string(),
+        description: "Edits a file by replacing unique text. The old_text must appear exactly once in the file."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec![
+                "file_path".to_string(),
+                "old_text".to_string(),
+                "new_text".to_string(),
+            ]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_delete_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some("Absolute path to the file to delete".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "delete_file".to_string(),
+        description: "Deletes a file from the filesystem.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["file_path".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 fn create_list_dir_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
@@ -664,6 +755,36 @@ pub(crate) fn create_tools_json_for_chat_completions_api(
     Ok(tools_json)
 }
 
+/// Returns JSON values that are compatible with Anthropic's Messages API tool format.
+/// Anthropic uses `input_schema` instead of `parameters` for tool definitions.
+/// https://docs.anthropic.com/en/docs/build-with-claude/tool-use
+#[allow(dead_code)]
+pub(crate) fn create_tools_json_for_anthropic_api(
+    tools: &[ToolSpec],
+) -> crate::error::Result<Vec<serde_json::Value>> {
+    let mut tools_json = Vec::new();
+
+    for tool in tools {
+        // Only convert Function tools; skip LocalShell, WebSearch, and Freeform
+        if let ToolSpec::Function(ResponsesApiTool {
+            name,
+            description,
+            parameters,
+            ..
+        }) = tool
+        {
+            let anthropic_tool = json!({
+                "name": name,
+                "description": description,
+                "input_schema": parameters,
+            });
+            tools_json.push(anthropic_tool);
+        }
+    }
+
+    Ok(tools_json)
+}
+
 pub(crate) fn mcp_tool_to_openai_tool(
     fully_qualified_name: String,
     tool: mcp_types::Tool,
@@ -820,6 +941,8 @@ pub(crate) fn build_specs(
     use crate::exec_command::create_exec_command_tool_for_responses_api;
     use crate::exec_command::create_write_stdin_tool_for_responses_api;
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::DeleteFileHandler;
+    use crate::tools::handlers::EditFileHandler;
     use crate::tools::handlers::ExecStreamHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
@@ -831,6 +954,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WriteFileHandler;
     use std::sync::Arc;
 
     let mut builder = ToolRegistryBuilder::new();
@@ -932,6 +1056,24 @@ pub(crate) fn build_specs(
         let test_sync_handler = Arc::new(TestSyncHandler);
         builder.push_spec_with_parallel_support(create_test_sync_tool(), true);
         builder.register_handler("test_sync_tool", test_sync_handler);
+    }
+
+    // Register file editing tools based on strategy
+    if let Some(crate::model_family::FileEditingStrategy::SeparateTools) =
+        config.file_editing_strategy
+    {
+        let write_file_handler = Arc::new(WriteFileHandler);
+        let edit_file_handler = Arc::new(EditFileHandler);
+        let delete_file_handler = Arc::new(DeleteFileHandler);
+
+        builder.push_spec(create_write_file_tool());
+        builder.register_handler("write_file", write_file_handler);
+
+        builder.push_spec(create_edit_file_tool());
+        builder.register_handler("edit_file", edit_file_handler);
+
+        builder.push_spec(create_delete_file_tool());
+        builder.register_handler("delete_file", delete_file_handler);
     }
 
     if config.web_search_request {
