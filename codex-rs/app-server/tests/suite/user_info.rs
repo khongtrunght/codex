@@ -38,6 +38,8 @@ async fn user_info_returns_email_from_auth_json() {
             account_id: None,
         }),
         last_refresh: None,
+        anthropic_tokens: None,
+        anthropic_last_refresh: None,
     };
     write_auth_json(&auth_path, &auth).expect("write auth.json");
 

@@ -141,8 +141,7 @@ pub async fn refresh_token(
             .await
             .unwrap_or_else(|_| "Unable to read error response".to_string());
         return Err(std::io::Error::other(format!(
-            "Token refresh failed: {} - {}",
-            status, error_body
+            "Token refresh failed: {status} - {error_body}",
         )));
     }
 
@@ -187,7 +186,7 @@ pub async fn create_api_key(
     result["raw_key"]
         .as_str()
         .ok_or_else(|| std::io::Error::other("Missing raw_key in response"))
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ use tracing::debug;
 use tracing::trace;
 
 const DEFAULT_MAX_TOKENS: u32 = 4096;
+const CLAUDE_CODE_SYSTEM_PROMPT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Implementation for the Anthropic Messages API.
 pub(crate) async fn stream_anthropic_messages(
@@ -59,40 +60,19 @@ pub(crate) async fn stream_anthropic_messages(
         "stream": true,
     });
 
-    // Add system prompt as an array with cache control
-    if !system_prompt.is_empty() {
-        let mut system_blocks = vec![
-            json!({
-                "type": "text",
-                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
-                "cache_control": {
-                    "type": "ephemeral"
-                }
-            })
-        ];
-
-        // Add the actual system prompt after the base message, also with cache control
-        system_blocks.push(json!({
-            "type": "text",
-            "text": system_prompt,
-            "cache_control": {
-                "type": "ephemeral"
-            }
-        }));
-
-        payload["system"] = json!(system_blocks);
+    let system_blocks = if !system_prompt.is_empty() {
+        vec![
+            build_system_block(CLAUDE_CODE_SYSTEM_PROMPT, CacheType::Ephemeral),
+            build_system_block(system_prompt, CacheType::Ephemeral),
+        ]
     } else {
-        // Even without additional instructions, include the base system message
-        payload["system"] = json!([
-            {
-                "type": "text",
-                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
-                "cache_control": {
-                    "type": "ephemeral"
-                }
-            }
-        ]);
-    }
+        vec![build_system_block(
+            CLAUDE_CODE_SYSTEM_PROMPT,
+            CacheType::Ephemeral,
+        )]
+    };
+
+    payload["system"] = json!(system_blocks);
 
     // Add tools if present
     if !tools_json.is_empty() {
@@ -124,7 +104,7 @@ pub(crate) async fn stream_anthropic_messages(
 
                 let byte_stream = resp
                     .bytes_stream()
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                    .map_err(|e| std::io::Error::other(e.to_string()));
 
                 let otel_manager_clone = otel_event_manager.clone();
                 tokio::spawn(async move {
@@ -206,10 +186,10 @@ fn build_anthropic_messages(
 
                 // Anthropic requires strict user/assistant alternation
                 // If role changes, flush current message
-                if let Some(ref prev_role) = current_role {
-                    if prev_role != role {
-                        flush_message(&mut messages, prev_role, &mut current_content);
-                    }
+                if let Some(ref prev_role) = current_role
+                    && prev_role != role
+                {
+                    flush_message(&mut messages, prev_role, &mut current_content);
                 }
 
                 // Convert content items
@@ -234,10 +214,10 @@ fn build_anthropic_messages(
                 ..
             } => {
                 // Flush any pending user message
-                if let Some(ref role) = current_role {
-                    if role == "user" {
-                        flush_message(&mut messages, role, &mut current_content);
-                    }
+                if let Some(ref role) = current_role
+                    && role == "user"
+                {
+                    flush_message(&mut messages, role, &mut current_content);
                 }
 
                 // Tool calls are part of assistant messages
@@ -254,10 +234,10 @@ fn build_anthropic_messages(
 
             ResponseItem::FunctionCallOutput { call_id, output } => {
                 // Flush any pending assistant message
-                if let Some(ref role) = current_role {
-                    if role == "assistant" {
-                        flush_message(&mut messages, role, &mut current_content);
-                    }
+                if let Some(ref role) = current_role
+                    && role == "assistant"
+                {
+                    flush_message(&mut messages, role, &mut current_content);
                 }
 
                 // Tool results go in user messages
@@ -287,36 +267,41 @@ fn build_anthropic_messages(
         flush_message(&mut messages, role, &mut current_content);
     }
 
-    // Ensure first message is user (Anthropic requirement)
-    if let Some(first) = messages.first() {
-        if first.get("role").and_then(|r| r.as_str()) != Some("user") {
-            messages.insert(
-                0,
-                json!({
-                    "role": "user",
-                    "content": "Please assist me with the following."
-                }),
-            );
-        }
-    }
+    let mut user_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(i, msg)| {
+            msg.get("role")
+                .and_then(|r| r.as_str())
+                .filter(|&r| r == "user")
+                .map(|_| i)
+        })
+        .collect();
 
-    // Add cache_control to the last user message for prompt caching
-    for message in messages.iter_mut().rev() {
-        if message.get("role").and_then(|r| r.as_str()) == Some("user") {
-            if let Some(content) = message.get_mut("content") {
-                // If content is an array, add cache_control to the last text block
-                if let Some(content_array) = content.as_array_mut() {
-                    if let Some(last_block) = content_array.last_mut() {
-                        if let Some(obj) = last_block.as_object_mut() {
-                            obj.insert(
-                                "cache_control".to_string(),
-                                json!({"type": "ephemeral"}),
-                            );
-                        }
+    // Take at most the last two
+    user_indices.reverse();
+    for &idx in user_indices.iter().take(2) {
+        if let Some(message) = messages.get_mut(idx)
+            && let Some(content) = message.get_mut("content")
+        {
+            match content {
+                serde_json::Value::Array(arr) => {
+                    if let Some(last_block) = arr.last_mut() {
+                        attach_cache_control(last_block, CacheType::Ephemeral);
                     }
                 }
+                serde_json::Value::String(text) => {
+                    // Convert to array form with cache marker
+                    *content = json!([
+                        {
+                            "type": "text",
+                            "text": text,
+                            "cache_control": { "type": "ephemeral" }
+                        }
+                    ]);
+                }
+                _ => {}
             }
-            break; // Only modify the last user message
         }
     }
 
@@ -356,16 +341,12 @@ fn build_anthropic_tools(
     let mut anthropic_tools = Vec::new();
 
     for tool in tools {
-        match tool {
-            crate::client_common::tools::ToolSpec::Function(func_tool) => {
-                anthropic_tools.push(json!({
-                    "name": func_tool.name,
-                    "description": func_tool.description,
-                    "input_schema": func_tool.parameters
-                }));
-            }
-            // Skip LocalShell, WebSearch, and Freeform tools for now
-            _ => {}
+        if let crate::client_common::tools::ToolSpec::Function(func_tool) = tool {
+            anthropic_tools.push(json!({
+                "name": func_tool.name,
+                "description": func_tool.description,
+                "input_schema": func_tool.parameters
+            }));
         }
     }
 
@@ -494,7 +475,10 @@ async fn handle_event(
         "message_start" => {
             state.message_id = event["message"]["id"].as_str().unwrap_or("").to_string();
             if let Some(usage) = event["message"]["usage"].as_object() {
-                state.input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64());
+                fn fun_name(v: &serde_json::Value) -> Option<u64> {
+                    v.as_u64()
+                }
+                state.input_tokens = usage.get("input_tokens").and_then(fun_name);
             }
             // Send Created event
             let _ = tx.send(Ok(ResponseEvent::Created)).await;
@@ -594,7 +578,9 @@ async fn handle_event(
 
         "message_delta" => {
             if let Some(usage) = event["usage"].as_object() {
-                state.output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64());
+                state.output_tokens = usage
+                    .get("output_tokens")
+                    .and_then(serde_json::Value::as_u64);
             }
         }
 
@@ -626,4 +612,41 @@ async fn handle_event(
     }
 
     Ok(())
+}
+
+/// Represents Anthropic-style cache control settings.
+#[derive(Debug, Clone)]
+pub enum CacheType {
+    /// Ephemeral cache block — reused within a short window.
+    Ephemeral,
+}
+
+/// Build a reusable JSON block for cache_control.
+/// Optionally supports TTL or other future fields.
+pub fn build_cache_control_block(cache_type: CacheType) -> serde_json::Value {
+    match cache_type {
+        CacheType::Ephemeral => json!({
+            "cache_control": { "type": "ephemeral" }
+        }),
+    }
+}
+
+/// Attaches a cache_control block to an existing JSON object representing a content item.
+pub fn attach_cache_control(content_block: &mut serde_json::Value, cache_type: CacheType) {
+    if let Some(obj) = content_block.as_object_mut() {
+        let control = build_cache_control_block(cache_type);
+        if let Some(inner) = control.get("cache_control") {
+            obj.insert("cache_control".to_string(), inner.clone());
+        }
+    }
+}
+
+/// Build a standardized system block with optional text and cache control.
+fn build_system_block<S: AsRef<str>>(text: S, cache_type: CacheType) -> serde_json::Value {
+    let mut block = json!({
+        "type": "text",
+        "text": text.as_ref()
+    });
+    attach_cache_control(&mut block, cache_type);
+    block
 }

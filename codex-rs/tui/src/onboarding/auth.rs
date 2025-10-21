@@ -690,18 +690,18 @@ impl AuthModeWidget {
                             auth_manager.reload();
                             *sign_in_state.write().unwrap() = SignInState::ClaudeOAuthConfigured;
                         }
-                        Err(err) => {
+                        _ => {
                             let mut guard = sign_in_state.write().unwrap();
-                            if let SignInState::ClaudeOAuthEntry(existing) = &mut *guard {
+                            if let SignInState::ClaudeOAuthEntry(_) = &mut *guard {
                                 // Keep the code in the input for retry
                             }
                             // Error will be set in main thread
                         }
                     }
                 }
-                Err(err) => {
+                Err(_err) => {
                     let mut guard = sign_in_state.write().unwrap();
-                    if let SignInState::ClaudeOAuthEntry(existing) = &mut *guard {
+                    if let SignInState::ClaudeOAuthEntry(_existing) = &mut *guard {
                         // Keep the code for retry
                     }
                     // Error will be set in main thread

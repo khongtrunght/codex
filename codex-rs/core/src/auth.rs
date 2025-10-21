@@ -161,11 +161,11 @@ impl CodexAuth {
         tokens: crate::token_data::AnthropicTokenData,
     ) -> Result<(), std::io::Error> {
         // Update in-memory
-        if let Ok(mut auth_lock) = self.auth_dot_json.lock() {
-            if let Some(ref mut auth) = *auth_lock {
-                auth.anthropic_tokens = Some(tokens.clone());
-                auth.anthropic_last_refresh = Some(chrono::Utc::now());
-            }
+        if let Ok(mut auth_lock) = self.auth_dot_json.lock()
+            && let Some(ref mut auth) = *auth_lock
+        {
+            auth.anthropic_tokens = Some(tokens);
+            auth.anthropic_last_refresh = Some(chrono::Utc::now());
         }
 
         // Update on disk
