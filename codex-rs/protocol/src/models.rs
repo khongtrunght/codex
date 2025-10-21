@@ -247,6 +247,19 @@ impl From<Vec<InputItem>> for ResponseInputItem {
                             }
                         }
                     }
+                    InputItem::LocalFolder { path, max_depth } => {
+                        match read_folder_with_context(&path, max_depth) {
+                            Ok(content) => Some(ContentItem::InputText { text: content }),
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Skipping folder {} – could not read: {}",
+                                    path.display(),
+                                    err
+                                );
+                                None
+                            }
+                        }
+                    }
                 })
                 .collect::<Vec<ContentItem>>(),
         }
@@ -332,6 +345,12 @@ impl std::ops::Deref for FunctionCallOutputPayload {
 /// Maximum file size we'll read (10MB).
 const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
+/// Maximum number of entries to show in a directory tree.
+const MAX_FOLDER_ENTRIES: usize = 500;
+
+/// Default maximum depth for directory tree traversal.
+const DEFAULT_MAX_DEPTH: usize = 3;
+
 /// Read a file and format it with line numbers and metadata.
 fn read_file_with_context(
     path: &std::path::Path,
@@ -400,6 +419,61 @@ fn read_file_with_context(
     result.push_str(&lines.join("\n"));
     result.push_str("\n```");
 
+    Ok(result)
+}
+
+/// Read a folder and format it as a tree structure.
+fn read_folder_with_context(
+    path: &std::path::Path,
+    max_depth: Option<usize>,
+) -> Result<String, std::io::Error> {
+    let max_depth = max_depth.unwrap_or(DEFAULT_MAX_DEPTH);
+
+    let mut result = String::new();
+    result.push_str(&format!("```tree\nFolder: {}\n", path.display()));
+
+    let mut entry_count = 0;
+    let walker = ignore::WalkBuilder::new(path)
+        .max_depth(Some(max_depth))
+        .build();
+
+    let mut entries: Vec<(usize, String, bool)> = Vec::new();
+
+    for entry_result in walker {
+        if entry_count >= MAX_FOLDER_ENTRIES {
+            result.push_str(&format!(
+                "\n... (truncated, showing first {} entries)\n",
+                MAX_FOLDER_ENTRIES
+            ));
+            break;
+        }
+
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let depth = entry.depth();
+        if depth == 0 {
+            continue; // Skip root
+        }
+
+        let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+        let file_name = entry.file_name().to_string_lossy().to_string();
+
+        entries.push((depth, file_name, is_dir));
+        entry_count += 1;
+    }
+
+    // Format entries as tree
+    for (depth, name, is_dir) in entries {
+        let indent = "  ".repeat(depth.saturating_sub(1));
+        let prefix = if depth > 0 { "├─ " } else { "" };
+        let suffix = if is_dir { "/" } else { "" };
+        result.push_str(&format!("{}{}{}{}\n", indent, prefix, name, suffix));
+    }
+
+    result.push_str("```");
     Ok(result)
 }
 
@@ -531,6 +605,27 @@ mod tests {
             },
             params
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_folder_with_context() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let base = temp_dir.path();
+
+        // Create a test directory structure
+        std::fs::create_dir(base.join("subdir"))?;
+        std::fs::write(base.join("file1.txt"), "content")?;
+        std::fs::write(base.join("subdir/file2.txt"), "content")?;
+
+        let result = read_folder_with_context(base, Some(2))?;
+
+        // Verify the output contains expected elements
+        assert!(result.contains("```tree"));
+        assert!(result.contains("Folder:"));
+        assert!(result.contains("file1.txt"));
+        assert!(result.contains("subdir/"));
+
         Ok(())
     }
 }

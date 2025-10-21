@@ -100,6 +100,7 @@ pub(crate) struct ChatComposer {
     has_focus: bool,
     attached_images: Vec<AttachedImage>,
     attached_files: Vec<PathBuf>,
+    attached_folders: Vec<PathBuf>,
     placeholder_text: String,
     is_task_running: bool,
     // Non-bracketed paste burst tracker.
@@ -146,6 +147,7 @@ impl ChatComposer {
             has_focus: has_input_focus,
             attached_images: Vec::new(),
             attached_files: Vec::new(),
+            attached_folders: Vec::new(),
             placeholder_text,
             is_task_running: false,
             paste_burst: PasteBurst::default(),
@@ -350,6 +352,10 @@ impl ChatComposer {
 
     pub fn take_recent_submission_files(&mut self) -> Vec<PathBuf> {
         std::mem::take(&mut self.attached_files)
+    }
+
+    pub(crate) fn take_recent_submission_folders(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.attached_folders)
     }
 
     pub(crate) fn flush_paste_burst_if_due(&mut self) -> bool {
@@ -688,9 +694,15 @@ impl ChatComposer {
                         // Fallback to plain path insertion if metadata read fails.
                         self.insert_selected_path(&sel_path);
                     }
+                } else if path_buf.exists() && path_buf.is_dir() {
+                    // Directory: attach as folder
+                    self.attached_folders.push(path_buf.clone());
+                    // Insert placeholder with trailing slash
+                    let placeholder = format!("@{sel_path}/");
+                    self.insert_selected_path(&placeholder);
                 } else if Self::is_text_file(&path_buf) && path_buf.exists() && path_buf.is_file() {
                     // Text file: attach content
-                    self.attached_files.push(path_buf.clone());
+                    self.attached_files.push(path_buf);
                     // Insert placeholder in text
                     let placeholder = format!("@{sel_path}");
                     self.insert_selected_path(&placeholder);
