@@ -267,43 +267,7 @@ fn build_anthropic_messages(
         flush_message(&mut messages, role, &mut current_content);
     }
 
-    let mut user_indices: Vec<usize> = messages
-        .iter()
-        .enumerate()
-        .filter_map(|(i, msg)| {
-            msg.get("role")
-                .and_then(|r| r.as_str())
-                .filter(|&r| r == "user")
-                .map(|_| i)
-        })
-        .collect();
-
-    // Take at most the last two
-    user_indices.reverse();
-    for &idx in user_indices.iter().take(2) {
-        if let Some(message) = messages.get_mut(idx)
-            && let Some(content) = message.get_mut("content")
-        {
-            match content {
-                serde_json::Value::Array(arr) => {
-                    if let Some(last_block) = arr.last_mut() {
-                        attach_cache_control(last_block, CacheType::Ephemeral);
-                    }
-                }
-                serde_json::Value::String(text) => {
-                    // Convert to array form with cache marker
-                    *content = json!([
-                        {
-                            "type": "text",
-                            "text": text,
-                            "cache_control": { "type": "ephemeral" }
-                        }
-                    ]);
-                }
-                _ => {}
-            }
-        }
-    }
+    mark_tail_messages_for_cache(&mut messages, 2, CacheType::Ephemeral);
 
     Ok((system_prompt, messages))
 }
@@ -486,14 +450,18 @@ async fn handle_event(
         "message_start" => {
             state.message_id = event["message"]["id"].as_str().unwrap_or("").to_string();
             if let Some(usage) = event["message"]["usage"].as_object() {
-                state.input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64());
+                state.input_tokens = usage
+                    .get("input_tokens")
+                    .and_then(serde_json::Value::as_u64);
                 state.cache_creation_input_tokens = usage
                     .get("cache_creation_input_tokens")
-                    .and_then(|v| v.as_u64());
+                    .and_then(serde_json::Value::as_u64);
                 state.cache_read_input_tokens = usage
                     .get("cache_read_input_tokens")
-                    .and_then(|v| v.as_u64());
-                state.output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64());
+                    .and_then(serde_json::Value::as_u64);
+                state.output_tokens = usage
+                    .get("output_tokens")
+                    .and_then(serde_json::Value::as_u64);
             }
             // Send Created event
             let _ = tx.send(Ok(ResponseEvent::Created)).await;
@@ -594,22 +562,28 @@ async fn handle_event(
         "message_delta" => {
             if let Some(usage) = event["usage"].as_object() {
                 // Update all token counts from delta event (they're cumulative)
-                if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                if let Some(input) = usage
+                    .get("input_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                {
                     state.input_tokens = Some(input);
                 }
                 if let Some(cache_creation) = usage
                     .get("cache_creation_input_tokens")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                 {
                     state.cache_creation_input_tokens = Some(cache_creation);
                 }
                 if let Some(cache_read) = usage
                     .get("cache_read_input_tokens")
-                    .and_then(|v| v.as_u64())
+                    .and_then(serde_json::Value::as_u64)
                 {
                     state.cache_read_input_tokens = Some(cache_read);
                 }
-                if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                if let Some(output) = usage
+                    .get("output_tokens")
+                    .and_then(serde_json::Value::as_u64)
+                {
                     state.output_tokens = Some(output);
                 }
             }
@@ -652,23 +626,16 @@ pub enum CacheType {
     Ephemeral,
 }
 
-/// Build a reusable JSON block for cache_control.
-/// Optionally supports TTL or other future fields.
-pub fn build_cache_control_block(cache_type: CacheType) -> serde_json::Value {
+pub fn cache_control_value(cache_type: &CacheType) -> serde_json::Value {
     match cache_type {
-        CacheType::Ephemeral => json!({
-            "cache_control": { "type": "ephemeral" }
-        }),
+        CacheType::Ephemeral => json!({ "type": "ephemeral" }),
     }
 }
 
 /// Attaches a cache_control block to an existing JSON object representing a content item.
-pub fn attach_cache_control(content_block: &mut serde_json::Value, cache_type: CacheType) {
+pub fn attach_cache_control(content_block: &mut serde_json::Value, cache_type: &CacheType) {
     if let Some(obj) = content_block.as_object_mut() {
-        let control = build_cache_control_block(cache_type);
-        if let Some(inner) = control.get("cache_control") {
-            obj.insert("cache_control".to_string(), inner.clone());
-        }
+        obj.insert("cache_control".into(), cache_control_value(cache_type));
     }
 }
 
@@ -678,6 +645,35 @@ fn build_system_block<S: AsRef<str>>(text: S, cache_type: CacheType) -> serde_js
         "type": "text",
         "text": text.as_ref()
     });
-    attach_cache_control(&mut block, cache_type);
+    attach_cache_control(&mut block, &cache_type);
     block
+}
+
+/// Marks the last `n_messages` with cache_control on their final content block.
+/// Works regardless of role (assistant/user).
+fn mark_tail_messages_for_cache(
+    messages: &mut [serde_json::Value],
+    n_messages: usize,
+    cache_type: CacheType,
+) {
+    for msg in messages.iter_mut().rev().take(n_messages) {
+        if let Some(content) = msg.get_mut("content") {
+            match content {
+                serde_json::Value::Array(blocks) => {
+                    if let Some(last_block) = blocks.last_mut() {
+                        attach_cache_control(last_block, &cache_type);
+                    }
+                }
+                serde_json::Value::String(text) => {
+                    // Convert shorthand message into array form with cache marker.
+                    *content = json!([{
+                        "type": "text",
+                        "text": text,
+                        "cache_control": cache_control_value(&cache_type)
+                    }]);
+                }
+                _ => tracing::debug!("Unexpected message content type during caching"),
+            }
+        }
+    }
 }
