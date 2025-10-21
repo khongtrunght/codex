@@ -537,27 +537,6 @@ fn create_edit_file_tool() -> ToolSpec {
     })
 }
 
-fn create_delete_file_tool() -> ToolSpec {
-    let mut properties = BTreeMap::new();
-    properties.insert(
-        "file_path".to_string(),
-        JsonSchema::String {
-            description: Some("Absolute path to the file to delete".to_string()),
-        },
-    );
-
-    ToolSpec::Function(ResponsesApiTool {
-        name: "delete_file".to_string(),
-        description: "Deletes a file from the filesystem.".to_string(),
-        strict: false,
-        parameters: JsonSchema::Object {
-            properties,
-            required: Some(vec!["file_path".to_string()]),
-            additional_properties: Some(false.into()),
-        },
-    })
-}
-
 fn create_list_dir_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
@@ -941,7 +920,6 @@ pub(crate) fn build_specs(
     use crate::exec_command::create_exec_command_tool_for_responses_api;
     use crate::exec_command::create_write_stdin_tool_for_responses_api;
     use crate::tools::handlers::ApplyPatchHandler;
-    use crate::tools::handlers::DeleteFileHandler;
     use crate::tools::handlers::EditFileHandler;
     use crate::tools::handlers::ExecStreamHandler;
     use crate::tools::handlers::GrepFilesHandler;
@@ -1064,16 +1042,12 @@ pub(crate) fn build_specs(
     {
         let write_file_handler = Arc::new(WriteFileHandler);
         let edit_file_handler = Arc::new(EditFileHandler);
-        let delete_file_handler = Arc::new(DeleteFileHandler);
 
         builder.push_spec(create_write_file_tool());
         builder.register_handler("write_file", write_file_handler);
 
         builder.push_spec(create_edit_file_tool());
         builder.register_handler("edit_file", edit_file_handler);
-
-        builder.push_spec(create_delete_file_tool());
-        builder.register_handler("delete_file", delete_file_handler);
     }
 
     if config.web_search_request {
