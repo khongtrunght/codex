@@ -305,6 +305,12 @@ impl ChatWidget {
             Some("Optimized for coding tasks with many tools.")
         } else if slug.starts_with("gpt-5") {
             Some("Broad world knowledge with strong general reasoning.")
+        } else if slug.starts_with("claude-sonnet-4-5") {
+            Some("Smartest model for complex agents and coding.")
+        } else if slug.starts_with("claude-haiku-4-5") {
+            Some("Fastest with near-frontier intelligence.")
+        } else if slug.starts_with("claude-opus-4-1") {
+            Some("Exceptional for specialized reasoning tasks.")
         } else {
             None
         }

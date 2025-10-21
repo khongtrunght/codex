@@ -46,8 +46,15 @@ pub(crate) enum SignInState {
     ChatGptContinueInBrowser(ContinueInBrowserState),
     ChatGptSuccessMessage,
     ChatGptSuccess,
+    ClaudeOAuthEntry(ClaudeOAuthInputState),
+    ClaudeOAuthConfigured,
     ApiKeyEntry(ApiKeyInputState),
     ApiKeyConfigured,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ClaudeOAuthInputState {
+    value: String,
 }
 
 #[derive(Clone, Default)]
@@ -76,24 +83,39 @@ impl KeyboardHandler for AuthModeWidget {
         if self.handle_api_key_entry_key_event(&key_event) {
             return;
         }
+        if self.handle_claude_oauth_entry_key_event(&key_event) {
+            return;
+        }
 
         match key_event.code {
             KeyCode::Up | KeyCode::Char('k') => {
-                self.highlighted_mode = AuthMode::ChatGPT;
+                self.highlighted_mode = match self.highlighted_mode {
+                    AuthMode::ClaudeOAuth => AuthMode::ChatGPT,
+                    AuthMode::ApiKey => AuthMode::ClaudeOAuth,
+                    _ => AuthMode::ChatGPT,
+                };
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.highlighted_mode = AuthMode::ApiKey;
+                self.highlighted_mode = match self.highlighted_mode {
+                    AuthMode::ChatGPT => AuthMode::ClaudeOAuth,
+                    AuthMode::ClaudeOAuth => AuthMode::ApiKey,
+                    _ => AuthMode::ApiKey,
+                };
             }
             KeyCode::Char('1') => {
                 self.start_chatgpt_login();
             }
-            KeyCode::Char('2') => self.start_api_key_entry(),
+            KeyCode::Char('2') => self.start_claude_oauth_entry(),
+            KeyCode::Char('3') => self.start_api_key_entry(),
             KeyCode::Enter => {
                 let sign_in_state = { (*self.sign_in_state.read().unwrap()).clone() };
                 match sign_in_state {
                     SignInState::PickMode => match self.highlighted_mode {
                         AuthMode::ChatGPT => {
                             self.start_chatgpt_login();
+                        }
+                        AuthMode::ClaudeOAuth => {
+                            self.start_claude_oauth_entry();
                         }
                         AuthMode::ApiKey => {
                             self.start_api_key_entry();
@@ -131,6 +153,7 @@ pub(crate) struct AuthModeWidget {
     pub codex_home: PathBuf,
     pub login_status: LoginStatus,
     pub auth_manager: Arc<AuthManager>,
+    pub claude_pkce_verifier: Option<String>,
 }
 
 impl AuthModeWidget {
@@ -185,6 +208,13 @@ impl AuthModeWidget {
         lines.push("".into());
         lines.extend(create_mode_item(
             1,
+            AuthMode::ClaudeOAuth,
+            "Sign in with Claude",
+            "Usage included with Pro and Max plans",
+        ));
+        lines.push("".into());
+        lines.extend(create_mode_item(
+            2,
             AuthMode::ApiKey,
             "Provide your own API key",
             "Pay for what you use",
@@ -279,6 +309,73 @@ impl AuthModeWidget {
             "  Codex will use usage-based billing with your API key.".into(),
         ];
 
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
+    }
+
+    fn render_claude_oauth_entry(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        state: &ClaudeOAuthInputState,
+    ) {
+        let [intro_area, input_area, footer_area] = Layout::vertical([
+            Constraint::Min(4),
+            Constraint::Length(3),
+            Constraint::Min(2),
+        ])
+        .areas(area);
+
+        let intro_lines: Vec<Line> = vec![
+            Line::from(vec!["> ".into(), "Sign in with Claude Pro/Max".bold()]),
+            "".into(),
+            "  A browser window should have opened. Complete the authorization,".into(),
+            "  then paste the authorization code from the URL below.".into(),
+            "".into(),
+        ];
+        Paragraph::new(intro_lines)
+            .wrap(Wrap { trim: false })
+            .render(intro_area, buf);
+
+        let content_line: Line = if state.value.is_empty() {
+            vec!["Paste authorization code here".dim()].into()
+        } else {
+            Line::from(state.value.clone())
+        };
+        Paragraph::new(content_line)
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .title("Authorization Code")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .render(input_area, buf);
+
+        let mut footer_lines: Vec<Line> = vec![
+            "  Press Enter to continue".dim().into(),
+            "  Press Esc to go back".dim().into(),
+        ];
+        if let Some(error) = &self.error {
+            footer_lines.push("".into());
+            footer_lines.push(error.as_str().red().into());
+        }
+        Paragraph::new(footer_lines)
+            .wrap(Wrap { trim: false })
+            .render(footer_area, buf);
+    }
+
+    fn render_claude_oauth_configured(&self, area: Rect, buf: &mut Buffer) {
+        let lines: Vec<Line> = vec![
+            Line::from(vec![
+                "> ".into(),
+                "Successfully signed in with Claude!".bold().green(),
+            ]),
+            "".into(),
+            "  Your Claude Pro/Max subscription is ready to use.".into(),
+        ];
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .render(area, buf);
@@ -427,6 +524,83 @@ impl AuthModeWidget {
         true
     }
 
+    fn handle_claude_oauth_entry_key_event(&mut self, key_event: &KeyEvent) -> bool {
+        let mut should_save: Option<String> = None;
+        let mut should_request_frame = false;
+
+        {
+            let mut guard = self.sign_in_state.write().unwrap();
+            if let SignInState::ClaudeOAuthEntry(state) = &mut *guard {
+                match key_event.code {
+                    KeyCode::Esc => {
+                        *guard = SignInState::PickMode;
+                        self.error = None;
+                        self.claude_pkce_verifier = None;
+                        should_request_frame = true;
+                    }
+                    KeyCode::Enter => {
+                        let trimmed = state.value.trim().to_string();
+                        if trimmed.is_empty() {
+                            self.error = Some("Authorization code cannot be empty".to_string());
+                            should_request_frame = true;
+                        } else {
+                            should_save = Some(trimmed);
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        state.value.pop();
+                        self.error = None;
+                        should_request_frame = true;
+                    }
+                    KeyCode::Char(c)
+                        if !key_event.modifiers.contains(KeyModifiers::CONTROL)
+                            && !key_event.modifiers.contains(KeyModifiers::ALT) =>
+                    {
+                        state.value.push(c);
+                        self.error = None;
+                        should_request_frame = true;
+                    }
+                    _ => {}
+                }
+            } else {
+                return false;
+            }
+        }
+
+        if let Some(code) = should_save {
+            self.save_claude_oauth_code(code);
+        } else if should_request_frame {
+            self.request_frame.schedule_frame();
+        }
+        true
+    }
+
+    fn start_claude_oauth_entry(&mut self) {
+        self.error = None;
+        let mut guard = self.sign_in_state.write().unwrap();
+        *guard = SignInState::ClaudeOAuthEntry(ClaudeOAuthInputState {
+            value: String::new(),
+        });
+        drop(guard);
+
+        // Generate PKCE and authorization URL
+        let pkce = codex_core::auth_anthropic::generate_pkce();
+        let auth_url = codex_core::auth_anthropic::build_authorization_url(
+            codex_core::auth_anthropic::AnthropicOAuthMode::Max,
+            &pkce,
+        );
+
+        // Open browser
+        if let Err(e) = open::that(&auth_url) {
+            self.error = Some(format!("Failed to open browser: {e}"));
+        }
+
+        // Store PKCE verifier for later use
+        self.claude_pkce_verifier = Some(pkce.verifier);
+
+        self.request_frame.schedule_frame();
+    }
+
     fn start_api_key_entry(&mut self) {
         self.error = None;
         let prefill_from_env = read_openai_api_key_from_env();
@@ -477,6 +651,64 @@ impl AuthModeWidget {
                 }
             }
         }
+
+        self.request_frame.schedule_frame();
+    }
+
+    fn save_claude_oauth_code(&mut self, code: String) {
+        let verifier = match &self.claude_pkce_verifier {
+            Some(v) => v.clone(),
+            None => {
+                self.error = Some("PKCE verifier not found. Please try again.".to_string());
+                self.request_frame.schedule_frame();
+                return;
+            }
+        };
+
+        let codex_home = self.codex_home.clone();
+        let sign_in_state = self.sign_in_state.clone();
+        let request_frame = self.request_frame.clone();
+        let auth_manager = self.auth_manager.clone();
+
+        let client = codex_core::default_client::create_client();
+
+        tokio::spawn(async move {
+            match codex_core::auth_anthropic::exchange_code(&code, "", &verifier, &client).await {
+                Ok(tokens) => {
+                    // Save tokens to auth.json
+                    let auth_file = codex_core::auth::get_auth_file(&codex_home);
+                    let auth_dot_json = codex_core::auth::AuthDotJson {
+                        openai_api_key: None,
+                        tokens: None,
+                        last_refresh: None,
+                        anthropic_tokens: Some(tokens),
+                        anthropic_last_refresh: Some(chrono::Utc::now()),
+                    };
+
+                    match codex_core::auth::write_auth_json(&auth_file, &auth_dot_json) {
+                        Ok(()) => {
+                            auth_manager.reload();
+                            *sign_in_state.write().unwrap() = SignInState::ClaudeOAuthConfigured;
+                        }
+                        Err(err) => {
+                            let mut guard = sign_in_state.write().unwrap();
+                            if let SignInState::ClaudeOAuthEntry(existing) = &mut *guard {
+                                // Keep the code in the input for retry
+                            }
+                            // Error will be set in main thread
+                        }
+                    }
+                }
+                Err(err) => {
+                    let mut guard = sign_in_state.write().unwrap();
+                    if let SignInState::ClaudeOAuthEntry(existing) = &mut *guard {
+                        // Keep the code for retry
+                    }
+                    // Error will be set in main thread
+                }
+            }
+            request_frame.schedule_frame();
+        });
 
         self.request_frame.schedule_frame();
     }
@@ -539,9 +771,12 @@ impl StepStateProvider for AuthModeWidget {
         match &*sign_in_state {
             SignInState::PickMode
             | SignInState::ApiKeyEntry(_)
+            | SignInState::ClaudeOAuthEntry(_)
             | SignInState::ChatGptContinueInBrowser(_)
             | SignInState::ChatGptSuccessMessage => StepState::InProgress,
-            SignInState::ChatGptSuccess | SignInState::ApiKeyConfigured => StepState::Complete,
+            SignInState::ChatGptSuccess
+            | SignInState::ApiKeyConfigured
+            | SignInState::ClaudeOAuthConfigured => StepState::Complete,
         }
     }
 }
@@ -561,6 +796,12 @@ impl WidgetRef for AuthModeWidget {
             }
             SignInState::ChatGptSuccess => {
                 self.render_chatgpt_success(area, buf);
+            }
+            SignInState::ClaudeOAuthEntry(state) => {
+                self.render_claude_oauth_entry(area, buf, state);
+            }
+            SignInState::ClaudeOAuthConfigured => {
+                self.render_claude_oauth_configured(area, buf);
             }
             SignInState::ApiKeyEntry(state) => {
                 self.render_api_key_entry(area, buf, state);

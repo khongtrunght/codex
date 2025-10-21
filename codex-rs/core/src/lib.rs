@@ -8,6 +8,7 @@
 mod anthropic_messages;
 mod apply_patch;
 pub mod auth;
+pub mod auth_anthropic;
 pub mod bash;
 mod chat_completions;
 mod client;

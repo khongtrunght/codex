@@ -124,9 +124,22 @@ impl ModelProviderInfo {
         if let Some(auth) = effective_auth.as_ref() {
             match self.wire_api {
                 WireApi::Anthropic => {
-                    // Anthropic uses x-api-key header instead of Authorization
-                    let token = auth.get_token().await?;
-                    builder = builder.header("x-api-key", token);
+                    match auth.mode {
+                        AuthMode::ClaudeOAuth => {
+                            // Use OAuth token with special beta headers
+                            let token = auth.get_anthropic_token().await?;
+                            builder = builder.header("Authorization", format!("Bearer {token}"));
+                            builder = builder.header(
+                                "anthropic-beta",
+                                "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14"
+                            );
+                        }
+                        _ => {
+                            // Use API key (existing behavior)
+                            let token = auth.get_token().await?;
+                            builder = builder.header("x-api-key", token);
+                        }
+                    }
                 }
                 _ => {
                     // OpenAI and others use Bearer token

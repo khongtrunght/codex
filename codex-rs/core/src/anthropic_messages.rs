@@ -59,9 +59,39 @@ pub(crate) async fn stream_anthropic_messages(
         "stream": true,
     });
 
-    // Add system prompt if present
+    // Add system prompt as an array with cache control
     if !system_prompt.is_empty() {
-        payload["system"] = json!(system_prompt);
+        let mut system_blocks = vec![
+            json!({
+                "type": "text",
+                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+                "cache_control": {
+                    "type": "ephemeral"
+                }
+            })
+        ];
+
+        // Add the actual system prompt after the base message, also with cache control
+        system_blocks.push(json!({
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {
+                "type": "ephemeral"
+            }
+        }));
+
+        payload["system"] = json!(system_blocks);
+    } else {
+        // Even without additional instructions, include the base system message
+        payload["system"] = json!([
+            {
+                "type": "text",
+                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+                "cache_control": {
+                    "type": "ephemeral"
+                }
+            }
+        ]);
     }
 
     // Add tools if present
@@ -267,6 +297,26 @@ fn build_anthropic_messages(
                     "content": "Please assist me with the following."
                 }),
             );
+        }
+    }
+
+    // Add cache_control to the last user message for prompt caching
+    for message in messages.iter_mut().rev() {
+        if message.get("role").and_then(|r| r.as_str()) == Some("user") {
+            if let Some(content) = message.get_mut("content") {
+                // If content is an array, add cache_control to the last text block
+                if let Some(content_array) = content.as_array_mut() {
+                    if let Some(last_block) = content_array.last_mut() {
+                        if let Some(obj) = last_block.as_object_mut() {
+                            obj.insert(
+                                "cache_control".to_string(),
+                                json!({"type": "ephemeral"}),
+                            );
+                        }
+                    }
+                }
+            }
+            break; // Only modify the last user message
         }
     }
 
