@@ -503,6 +503,10 @@ impl BottomPane {
     pub(crate) fn take_recent_submission_images(&mut self) -> Vec<PathBuf> {
         self.composer.take_recent_submission_images()
     }
+
+    pub(crate) fn take_recent_submission_files(&mut self) -> Vec<PathBuf> {
+        self.composer.take_recent_submission_files()
+    }
 }
 
 impl WidgetRef for &BottomPane {

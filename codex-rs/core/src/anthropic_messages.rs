@@ -28,7 +28,7 @@ use tokio::time::timeout;
 use tracing::debug;
 use tracing::trace;
 
-const DEFAULT_MAX_TOKENS: u32 = 4096;
+const DEFAULT_MAX_TOKENS: u32 = 32000;
 const CLAUDE_CODE_SYSTEM_PROMPT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Implementation for the Anthropic Messages API.
@@ -423,7 +423,9 @@ impl StreamingState {
                 let cache_creation = self.cache_creation_input_tokens.unwrap_or(0);
                 let cache_read = self.cache_read_input_tokens.unwrap_or(0);
 
-                // Total input includes new tokens and cache creation tokens
+                // Cache read tokens are part of input, not separate
+                // The total input is: new tokens + cache read tokens
+                // Cache creation tokens are also part of the input
                 let total_input = input + cache_creation;
 
                 Some(TokenUsage {
@@ -431,7 +433,8 @@ impl StreamingState {
                     cached_input_tokens: cache_read,
                     output_tokens: output,
                     reasoning_output_tokens: 0, // Not separately tracked in basic API
-                    total_tokens: total_input + cache_read + output,
+                    // Don't double-count cache_read in total
+                    total_tokens: total_input + output,
                 })
             }
             None => None,

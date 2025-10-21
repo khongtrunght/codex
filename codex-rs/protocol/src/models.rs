@@ -234,6 +234,19 @@ impl From<Vec<InputItem>> for ResponseInputItem {
                             None
                         }
                     },
+                    InputItem::LocalFile { path, max_lines } => {
+                        match read_file_with_context(&path, max_lines) {
+                            Ok(content) => Some(ContentItem::InputText { text: content }),
+                            Err(err) => {
+                                tracing::warn!(
+                                    "Skipping file {} – could not read: {}",
+                                    path.display(),
+                                    err
+                                );
+                                None
+                            }
+                        }
+                    }
                 })
                 .collect::<Vec<ContentItem>>(),
         }
@@ -316,10 +329,153 @@ impl std::ops::Deref for FunctionCallOutputPayload {
 
 // (Moved event mapping logic into codex-core to avoid coupling protocol to UI-facing events.)
 
+/// Maximum file size we'll read (10MB).
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Read a file and format it with line numbers and metadata.
+fn read_file_with_context(
+    path: &std::path::Path,
+    max_lines: Option<usize>,
+) -> Result<String, std::io::Error> {
+    use std::fs::File;
+    use std::fs::metadata;
+    use std::io::BufRead;
+    use std::io::BufReader;
+    use std::io::ErrorKind;
+
+    let meta = metadata(path)?;
+    let file_size = meta.len();
+
+    // Check file size limit
+    if file_size > MAX_FILE_SIZE {
+        return Err(std::io::Error::new(
+            ErrorKind::InvalidData,
+            format!("File too large: {file_size} bytes (max: {MAX_FILE_SIZE} bytes)"),
+        ));
+    }
+
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let max = max_lines.unwrap_or(2000);
+
+    let mut lines = Vec::new();
+    let mut line_num = 1;
+    let mut total_lines = 0;
+    let mut truncated = false;
+
+    for line_result in reader.lines() {
+        total_lines += 1;
+        if line_num <= max {
+            let line = line_result?;
+            // Truncate very long lines
+            let truncated_line = if line.len() > 500 {
+                format!("{}...", &line[..497])
+            } else {
+                line
+            };
+            lines.push(format!("{line_num:6}: {truncated_line}"));
+            line_num += 1;
+        } else if !truncated {
+            truncated = true;
+        }
+    }
+
+    let mut result = String::new();
+
+    // Add file metadata header
+    result.push_str(&format!("File: {}\n", path.display()));
+    result.push_str(&format!("Size: {file_size} bytes, {total_lines} lines\n"));
+
+    if truncated {
+        result.push_str(&format!("(Showing first {max} of {total_lines} lines)\n"));
+    }
+
+    // Add language hint for syntax
+    if let Some(ext) = path.extension() {
+        result.push_str(&format!("```{}\n", ext.to_string_lossy()));
+    } else {
+        result.push_str("```\n");
+    }
+
+    result.push_str(&lines.join("\n"));
+    result.push_str("\n```");
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use anyhow::Result;
+
+    #[test]
+    fn test_read_file_with_context_formatting() -> Result<()> {
+        use std::io::Write;
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("test.rs");
+
+        let mut file = std::fs::File::create(&file_path)?;
+        writeln!(file, "fn main() {{")?;
+        writeln!(file, "    println!(\"Hello, world!\");")?;
+        writeln!(file, "    let x = 42;")?;
+        writeln!(file, "}}")?;
+        drop(file);
+
+        let result = read_file_with_context(&file_path, Some(2000))?;
+
+        // Verify the output contains expected components
+        assert!(result.contains("File:"));
+        assert!(result.contains("test.rs"));
+        assert!(result.contains("Size:"));
+        assert!(result.contains("bytes, 4 lines"));
+        assert!(result.contains("```rs"));
+        assert!(result.contains("     1: fn main() {"));
+        assert!(result.contains("     2:     println!(\"Hello, world!\");"));
+        assert!(result.contains("```"));
+
+        println!("Formatted output:\n{result}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_file_with_truncation() -> Result<()> {
+        use std::io::Write;
+        let temp_dir = tempfile::tempdir()?;
+        let file_path = temp_dir.path().join("large.txt");
+
+        let mut file = std::fs::File::create(&file_path)?;
+        for i in 1..=100 {
+            writeln!(file, "Line {i}")?;
+        }
+        drop(file);
+
+        let result = read_file_with_context(&file_path, Some(50))?;
+
+        assert!(result.contains("bytes, 100 lines"));
+        assert!(result.contains("(Showing first 50 of 100 lines)"));
+        assert!(result.contains("    50: Line 50"));
+        assert!(!result.contains("Line 51"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_file_too_large() {
+        use std::io::Write;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("huge.txt");
+
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        // Write more than MAX_FILE_SIZE
+        let large_data = vec![b'x'; (MAX_FILE_SIZE + 1) as usize];
+        file.write_all(&large_data).unwrap();
+        drop(file);
+
+        let result = read_file_with_context(&file_path, Some(2000));
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("File too large"));
+    }
 
     #[test]
     fn serializes_success_as_plain_string() -> Result<()> {

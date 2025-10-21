@@ -407,6 +407,14 @@ pub enum InputItem {
     LocalImage {
         path: std::path::PathBuf,
     },
+
+    /// Local file path provided by the user. This will be converted to text
+    /// content with line numbers during request serialization.
+    LocalFile {
+        path: std::path::PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_lines: Option<usize>,
+    },
 }
 
 /// Event Queue Entry - events from agent

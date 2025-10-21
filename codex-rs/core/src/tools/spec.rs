@@ -474,7 +474,10 @@ fn create_write_file_tool() -> ToolSpec {
     properties.insert(
         "file_path".to_string(),
         JsonSchema::String {
-            description: Some("The absolute path to the file to write (must be absolute, not relative)".to_string()),
+            description: Some(
+                "The absolute path to the file to write (must be absolute, not relative)"
+                    .to_string(),
+            ),
         },
     );
     properties.insert(
