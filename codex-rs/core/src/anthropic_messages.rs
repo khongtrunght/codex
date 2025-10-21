@@ -423,6 +423,8 @@ struct StreamingState {
     message_id: String,
     content_blocks: Vec<ContentBlockState>,
     input_tokens: Option<u64>,
+    cache_creation_input_tokens: Option<u64>,
+    cache_read_input_tokens: Option<u64>,
     output_tokens: Option<u64>,
     completed: bool,
 }
@@ -451,15 +453,24 @@ impl ContentBlockState {
 
 impl StreamingState {
     fn get_usage(&self) -> Option<TokenUsage> {
-        match (self.input_tokens, self.output_tokens) {
-            (Some(input), Some(output)) => Some(TokenUsage {
-                input_tokens: input,
-                cached_input_tokens: 0, // Anthropic doesn't provide this separately
-                output_tokens: output,
-                reasoning_output_tokens: 0, // Not separately tracked in basic API
-                total_tokens: input + output,
-            }),
-            _ => None,
+        match self.output_tokens {
+            Some(output) => {
+                let input = self.input_tokens.unwrap_or(0);
+                let cache_creation = self.cache_creation_input_tokens.unwrap_or(0);
+                let cache_read = self.cache_read_input_tokens.unwrap_or(0);
+
+                // Total input includes new tokens and cache creation tokens
+                let total_input = input + cache_creation;
+
+                Some(TokenUsage {
+                    input_tokens: total_input,
+                    cached_input_tokens: cache_read,
+                    output_tokens: output,
+                    reasoning_output_tokens: 0, // Not separately tracked in basic API
+                    total_tokens: total_input + cache_read + output,
+                })
+            }
+            None => None,
         }
     }
 }
@@ -475,10 +486,14 @@ async fn handle_event(
         "message_start" => {
             state.message_id = event["message"]["id"].as_str().unwrap_or("").to_string();
             if let Some(usage) = event["message"]["usage"].as_object() {
-                fn fun_name(v: &serde_json::Value) -> Option<u64> {
-                    v.as_u64()
-                }
-                state.input_tokens = usage.get("input_tokens").and_then(fun_name);
+                state.input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64());
+                state.cache_creation_input_tokens = usage
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64());
+                state.cache_read_input_tokens = usage
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64());
+                state.output_tokens = usage.get("output_tokens").and_then(|v| v.as_u64());
             }
             // Send Created event
             let _ = tx.send(Ok(ResponseEvent::Created)).await;
@@ -578,9 +593,25 @@ async fn handle_event(
 
         "message_delta" => {
             if let Some(usage) = event["usage"].as_object() {
-                state.output_tokens = usage
-                    .get("output_tokens")
-                    .and_then(serde_json::Value::as_u64);
+                // Update all token counts from delta event (they're cumulative)
+                if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                    state.input_tokens = Some(input);
+                }
+                if let Some(cache_creation) = usage
+                    .get("cache_creation_input_tokens")
+                    .and_then(|v| v.as_u64())
+                {
+                    state.cache_creation_input_tokens = Some(cache_creation);
+                }
+                if let Some(cache_read) = usage
+                    .get("cache_read_input_tokens")
+                    .and_then(|v| v.as_u64())
+                {
+                    state.cache_read_input_tokens = Some(cache_read);
+                }
+                if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                    state.output_tokens = Some(output);
+                }
             }
         }
 
