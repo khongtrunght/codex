@@ -474,19 +474,19 @@ fn create_write_file_tool() -> ToolSpec {
     properties.insert(
         "file_path".to_string(),
         JsonSchema::String {
-            description: Some("Absolute path to the file to write".to_string()),
+            description: Some("The absolute path to the file to write (must be absolute, not relative)".to_string()),
         },
     );
     properties.insert(
         "content".to_string(),
         JsonSchema::String {
-            description: Some("Content to write to the file".to_string()),
+            description: Some("The content to write to the file".to_string()),
         },
     );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "write_file".to_string(),
-        description: "Writes content to a file, creating it if it doesn't exist or overwriting it if it does."
+        description: "Writes a file to the local filesystem.\n\nUsage:\n- This tool will overwrite the existing file if there is one at the provided path.\n- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.\n- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
             .to_string(),
         strict: false,
         parameters: JsonSchema::Object {
@@ -502,35 +502,41 @@ fn create_edit_file_tool() -> ToolSpec {
     properties.insert(
         "file_path".to_string(),
         JsonSchema::String {
-            description: Some("Absolute path to the file to edit".to_string()),
+            description: Some("The absolute path to the file to modify".to_string()),
         },
     );
     properties.insert(
-        "old_text".to_string(),
+        "old_string".to_string(),
+        JsonSchema::String {
+            description: Some("The text to replace".to_string()),
+        },
+    );
+    properties.insert(
+        "new_string".to_string(),
         JsonSchema::String {
             description: Some(
-                "The text to search for and replace. Must be unique within the file.".to_string(),
+                "The text to replace it with (must be different from old_string)".to_string(),
             ),
         },
     );
     properties.insert(
-        "new_text".to_string(),
-        JsonSchema::String {
-            description: Some("The text to replace old_text with".to_string()),
+        "replace_all".to_string(),
+        JsonSchema::Boolean {
+            description: Some("Replace all occurences of old_string (default false)".to_string()),
         },
     );
 
     ToolSpec::Function(ResponsesApiTool {
         name: "edit_file".to_string(),
-        description: "Edits a file by replacing unique text. The old_text must appear exactly once in the file."
+        description: "Performs exact string replacements in files. \n\nUsage:\n- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. \n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`. \n- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."
             .to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec![
                 "file_path".to_string(),
-                "old_text".to_string(),
-                "new_text".to_string(),
+                "old_string".to_string(),
+                "new_string".to_string(),
             ]),
             additional_properties: Some(false.into()),
         },
