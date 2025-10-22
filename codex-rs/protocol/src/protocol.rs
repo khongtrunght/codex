@@ -407,6 +407,22 @@ pub enum InputItem {
     LocalImage {
         path: std::path::PathBuf,
     },
+
+    /// Local file path provided by the user. This will be converted to text
+    /// content with line numbers during request serialization.
+    LocalFile {
+        path: std::path::PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_lines: Option<usize>,
+    },
+
+    /// Local folder path provided by the user. This will be converted to text
+    /// containing the directory tree structure during request serialization.
+    LocalFolder {
+        path: std::path::PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_depth: Option<usize>,
+    },
 }
 
 /// Event Queue Entry - events from agent
@@ -498,6 +514,12 @@ pub enum EventMsg {
 
     /// Notification that a patch application has finished.
     PatchApplyEnd(PatchApplyEndEvent),
+
+    FileEditApprovalRequest(FileEditApprovalRequestEvent),
+
+    FileEditBegin(FileEditBeginEvent),
+
+    FileEditEnd(FileEditEndEvent),
 
     TurnDiff(TurnDiffEvent),
 
@@ -1231,6 +1253,28 @@ pub struct PatchApplyEndEvent {
     pub stderr: String,
     /// Whether the patch was applied successfully.
     pub success: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct FileEditApprovalRequestEvent {
+    pub call_id: String,
+    pub changes: HashMap<PathBuf, FileChange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct FileEditBeginEvent {
+    pub call_id: String,
+    pub auto_approved: bool,
+    pub changes: HashMap<PathBuf, FileChange>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+pub struct FileEditEndEvent {
+    pub call_id: String,
+    pub success: bool,
+    pub stderr: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, TS)]

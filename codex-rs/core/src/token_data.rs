@@ -116,6 +116,19 @@ where
     serializer.serialize_str(&id_token.raw_jwt)
 }
 
+/// Anthropic OAuth token data
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub struct AnthropicTokenData {
+    /// OAuth access token for API requests
+    pub access_token: String,
+
+    /// Refresh token for obtaining new access tokens
+    pub refresh_token: String,
+
+    /// Token expiration timestamp (milliseconds since epoch)
+    pub expires_at: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

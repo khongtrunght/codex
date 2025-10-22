@@ -5,8 +5,10 @@
 // the TUI or the tracing stack).
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+mod anthropic_messages;
 mod apply_patch;
 pub mod auth;
+pub mod auth_anthropic;
 pub mod bash;
 mod chat_completions;
 mod client;

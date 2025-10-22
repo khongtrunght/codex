@@ -174,6 +174,17 @@ impl ModelClient {
 
                 Ok(ResponseStream { rx_event: rx })
             }
+            WireApi::Anthropic => {
+                crate::anthropic_messages::stream_anthropic_messages(
+                    prompt,
+                    &self.config.model_family,
+                    &self.client,
+                    &self.provider,
+                    &self.auth_manager,
+                    &self.otel_event_manager,
+                )
+                .await
+            }
         }
     }
 

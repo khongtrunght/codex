@@ -233,6 +233,8 @@ async fn helpers_are_available_and_do_not_panic() {
         app_event_tx: tx,
         initial_prompt: None,
         initial_images: Vec::new(),
+        initial_files: Vec::new(),
+        initial_folders: Vec::new(),
         enhanced_keys_supported: false,
         auth_manager,
         feedback: codex_feedback::CodexFeedback::new(),

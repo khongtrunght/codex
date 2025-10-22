@@ -31,6 +31,7 @@ pub(crate) struct ToolsConfig {
     pub include_view_image_tool: bool,
     pub experimental_unified_exec_tool: bool,
     pub experimental_supported_tools: Vec<String>,
+    pub file_editing_strategy: Option<crate::model_family::FileEditingStrategy>,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -79,6 +80,7 @@ impl ToolsConfig {
             include_view_image_tool,
             experimental_unified_exec_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
+            file_editing_strategy: model_family.file_editing_strategy,
         }
     }
 }
@@ -467,6 +469,83 @@ fn create_read_file_tool() -> ToolSpec {
     })
 }
 
+fn create_write_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "The absolute path to the file to write (must be absolute, not relative)"
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "content".to_string(),
+        JsonSchema::String {
+            description: Some("The content to write to the file".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "write_file".to_string(),
+        description: "Writes a file to the local filesystem.\n\nUsage:\n- This tool will overwrite the existing file if there is one at the provided path.\n- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.\n- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["file_path".to_string(), "content".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_edit_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some("The absolute path to the file to modify".to_string()),
+        },
+    );
+    properties.insert(
+        "old_string".to_string(),
+        JsonSchema::String {
+            description: Some("The text to replace".to_string()),
+        },
+    );
+    properties.insert(
+        "new_string".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "The text to replace it with (must be different from old_string)".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "replace_all".to_string(),
+        JsonSchema::Boolean {
+            description: Some("Replace all occurences of old_string (default false)".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "edit_file".to_string(),
+        description: "Performs exact string replacements in files. \n\nUsage:\n- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. \n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: spaces + line number + tab. Everything after that tab is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`. \n- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec![
+                "file_path".to_string(),
+                "old_string".to_string(),
+                "new_string".to_string(),
+            ]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 fn create_list_dir_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
@@ -664,6 +743,36 @@ pub(crate) fn create_tools_json_for_chat_completions_api(
     Ok(tools_json)
 }
 
+/// Returns JSON values that are compatible with Anthropic's Messages API tool format.
+/// Anthropic uses `input_schema` instead of `parameters` for tool definitions.
+/// https://docs.anthropic.com/en/docs/build-with-claude/tool-use
+#[allow(dead_code)]
+pub(crate) fn create_tools_json_for_anthropic_api(
+    tools: &[ToolSpec],
+) -> crate::error::Result<Vec<serde_json::Value>> {
+    let mut tools_json = Vec::new();
+
+    for tool in tools {
+        // Only convert Function tools; skip LocalShell, WebSearch, and Freeform
+        if let ToolSpec::Function(ResponsesApiTool {
+            name,
+            description,
+            parameters,
+            ..
+        }) = tool
+        {
+            let anthropic_tool = json!({
+                "name": name,
+                "description": description,
+                "input_schema": parameters,
+            });
+            tools_json.push(anthropic_tool);
+        }
+    }
+
+    Ok(tools_json)
+}
+
 pub(crate) fn mcp_tool_to_openai_tool(
     fully_qualified_name: String,
     tool: mcp_types::Tool,
@@ -820,6 +929,7 @@ pub(crate) fn build_specs(
     use crate::exec_command::create_exec_command_tool_for_responses_api;
     use crate::exec_command::create_write_stdin_tool_for_responses_api;
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::EditFileHandler;
     use crate::tools::handlers::ExecStreamHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
@@ -831,6 +941,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WriteFileHandler;
     use std::sync::Arc;
 
     let mut builder = ToolRegistryBuilder::new();
@@ -932,6 +1043,20 @@ pub(crate) fn build_specs(
         let test_sync_handler = Arc::new(TestSyncHandler);
         builder.push_spec_with_parallel_support(create_test_sync_tool(), true);
         builder.register_handler("test_sync_tool", test_sync_handler);
+    }
+
+    // Register file editing tools based on strategy
+    if let Some(crate::model_family::FileEditingStrategy::SeparateTools) =
+        config.file_editing_strategy
+    {
+        let write_file_handler = Arc::new(WriteFileHandler);
+        let edit_file_handler = Arc::new(EditFileHandler);
+
+        builder.push_spec(create_write_file_tool());
+        builder.register_handler("write_file", write_file_handler);
+
+        builder.push_spec(create_edit_file_tool());
+        builder.register_handler("edit_file", edit_file_handler);
     }
 
     if config.web_search_request {

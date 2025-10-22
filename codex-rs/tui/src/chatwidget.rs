@@ -222,6 +222,8 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) initial_prompt: Option<String>,
     pub(crate) initial_images: Vec<PathBuf>,
+    pub(crate) initial_files: Vec<PathBuf>,
+    pub(crate) initial_folders: Vec<PathBuf>,
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) auth_manager: Arc<AuthManager>,
     pub(crate) feedback: codex_feedback::CodexFeedback,
@@ -280,6 +282,8 @@ pub(crate) struct ChatWidget {
 struct UserMessage {
     text: String,
     image_paths: Vec<PathBuf>,
+    file_paths: Vec<PathBuf>,
+    folder_paths: Vec<PathBuf>,
 }
 
 impl From<String> for UserMessage {
@@ -287,15 +291,28 @@ impl From<String> for UserMessage {
         Self {
             text,
             image_paths: Vec::new(),
+            file_paths: Vec::new(),
+            folder_paths: Vec::new(),
         }
     }
 }
 
-fn create_initial_user_message(text: String, image_paths: Vec<PathBuf>) -> Option<UserMessage> {
-    if text.is_empty() && image_paths.is_empty() {
+fn create_initial_user_message(
+    text: String,
+    image_paths: Vec<PathBuf>,
+    file_paths: Vec<PathBuf>,
+    folder_paths: Vec<PathBuf>,
+) -> Option<UserMessage> {
+    if text.is_empty() && image_paths.is_empty() && file_paths.is_empty() && folder_paths.is_empty()
+    {
         None
     } else {
-        Some(UserMessage { text, image_paths })
+        Some(UserMessage {
+            text,
+            image_paths,
+            file_paths,
+            folder_paths,
+        })
     }
 }
 
@@ -305,6 +322,12 @@ impl ChatWidget {
             Some("Optimized for coding tasks with many tools.")
         } else if slug.starts_with("gpt-5") {
             Some("Broad world knowledge with strong general reasoning.")
+        } else if slug.starts_with("claude-sonnet-4-5") {
+            Some("Smartest model for complex agents and coding.")
+        } else if slug.starts_with("claude-haiku-4-5") {
+            Some("Fastest with near-frontier intelligence.")
+        } else if slug.starts_with("claude-opus-4-1") {
+            Some("Exceptional for specialized reasoning tasks.")
         } else {
             None
         }
@@ -576,6 +599,13 @@ impl ChatWidget {
         ));
     }
 
+    fn on_file_edit_begin(&mut self, event: codex_core::protocol::FileEditBeginEvent) {
+        self.add_to_history(history_cell::new_patch_event(
+            event.changes,
+            &self.config.cwd,
+        ));
+    }
+
     fn on_view_image_tool_call(&mut self, event: ViewImageToolCallEvent) {
         self.flush_answer_stream_with_separator();
         self.add_to_history(history_cell::new_view_image_tool_call(
@@ -590,6 +620,14 @@ impl ChatWidget {
         self.defer_or_handle(
             |q| q.push_patch_end(event),
             |s| s.handle_patch_apply_end_now(ev2),
+        );
+    }
+
+    fn on_file_edit_end(&mut self, event: codex_core::protocol::FileEditEndEvent) {
+        let ev2 = event.clone();
+        self.defer_or_handle(
+            |q| q.push_file_edit_end(event),
+            |s| s.handle_file_edit_end_now(ev2),
         );
     }
 
@@ -778,6 +816,17 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn handle_file_edit_end_now(
+        &mut self,
+        event: codex_core::protocol::FileEditEndEvent,
+    ) {
+        // If the file edit was successful, just let the "Edited" block stand.
+        // Otherwise, add a failure block.
+        if !event.success {
+            self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
+        }
+    }
+
     pub(crate) fn handle_exec_approval_now(&mut self, id: String, ev: ExecApprovalRequestEvent) {
         self.flush_answer_stream_with_separator();
         let command = shlex::try_join(ev.command.iter().map(String::as_str))
@@ -918,6 +967,8 @@ impl ChatWidget {
             app_event_tx,
             initial_prompt,
             initial_images,
+            initial_files,
+            initial_folders,
             enhanced_keys_supported,
             auth_manager,
             feedback,
@@ -945,6 +996,8 @@ impl ChatWidget {
             initial_user_message: create_initial_user_message(
                 initial_prompt.unwrap_or_default(),
                 initial_images,
+                initial_files,
+                initial_folders,
             ),
             token_info: None,
             rate_limit_snapshot: None,
@@ -983,6 +1036,8 @@ impl ChatWidget {
             app_event_tx,
             initial_prompt,
             initial_images,
+            initial_files,
+            initial_folders,
             enhanced_keys_supported,
             auth_manager,
             feedback,
@@ -1012,6 +1067,8 @@ impl ChatWidget {
             initial_user_message: create_initial_user_message(
                 initial_prompt.unwrap_or_default(),
                 initial_images,
+                initial_files,
+                initial_folders,
             ),
             token_info: None,
             rate_limit_snapshot: None,
@@ -1095,6 +1152,8 @@ impl ChatWidget {
                         let user_message = UserMessage {
                             text,
                             image_paths: self.bottom_pane.take_recent_submission_images(),
+                            file_paths: self.bottom_pane.take_recent_submission_files(),
+                            folder_paths: self.bottom_pane.take_recent_submission_folders(),
                         };
                         if self.bottom_pane.is_task_running() {
                             self.queued_user_messages.push_back(user_message);
@@ -1307,8 +1366,17 @@ impl ChatWidget {
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
-        let UserMessage { text, image_paths } = user_message;
-        if text.is_empty() && image_paths.is_empty() {
+        let UserMessage {
+            text,
+            image_paths,
+            file_paths,
+            folder_paths,
+        } = user_message;
+        if text.is_empty()
+            && image_paths.is_empty()
+            && file_paths.is_empty()
+            && folder_paths.is_empty()
+        {
             return;
         }
 
@@ -1322,6 +1390,20 @@ impl ChatWidget {
 
         for path in image_paths {
             items.push(InputItem::LocalImage { path });
+        }
+
+        for path in file_paths {
+            items.push(InputItem::LocalFile {
+                path,
+                max_lines: Some(2000),
+            });
+        }
+
+        for path in folder_paths {
+            items.push(InputItem::LocalFolder {
+                path,
+                max_depth: None, // use default
+            });
         }
 
         self.codex_op_tx
@@ -1476,10 +1558,16 @@ impl ChatWidget {
             EventMsg::ApplyPatchApprovalRequest(ev) => {
                 self.on_apply_patch_approval_request(id.unwrap_or_default(), ev)
             }
+            EventMsg::FileEditApprovalRequest(_ev) => {
+                // TODO: Implement file edit approval handling
+                // For now, file edits are auto-approved
+            }
             EventMsg::ExecCommandBegin(ev) => self.on_exec_command_begin(ev),
             EventMsg::ExecCommandOutputDelta(delta) => self.on_exec_command_output_delta(delta),
             EventMsg::PatchApplyBegin(ev) => self.on_patch_apply_begin(ev),
             EventMsg::PatchApplyEnd(ev) => self.on_patch_apply_end(ev),
+            EventMsg::FileEditBegin(ev) => self.on_file_edit_begin(ev),
+            EventMsg::FileEditEnd(ev) => self.on_file_edit_end(ev),
             EventMsg::ExecCommandEnd(ev) => self.on_exec_command_end(ev),
             EventMsg::ViewImageToolCall(ev) => self.on_view_image_tool_call(ev),
             EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),

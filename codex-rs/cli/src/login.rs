@@ -130,6 +130,10 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
                 eprintln!("Logged in using ChatGPT");
                 std::process::exit(0);
             }
+            AuthMode::ClaudeOAuth => {
+                eprintln!("Logged in using Claude OAuth");
+                std::process::exit(0);
+            }
         },
         Ok(None) => {
             eprintln!("Not logged in");

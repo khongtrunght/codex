@@ -6,6 +6,15 @@ use crate::tools::handlers::apply_patch::ApplyPatchToolType;
 const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
 const GPT_5_CODEX_INSTRUCTIONS: &str = include_str!("../gpt_5_codex_prompt.md");
 
+/// Strategy for how a model family handles file editing operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FileEditingStrategy {
+    /// Use the apply_patch tool for file modifications
+    ApplyPatch,
+    /// Use separate WriteFile, EditFile, and DeleteFile tools
+    SeparateTools,
+}
+
 /// A model family is a group of models that share certain characteristics.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ModelFamily {
@@ -48,6 +57,12 @@ pub struct ModelFamily {
 
     /// Names of beta tools that should be exposed to this model family.
     pub experimental_supported_tools: Vec<String>,
+
+    /// Strategy for file editing operations. None defaults to ApplyPatch behavior.
+    pub file_editing_strategy: Option<FileEditingStrategy>,
+
+    /// Maximum number of output tokens for models that require explicit limits (e.g., Anthropic Claude).
+    pub max_output_tokens: Option<u32>,
 }
 
 macro_rules! model_family {
@@ -66,6 +81,8 @@ macro_rules! model_family {
             apply_patch_tool_type: None,
             base_instructions: BASE_INSTRUCTIONS.to_string(),
             experimental_supported_tools: Vec::new(),
+            file_editing_strategy: None,
+            max_output_tokens: None,
         };
         // apply overrides
         $(
@@ -158,6 +175,13 @@ pub fn find_family_for_model(mut slug: &str) -> Option<ModelFamily> {
             supports_reasoning_summaries: true,
             needs_special_apply_patch_instructions: true,
         )
+    } else if slug.starts_with("claude") {
+        model_family!(
+            slug, "claude",
+            supports_parallel_tool_calls: true,
+            file_editing_strategy: Some(FileEditingStrategy::SeparateTools),
+            max_output_tokens: Some(8192),
+        )
     } else {
         None
     }
@@ -175,5 +199,7 @@ pub fn derive_default_model_family(model: &str) -> ModelFamily {
         apply_patch_tool_type: None,
         base_instructions: BASE_INSTRUCTIONS.to_string(),
         experimental_supported_tools: Vec::new(),
+        file_editing_strategy: None,
+        max_output_tokens: None,
     }
 }

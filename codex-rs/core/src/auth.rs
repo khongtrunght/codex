@@ -128,7 +128,55 @@ impl CodexAuth {
                 let id_token = self.get_token_data().await?.access_token;
                 Ok(id_token)
             }
+            AuthMode::ClaudeOAuth => self.get_anthropic_token().await,
         }
+    }
+
+    /// Get Anthropic OAuth token, refreshing if expired
+    pub async fn get_anthropic_token(&self) -> Result<String, std::io::Error> {
+        let auth_json = self
+            .get_current_auth_json()
+            .ok_or_else(|| std::io::Error::other("No auth data available"))?;
+
+        let mut tokens = auth_json
+            .anthropic_tokens
+            .ok_or_else(|| std::io::Error::other("No Anthropic tokens available"))?;
+
+        // Check if token is expired (with 5 minute buffer)
+        let now = chrono::Utc::now().timestamp_millis();
+        if tokens.expires_at < now + (5 * 60 * 1000) {
+            // Refresh token
+            tokens =
+                crate::auth_anthropic::refresh_token(&tokens.refresh_token, &self.client).await?;
+
+            // Update auth.json
+            self.update_anthropic_tokens(tokens.clone()).await?;
+        }
+
+        Ok(tokens.access_token)
+    }
+
+    async fn update_anthropic_tokens(
+        &self,
+        tokens: crate::token_data::AnthropicTokenData,
+    ) -> Result<(), std::io::Error> {
+        // Update in-memory
+        if let Ok(mut auth_lock) = self.auth_dot_json.lock()
+            && let Some(ref mut auth) = *auth_lock
+        {
+            auth.anthropic_tokens = Some(tokens);
+            auth.anthropic_last_refresh = Some(chrono::Utc::now());
+        }
+
+        // Update on disk
+        write_auth_json(
+            &self.auth_file,
+            &self
+                .get_current_auth_json()
+                .ok_or_else(|| std::io::Error::other("No auth data to update"))?,
+        )?;
+
+        Ok(())
     }
 
     pub fn get_account_id(&self) -> Option<String> {
@@ -164,6 +212,8 @@ impl CodexAuth {
                 account_id: Some("account_id".to_string()),
             }),
             last_refresh: Some(Utc::now()),
+            anthropic_tokens: None,
+            anthropic_last_refresh: None,
         };
 
         let auth_dot_json = Arc::new(Mutex::new(Some(auth_dot_json)));
@@ -229,6 +279,8 @@ pub fn login_with_api_key(codex_home: &Path, api_key: &str) -> std::io::Result<(
         openai_api_key: Some(api_key.to_string()),
         tokens: None,
         last_refresh: None,
+        anthropic_tokens: None,
+        anthropic_last_refresh: None,
     };
     write_auth_json(&get_auth_file(codex_home), &auth_dot_json)
 }
@@ -258,6 +310,8 @@ fn load_auth(
         openai_api_key: auth_json_api_key,
         tokens,
         last_refresh,
+        anthropic_tokens,
+        anthropic_last_refresh,
     } = auth_dot_json;
 
     // Prefer AuthMode.ApiKey if it's set in the auth.json.
@@ -265,14 +319,23 @@ fn load_auth(
         return Ok(Some(CodexAuth::from_api_key_with_client(api_key, client)));
     }
 
+    // Determine auth mode based on available credentials
+    let mode = if anthropic_tokens.is_some() {
+        AuthMode::ClaudeOAuth
+    } else {
+        AuthMode::ChatGPT
+    };
+
     Ok(Some(CodexAuth {
         api_key: None,
-        mode: AuthMode::ChatGPT,
+        mode,
         auth_file,
         auth_dot_json: Arc::new(Mutex::new(Some(AuthDotJson {
             openai_api_key: None,
             tokens,
             last_refresh,
+            anthropic_tokens,
+            anthropic_last_refresh,
         }))),
         client,
     }))
@@ -387,6 +450,13 @@ pub struct AuthDotJson {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_refresh: Option<DateTime<Utc>>,
+
+    // Anthropic OAuth fields - all optional for backward compatibility
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_tokens: Option<crate::token_data::AnthropicTokenData>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_last_refresh: Option<DateTime<Utc>>,
 }
 
 // Shared constant for token refresh (client id used for oauth token refresh flow)
@@ -502,6 +572,8 @@ mod tests {
                         .unwrap()
                         .with_timezone(&Utc)
                 ),
+                anthropic_tokens: None,
+                anthropic_last_refresh: None,
             },
             auth_dot_json
         )
@@ -531,6 +603,8 @@ mod tests {
             openai_api_key: Some("sk-test-key".to_string()),
             tokens: None,
             last_refresh: None,
+            anthropic_tokens: None,
+            anthropic_last_refresh: None,
         };
         write_auth_json(&get_auth_file(dir.path()), &auth_dot_json)?;
         assert!(dir.path().join("auth.json").exists());

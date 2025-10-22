@@ -66,6 +66,27 @@ const PRESETS: &[ModelPreset] = &[
         model: "gpt-5",
         effort: Some(ReasoningEffort::High),
     },
+    ModelPreset {
+        id: "claude-sonnet-4-5",
+        label: "claude-sonnet-4-5",
+        description: "Smartest model for complex agents and coding",
+        model: "claude-sonnet-4-5-20250929",
+        effort: None,
+    },
+    ModelPreset {
+        id: "claude-haiku-4-5",
+        label: "claude-haiku-4-5",
+        description: "Fastest with near-frontier intelligence",
+        model: "claude-haiku-4-5-20251001",
+        effort: None,
+    },
+    ModelPreset {
+        id: "claude-opus-4-1",
+        label: "claude-opus-4-1",
+        description: "Exceptional for specialized reasoning tasks",
+        model: "claude-opus-4-1-20250805",
+        effort: None,
+    },
 ];
 
 pub fn builtin_model_presets(_auth_mode: Option<AuthMode>) -> Vec<ModelPreset> {
