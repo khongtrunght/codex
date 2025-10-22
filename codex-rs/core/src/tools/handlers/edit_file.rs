@@ -17,10 +17,13 @@ pub struct EditFileHandler;
 struct EditFileArgs {
     /// Absolute path to the file that will be edited.
     file_path: String,
-    /// The text to search for and replace. Must be unique within the file.
-    old_text: String,
-    /// The text to replace old_text with.
-    new_text: String,
+    /// The text to search for and replace.
+    old_string: String,
+    /// The text to replace old_string with.
+    new_string: String,
+    /// Replace all occurrences of old_string (default: false).
+    #[serde(default)]
+    replace_all: bool,
 }
 
 #[async_trait]
@@ -55,8 +58,9 @@ impl ToolHandler for EditFileHandler {
 
         let EditFileArgs {
             file_path,
-            old_text,
-            new_text,
+            old_string,
+            new_string,
+            replace_all,
         } = args;
 
         // Resolve relative paths against cwd
@@ -73,7 +77,7 @@ impl ToolHandler for EditFileHandler {
 
             // Read current file to generate proper unified diff
             let old_content = fs::read_to_string(&path).await.unwrap_or_default();
-            let new_content = old_content.replace(&old_text, &new_text);
+            let new_content = old_content.replace(&old_string, &new_string);
 
             // Generate unified diff using similar crate (same as apply_patch)
             let text_diff = TextDiff::from_lines(&old_content, &new_content);
@@ -106,23 +110,25 @@ impl ToolHandler for EditFileHandler {
                 FunctionCallError::RespondToModel(format!("failed to read file: {err}"))
             })?;
 
-            // Check if old_text exists in the file
-            if !content.contains(&old_text) {
+            // Check if old_string exists in the file
+            if !content.contains(&old_string) {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "old_text not found in file: {file_path}"
+                    "old_string not found in file: {file_path}"
                 )));
             }
 
-            // Count occurrences to ensure uniqueness
-            let occurrences = content.matches(&old_text).count();
-            if occurrences > 1 {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "old_text appears {occurrences} times in the file. It must be unique. Please provide a longer, more specific string that appears only once."
-                )));
+            // Only enforce uniqueness if replace_all is false
+            if !replace_all {
+                let occurrences = content.matches(&old_string).count();
+                if occurrences > 1 {
+                    return Err(FunctionCallError::RespondToModel(format!(
+                        "old_string appears {occurrences} times in the file. It must be unique. Please provide a longer, more specific string that appears only once, or use replace_all: true to replace all occurrences."
+                    )));
+                }
             }
 
-            // Perform the replacement
-            let new_content = content.replace(&old_text, &new_text);
+            // Perform the replacement (works for both single and multiple occurrences)
+            let new_content = content.replace(&old_string, &new_string);
 
             // Write the file back
             let mut file = fs::File::create(&path).await.map_err(|err| {

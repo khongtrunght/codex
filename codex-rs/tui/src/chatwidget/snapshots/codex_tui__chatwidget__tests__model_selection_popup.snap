@@ -1,12 +1,16 @@
 ---
 source: tui/src/chatwidget/tests.rs
+assertion_line: 1090
 expression: popup
 ---
   Select Model and Effort
   Switch the model for this and future Codex CLI sessions
 
-› 1. gpt-5-codex (current)  Optimized for coding tasks with many tools.
-  2. gpt-5                  Broad world knowledge with strong general
-                            reasoning.
+› 1. gpt-5-codex (current)       Optimized for coding tasks with many tools.
+  2. gpt-5                       Broad world knowledge with strong general
+                                 reasoning.
+  3. claude-sonnet-4-5-20250929  Smartest model for complex agents and coding.
+  4. claude-haiku-4-5-20251001   Fastest with near-frontier intelligence.
+  5. claude-opus-4-1-20250805    Exceptional for specialized reasoning tasks.
 
   Press enter to select reasoning effort, or esc to dismiss.

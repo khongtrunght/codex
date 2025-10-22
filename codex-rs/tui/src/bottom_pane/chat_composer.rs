@@ -99,6 +99,8 @@ pub(crate) struct ChatComposer {
     pending_pastes: Vec<(String, String)>,
     has_focus: bool,
     attached_images: Vec<AttachedImage>,
+    attached_files: Vec<PathBuf>,
+    attached_folders: Vec<PathBuf>,
     placeholder_text: String,
     is_task_running: bool,
     // Non-bracketed paste burst tracker.
@@ -144,6 +146,8 @@ impl ChatComposer {
             pending_pastes: Vec::new(),
             has_focus: has_input_focus,
             attached_images: Vec::new(),
+            attached_files: Vec::new(),
+            attached_folders: Vec::new(),
             placeholder_text,
             is_task_running: false,
             paste_burst: PasteBurst::default(),
@@ -310,6 +314,7 @@ impl ChatComposer {
         self.textarea.set_text("");
         self.pending_pastes.clear();
         self.attached_images.clear();
+        self.attached_files.clear();
         self.textarea.set_text(&text);
         self.textarea.set_cursor(0);
         self.sync_command_popup();
@@ -343,6 +348,14 @@ impl ChatComposer {
     pub fn take_recent_submission_images(&mut self) -> Vec<PathBuf> {
         let images = std::mem::take(&mut self.attached_images);
         images.into_iter().map(|img| img.path).collect()
+    }
+
+    pub fn take_recent_submission_files(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.attached_files)
+    }
+
+    pub(crate) fn take_recent_submission_folders(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.attached_folders)
     }
 
     pub(crate) fn flush_paste_burst_if_due(&mut self) -> bool {
@@ -634,11 +647,11 @@ impl ChatComposer {
                 };
 
                 let sel_path = sel.to_string();
+                let path_buf = PathBuf::from(&sel_path);
                 // If selected path looks like an image (png/jpeg), attach as image instead of inserting text.
                 let is_image = Self::is_image_path(&sel_path);
                 if is_image {
                     // Determine dimensions; if that fails fall back to normal path insertion.
-                    let path_buf = PathBuf::from(&sel_path);
                     if let Ok((w, h)) = image::image_dimensions(&path_buf) {
                         // Remove the current @token (mirror logic from insert_selected_path without inserting text)
                         // using the flat text and byte-offset cursor API.
@@ -681,8 +694,20 @@ impl ChatComposer {
                         // Fallback to plain path insertion if metadata read fails.
                         self.insert_selected_path(&sel_path);
                     }
+                } else if path_buf.exists() && path_buf.is_dir() {
+                    // Directory: attach as folder
+                    self.attached_folders.push(path_buf.clone());
+                    // Insert placeholder with trailing slash
+                    let placeholder = format!("@{sel_path}/");
+                    self.insert_selected_path(&placeholder);
+                } else if Self::is_text_file(&path_buf) && path_buf.exists() && path_buf.is_file() {
+                    // Text file: attach content
+                    self.attached_files.push(path_buf);
+                    // Insert placeholder in text
+                    let placeholder = format!("@{sel_path}");
+                    self.insert_selected_path(&placeholder);
                 } else {
-                    // Non-image: inserting file path.
+                    // Non-image, non-text file: just insert file path.
                     self.insert_selected_path(&sel_path);
                 }
                 // No selection: treat Enter as closing the popup/session.
@@ -696,6 +721,51 @@ impl ChatComposer {
     fn is_image_path(path: &str) -> bool {
         let lower = path.to_ascii_lowercase();
         lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
+    }
+
+    fn is_text_file(path: &Path) -> bool {
+        if let Some(ext) = path.extension() {
+            let ext_str = ext.to_string_lossy().to_lowercase();
+            matches!(
+                ext_str.as_str(),
+                "txt"
+                    | "md"
+                    | "rs"
+                    | "py"
+                    | "js"
+                    | "ts"
+                    | "tsx"
+                    | "jsx"
+                    | "java"
+                    | "c"
+                    | "cpp"
+                    | "h"
+                    | "hpp"
+                    | "go"
+                    | "rb"
+                    | "sh"
+                    | "yaml"
+                    | "yml"
+                    | "toml"
+                    | "json"
+                    | "xml"
+                    | "html"
+                    | "css"
+                    | "sql"
+                    | "vim"
+                    | "lua"
+                    | "swift"
+                    | "kt"
+                    | "scala"
+                    | "clj"
+            )
+        } else {
+            // No extension, check if it's a dotfile
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with('.'))
+                .unwrap_or(false)
+        }
     }
 
     /// Extract the `@token` that the cursor is currently positioned on, if any.

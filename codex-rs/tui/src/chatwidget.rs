@@ -222,6 +222,8 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) app_event_tx: AppEventSender,
     pub(crate) initial_prompt: Option<String>,
     pub(crate) initial_images: Vec<PathBuf>,
+    pub(crate) initial_files: Vec<PathBuf>,
+    pub(crate) initial_folders: Vec<PathBuf>,
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) auth_manager: Arc<AuthManager>,
     pub(crate) feedback: codex_feedback::CodexFeedback,
@@ -280,6 +282,8 @@ pub(crate) struct ChatWidget {
 struct UserMessage {
     text: String,
     image_paths: Vec<PathBuf>,
+    file_paths: Vec<PathBuf>,
+    folder_paths: Vec<PathBuf>,
 }
 
 impl From<String> for UserMessage {
@@ -287,15 +291,28 @@ impl From<String> for UserMessage {
         Self {
             text,
             image_paths: Vec::new(),
+            file_paths: Vec::new(),
+            folder_paths: Vec::new(),
         }
     }
 }
 
-fn create_initial_user_message(text: String, image_paths: Vec<PathBuf>) -> Option<UserMessage> {
-    if text.is_empty() && image_paths.is_empty() {
+fn create_initial_user_message(
+    text: String,
+    image_paths: Vec<PathBuf>,
+    file_paths: Vec<PathBuf>,
+    folder_paths: Vec<PathBuf>,
+) -> Option<UserMessage> {
+    if text.is_empty() && image_paths.is_empty() && file_paths.is_empty() && folder_paths.is_empty()
+    {
         None
     } else {
-        Some(UserMessage { text, image_paths })
+        Some(UserMessage {
+            text,
+            image_paths,
+            file_paths,
+            folder_paths,
+        })
     }
 }
 
@@ -950,6 +967,8 @@ impl ChatWidget {
             app_event_tx,
             initial_prompt,
             initial_images,
+            initial_files,
+            initial_folders,
             enhanced_keys_supported,
             auth_manager,
             feedback,
@@ -977,6 +996,8 @@ impl ChatWidget {
             initial_user_message: create_initial_user_message(
                 initial_prompt.unwrap_or_default(),
                 initial_images,
+                initial_files,
+                initial_folders,
             ),
             token_info: None,
             rate_limit_snapshot: None,
@@ -1015,6 +1036,8 @@ impl ChatWidget {
             app_event_tx,
             initial_prompt,
             initial_images,
+            initial_files,
+            initial_folders,
             enhanced_keys_supported,
             auth_manager,
             feedback,
@@ -1044,6 +1067,8 @@ impl ChatWidget {
             initial_user_message: create_initial_user_message(
                 initial_prompt.unwrap_or_default(),
                 initial_images,
+                initial_files,
+                initial_folders,
             ),
             token_info: None,
             rate_limit_snapshot: None,
@@ -1127,6 +1152,8 @@ impl ChatWidget {
                         let user_message = UserMessage {
                             text,
                             image_paths: self.bottom_pane.take_recent_submission_images(),
+                            file_paths: self.bottom_pane.take_recent_submission_files(),
+                            folder_paths: self.bottom_pane.take_recent_submission_folders(),
                         };
                         if self.bottom_pane.is_task_running() {
                             self.queued_user_messages.push_back(user_message);
@@ -1339,8 +1366,17 @@ impl ChatWidget {
     }
 
     fn submit_user_message(&mut self, user_message: UserMessage) {
-        let UserMessage { text, image_paths } = user_message;
-        if text.is_empty() && image_paths.is_empty() {
+        let UserMessage {
+            text,
+            image_paths,
+            file_paths,
+            folder_paths,
+        } = user_message;
+        if text.is_empty()
+            && image_paths.is_empty()
+            && file_paths.is_empty()
+            && folder_paths.is_empty()
+        {
             return;
         }
 
@@ -1354,6 +1390,20 @@ impl ChatWidget {
 
         for path in image_paths {
             items.push(InputItem::LocalImage { path });
+        }
+
+        for path in file_paths {
+            items.push(InputItem::LocalFile {
+                path,
+                max_lines: Some(2000),
+            });
+        }
+
+        for path in folder_paths {
+            items.push(InputItem::LocalFolder {
+                path,
+                max_depth: None, // use default
+            });
         }
 
         self.codex_op_tx

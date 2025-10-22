@@ -123,15 +123,24 @@ impl WidgetRef for &FileSearchPopup {
         } else {
             self.matches
                 .iter()
-                .map(|m| GenericDisplayRow {
-                    name: m.path.clone(),
-                    match_indices: m
-                        .indices
-                        .as_ref()
-                        .map(|v| v.iter().map(|&i| i as usize).collect()),
-                    is_current: false,
-                    display_shortcut: None,
-                    description: None,
+                .map(|m| {
+                    // Add '/' suffix for directories
+                    let display_name = if m.is_directory {
+                        format!("{}/", m.path)
+                    } else {
+                        m.path.clone()
+                    };
+
+                    GenericDisplayRow {
+                        name: display_name,
+                        match_indices: m
+                            .indices
+                            .as_ref()
+                            .map(|v| v.iter().map(|&i| i as usize).collect()),
+                        is_current: false,
+                        display_shortcut: None,
+                        description: None,
+                    }
                 })
                 .collect()
         };

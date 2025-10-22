@@ -337,6 +337,8 @@ impl App {
             app_event_tx: self.app_event_tx.clone(),
             initial_prompt: None,
             initial_images: Vec::new(),
+            initial_files: Vec::new(),
+            initial_folders: Vec::new(),
             enhanced_keys_supported: self.enhanced_keys_supported,
             auth_manager: self.auth_manager.clone(),
             feedback: self.feedback.clone(),

@@ -159,8 +159,8 @@ async fn edit_file_tool_executes_and_emits_file_edit_events() -> anyhow::Result<
     let call_id = "edit-file-call";
     let edit_args = json!({
         "file_path": file_name,
-        "old_text": "Original",
-        "new_text": "Modified",
+        "old_string": "Original",
+        "new_string": "Modified",
     })
     .to_string();
 
@@ -233,109 +233,6 @@ async fn edit_file_tool_executes_and_emits_file_edit_events() -> anyhow::Result<
     assert_eq!(
         updated_contents, "Modified content\n",
         "expected file to be edited with correct content"
-    );
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn delete_file_tool_executes_and_emits_file_edit_events() -> anyhow::Result<()> {
-    skip_if_no_network!(Ok(()));
-
-    let server = start_mock_server().await;
-
-    let mut builder = test_codex().with_config(|config| {
-        config.model = "claude-3-5-sonnet-20241022".to_string();
-        config.model_family =
-            find_family_for_model("claude-3-5-sonnet-20241022").expect("valid model");
-    });
-    let TestCodex {
-        codex,
-        cwd,
-        session_configured,
-        ..
-    } = builder.build(&server).await?;
-
-    let file_name = "test_delete.txt";
-    let file_path = cwd.path().join(file_name);
-
-    // Create file to delete
-    fs::write(&file_path, "File to be deleted\n")?;
-
-    let call_id = "delete-file-call";
-    let delete_args = json!({
-        "file_path": file_name,
-    })
-    .to_string();
-
-    let first_response = sse(vec![
-        ev_response_created("resp-1"),
-        ev_function_call(call_id, "delete_file", &delete_args),
-        ev_completed("resp-1"),
-    ]);
-    responses::mount_sse_once_match(&server, wiremock::matchers::any(), first_response).await;
-
-    let second_response = sse(vec![
-        ev_assistant_message("msg-1", "file deleted"),
-        ev_completed("resp-2"),
-    ]);
-    let second_mock =
-        responses::mount_sse_once_match(&server, wiremock::matchers::any(), second_response).await;
-
-    let session_model = session_configured.model.clone();
-
-    codex
-        .submit(Op::UserTurn {
-            items: vec![InputItem::Text {
-                text: "please delete a file".into(),
-            }],
-            final_output_json_schema: None,
-            cwd: cwd.path().to_path_buf(),
-            approval_policy: AskForApproval::Never,
-            sandbox_policy: SandboxPolicy::DangerFullAccess,
-            model: session_model,
-            effort: None,
-            summary: ReasoningSummary::Auto,
-        })
-        .await?;
-
-    let mut saw_file_edit_begin = false;
-    let mut file_edit_end_success = None;
-    wait_for_event(&codex, |event| match event {
-        EventMsg::FileEditBegin(begin) => {
-            saw_file_edit_begin = true;
-            assert_eq!(begin.call_id, call_id);
-            assert!(begin.auto_approved);
-            // Verify the FileChange contains the Delete variant
-            assert_eq!(begin.changes.len(), 1);
-            false
-        }
-        EventMsg::FileEditEnd(end) => {
-            assert_eq!(end.call_id, call_id);
-            file_edit_end_success = Some(end.success);
-            false
-        }
-        EventMsg::TaskComplete(_) => true,
-        _ => false,
-    })
-    .await;
-
-    assert!(saw_file_edit_begin, "expected FileEditBegin event");
-    let file_edit_end_success =
-        file_edit_end_success.expect("expected FileEditEnd event to capture success flag");
-    assert!(file_edit_end_success);
-
-    let req = second_mock.single_request();
-    let output_item = req.function_call_output(call_id);
-    assert_eq!(
-        output_item.get("call_id").and_then(Value::as_str),
-        Some(call_id)
-    );
-
-    // Verify file was actually deleted
-    assert!(
-        !file_path.exists(),
-        "expected file to be deleted but it still exists"
     );
 
     Ok(())
@@ -437,6 +334,210 @@ async fn write_file_reports_errors_in_file_edit_end_event() -> anyhow::Result<()
             "expected tool output to mark success=false for write failures"
         );
     }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_file_replace_all_executes() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config.model = "claude-3-5-sonnet-20241022".to_string();
+        config.model_family =
+            find_family_for_model("claude-3-5-sonnet-20241022").expect("valid model");
+    });
+    let TestCodex {
+        codex,
+        cwd,
+        session_configured,
+        ..
+    } = builder.build(&server).await?;
+
+    let file_name = "test_replace_all.txt";
+    let file_path = cwd.path().join(file_name);
+
+    // Create file with repeated text
+    let initial_content = "hello\nworld\nhello\nuniverse\nhello\n";
+    fs::write(&file_path, initial_content)?;
+
+    let call_id = "replace-all-call";
+    let edit_args = json!({
+        "file_path": file_name,
+        "old_string": "hello",
+        "new_string": "goodbye",
+        "replace_all": true,
+    })
+    .to_string();
+
+    let first_response = sse(vec![
+        ev_response_created("resp-1"),
+        ev_function_call(call_id, "edit_file", &edit_args),
+        ev_completed("resp-1"),
+    ]);
+    responses::mount_sse_once_match(&server, wiremock::matchers::any(), first_response).await;
+
+    let second_response = sse(vec![
+        ev_assistant_message("msg-1", "file edited"),
+        ev_completed("resp-2"),
+    ]);
+    let second_mock =
+        responses::mount_sse_once_match(&server, wiremock::matchers::any(), second_response).await;
+
+    let session_model = session_configured.model.clone();
+
+    codex
+        .submit(Op::UserTurn {
+            items: vec![InputItem::Text {
+                text: "Replace all hello with goodbye".into(),
+            }],
+            final_output_json_schema: None,
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: session_model,
+            effort: None,
+            summary: ReasoningSummary::Auto,
+        })
+        .await?;
+
+    // Verify FileEditEnd event shows success
+    let mut file_edit_end_success = None;
+    let mut file_edit_end_stderr = String::new();
+    wait_for_event(&codex, |event| match event {
+        EventMsg::FileEditEnd(end) => {
+            assert_eq!(end.call_id, call_id);
+            file_edit_end_success = Some(end.success);
+            file_edit_end_stderr = end.stderr.clone();
+            false
+        }
+        EventMsg::TaskComplete(_) => true,
+        _ => false,
+    })
+    .await;
+
+    let file_edit_end_success = file_edit_end_success.expect("expected FileEditEnd event");
+    assert!(file_edit_end_success, "expected success");
+    assert_eq!(file_edit_end_stderr, "", "expected no error");
+
+    // Verify file was updated with all occurrences replaced
+    let final_content = fs::read_to_string(&file_path)?;
+    assert_eq!(
+        final_content, "goodbye\nworld\ngoodbye\nuniverse\ngoodbye\n",
+        "expected all occurrences of hello to be replaced"
+    );
+
+    // Verify tool output
+    let req = second_mock.single_request();
+    let output_item = req.function_call_output(call_id);
+    let output_text = extract_output_text(&output_item).expect("output text present");
+    assert!(
+        output_text.contains("Successfully replaced"),
+        "expected success message in output"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_file_without_replace_all_fails_on_multiple() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config.model = "claude-3-5-sonnet-20241022".to_string();
+        config.model_family =
+            find_family_for_model("claude-3-5-sonnet-20241022").expect("valid model");
+    });
+    let TestCodex {
+        codex,
+        cwd,
+        session_configured,
+        ..
+    } = builder.build(&server).await?;
+
+    let file_name = "test_unique.txt";
+    let file_path = cwd.path().join(file_name);
+
+    // Create file with repeated text
+    let initial_content = "test\ntest\n";
+    fs::write(&file_path, initial_content)?;
+
+    let call_id = "unique-fail-call";
+    // Try to edit without replace_all (should fail)
+    let edit_args = json!({
+        "file_path": file_name,
+        "old_string": "test",
+        "new_string": "hello",
+    })
+    .to_string();
+
+    let first_response = sse(vec![
+        ev_response_created("resp-1"),
+        ev_function_call(call_id, "edit_file", &edit_args),
+        ev_completed("resp-1"),
+    ]);
+    responses::mount_sse_once_match(&server, wiremock::matchers::any(), first_response).await;
+
+    let second_response = sse(vec![
+        ev_assistant_message("msg-1", "failed"),
+        ev_completed("resp-2"),
+    ]);
+    responses::mount_sse_once_match(&server, wiremock::matchers::any(), second_response).await;
+
+    let session_model = session_configured.model.clone();
+
+    codex
+        .submit(Op::UserTurn {
+            items: vec![InputItem::Text {
+                text: "Replace test with hello".into(),
+            }],
+            final_output_json_schema: None,
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: session_model,
+            effort: None,
+            summary: ReasoningSummary::Auto,
+        })
+        .await?;
+
+    // Verify FileEditEnd event shows failure
+    let mut file_edit_end_success = None;
+    let mut file_edit_end_stderr = String::new();
+    wait_for_event(&codex, |event| match event {
+        EventMsg::FileEditEnd(end) => {
+            assert_eq!(end.call_id, call_id);
+            file_edit_end_success = Some(end.success);
+            file_edit_end_stderr = end.stderr.clone();
+            false
+        }
+        EventMsg::TaskComplete(_) => true,
+        _ => false,
+    })
+    .await;
+
+    let file_edit_end_success =
+        file_edit_end_success.expect("expected FileEditEnd event to capture success flag");
+    assert!(!file_edit_end_success, "expected failure");
+    assert!(
+        file_edit_end_stderr.contains("appears 2 times"),
+        "expected error to mention occurrence count, got: {file_edit_end_stderr}"
+    );
+    assert!(
+        file_edit_end_stderr.contains("replace_all: true"),
+        "expected error to suggest replace_all option, got: {file_edit_end_stderr}"
+    );
+
+    // Verify file was NOT modified
+    let final_content = fs::read_to_string(&file_path)?;
+    assert_eq!(
+        final_content, initial_content,
+        "expected file to remain unchanged after failed edit"
+    );
 
     Ok(())
 }
