@@ -1,7 +1,10 @@
+pub mod anthropic;
 pub mod chat;
 pub(crate) mod headers;
 pub mod responses;
 
+pub use anthropic::AnthropicRequest;
+pub use anthropic::AnthropicRequestBuilder;
 pub use chat::ChatRequest;
 pub use chat::ChatRequestBuilder;
 pub use responses::ResponsesRequest;

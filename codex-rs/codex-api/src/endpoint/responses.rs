@@ -97,6 +97,8 @@ impl<T: HttpTransport, A: AuthProvider> ResponsesClient<T, A> {
         match self.streaming.provider().wire {
             WireApi::Responses | WireApi::Compact => "responses",
             WireApi::Chat => "chat/completions",
+            // Anthropic uses the dedicated AnthropicClient, not ResponsesClient
+            WireApi::Anthropic => "messages",
         }
     }
 
