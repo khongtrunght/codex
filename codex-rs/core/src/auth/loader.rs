@@ -176,6 +176,7 @@ mod tests {
 
     fn create_test_provider(env_key: Option<&str>, wire_api: WireApi) -> ModelProviderInfo {
         ModelProviderInfo {
+            config_key: "test".into(),
             name: "Test".into(),
             base_url: Some("https://api.example.com".into()),
             env_key: env_key.map(|s| s.to_string()),

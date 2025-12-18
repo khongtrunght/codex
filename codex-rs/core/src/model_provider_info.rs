@@ -53,6 +53,12 @@ pub enum WireApi {
 /// Serializable representation of a provider definition.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ModelProviderInfo {
+    /// Config key used for credential storage (e.g., "openai", "anthropic-work").
+    /// Set automatically from the config map key during parsing.
+    /// Not serialized - populated at runtime.
+    #[serde(skip)]
+    pub config_key: String,
+
     /// Friendly display name.
     pub name: String,
     /// Base URL for the provider's OpenAI-compatible API.
@@ -218,6 +224,7 @@ impl ModelProviderInfo {
     }
     pub fn create_openai_provider() -> ModelProviderInfo {
         ModelProviderInfo {
+            config_key: "openai".to_string(),
             name: OPENAI_PROVIDER_NAME.into(),
             // Allow users to override the default OpenAI endpoint by
             // exporting `OPENAI_BASE_URL`. This is useful when pointing
@@ -259,6 +266,11 @@ impl ModelProviderInfo {
     pub fn is_openai(&self) -> bool {
         self.name == OPENAI_PROVIDER_NAME
     }
+
+    /// Get the config key for credential storage.
+    pub fn config_key(&self) -> &str {
+        &self.config_key
+    }
 }
 
 pub const DEFAULT_LMSTUDIO_PORT: u16 = 1234;
@@ -287,7 +299,11 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
         ),
     ]
     .into_iter()
-    .map(|(k, v)| (k.to_string(), v))
+    .map(|(k, mut v)| {
+        // Set config_key from the map key for credential storage lookup
+        v.config_key = k.to_string();
+        (k.to_string(), v)
+    })
     .collect()
 }
 
@@ -313,6 +329,7 @@ pub fn create_oss_provider(default_provider_port: u16, wire_api: WireApi) -> Mod
 
 pub fn create_oss_provider_with_base_url(base_url: &str, wire_api: WireApi) -> ModelProviderInfo {
     ModelProviderInfo {
+        config_key: String::new(), // Will be set by built_in_model_providers()
         name: "gpt-oss".into(),
         base_url: Some(base_url.into()),
         env_key: None,
@@ -341,6 +358,7 @@ name = "Ollama"
 base_url = "http://localhost:11434/v1"
         "#;
         let expected_provider = ModelProviderInfo {
+            config_key: String::new(), // #[serde(skip)] defaults to empty
             name: "Ollama".into(),
             base_url: Some("http://localhost:11434/v1".into()),
             env_key: None,
@@ -369,6 +387,7 @@ env_key = "AZURE_OPENAI_API_KEY"
 query_params = { api-version = "2025-04-01-preview" }
         "#;
         let expected_provider = ModelProviderInfo {
+            config_key: String::new(), // #[serde(skip)] defaults to empty
             name: "Azure".into(),
             base_url: Some("https://xxxxx.openai.azure.com/openai".into()),
             env_key: Some("AZURE_OPENAI_API_KEY".into()),
@@ -400,6 +419,7 @@ http_headers = { "X-Example-Header" = "example-value" }
 env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
         "#;
         let expected_provider = ModelProviderInfo {
+            config_key: String::new(), // #[serde(skip)] defaults to empty
             name: "Example".into(),
             base_url: Some("https://example.com".into()),
             env_key: Some("API_KEY".into()),
@@ -435,6 +455,7 @@ env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
         ];
         for base_url in positive_cases {
             let provider = ModelProviderInfo {
+                config_key: String::new(),
                 name: "test".into(),
                 base_url: Some(base_url.into()),
                 env_key: None,
@@ -457,6 +478,7 @@ env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
         }
 
         let named_provider = ModelProviderInfo {
+            config_key: String::new(),
             name: "Azure".into(),
             base_url: Some("https://example.com".into()),
             env_key: None,
@@ -481,6 +503,7 @@ env_http_headers = { "X-Example-Env-Header" = "EXAMPLE_ENV_VAR" }
         ];
         for base_url in negative_cases {
             let provider = ModelProviderInfo {
+                config_key: String::new(),
                 name: "test".into(),
                 base_url: Some(base_url.into()),
                 env_key: None,

@@ -1188,7 +1188,9 @@ impl Config {
 
         let mut model_providers = built_in_model_providers();
         // Merge user-defined providers into the built-in list.
-        for (key, provider) in cfg.model_providers.into_iter() {
+        for (key, mut provider) in cfg.model_providers.into_iter() {
+            // Set config_key from the map key for credential storage lookup
+            provider.config_key = key.clone();
             model_providers.entry(key).or_insert(provider);
         }
 
@@ -3079,6 +3081,7 @@ model_verbosity = "high"
         let codex_home_temp_dir = TempDir::new().unwrap();
 
         let openai_chat_completions_provider = ModelProviderInfo {
+            config_key: "openai-chat-completions".to_string(),
             name: "OpenAI using Chat Completions".to_string(),
             base_url: Some("https://api.openai.com/v1".to_string()),
             env_key: Some("OPENAI_API_KEY".to_string()),

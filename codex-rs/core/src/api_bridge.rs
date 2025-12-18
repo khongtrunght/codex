@@ -138,7 +138,6 @@ pub(crate) async fn auth_provider_from_auth(
 }
 
 /// Create auth provider from provider-specific auth (new path for multi-provider support)
-#[allow(dead_code)] // Will be used when stream_anthropic_api is implemented in Phase 6
 pub(crate) fn auth_provider_from_provider_auth(
     provider_auth: Option<&dyn ProviderAuth>,
     provider: &ModelProviderInfo,
