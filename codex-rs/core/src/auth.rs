@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde::Serialize;
 #[cfg(test)]
 use serial_test::serial;
+use std::collections::HashMap;
 use std::env;
 use std::fmt::Debug;
 use std::io::ErrorKind;
@@ -34,6 +35,7 @@ pub use crate::auth::providers::GenericAuth;
 pub use crate::auth::providers::OpenAIAuth;
 use crate::auth::storage::create_auth_storage;
 use crate::config::Config;
+use crate::model_provider_info::ModelProviderInfo;
 use crate::error::RefreshTokenFailedError;
 use crate::error::RefreshTokenFailedReason;
 use crate::token_data::KnownPlan as InternalKnownPlan;
@@ -1091,12 +1093,35 @@ mod tests {
 /// External modifications to `auth.json` will NOT be observed until
 /// `reload()` is called explicitly. This matches the design goal of avoiding
 /// different parts of the program seeing inconsistent auth data mid‑run.
-#[derive(Debug)]
+///
+/// Also provides multi-provider auth support via `get_provider_auth()` and
+/// related methods.
 pub struct AuthManager {
     codex_home: PathBuf,
     inner: RwLock<CachedAuth>,
     enable_codex_api_key_env: bool,
     auth_credentials_store_mode: AuthCredentialsStoreMode,
+    // Multi-provider support
+    loader: CredentialLoader,
+    provider_cache: RwLock<HashMap<String, Arc<dyn ProviderAuth>>>,
+    client: CodexHttpClient,
+}
+
+impl std::fmt::Debug for AuthManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthManager")
+            .field("codex_home", &self.codex_home)
+            .field("inner", &self.inner)
+            .field("enable_codex_api_key_env", &self.enable_codex_api_key_env)
+            .field(
+                "auth_credentials_store_mode",
+                &self.auth_credentials_store_mode,
+            )
+            .field("loader", &self.loader)
+            .field("provider_cache", &"<provider_cache>")
+            .field("client", &"<CodexHttpClient>")
+            .finish()
+    }
 }
 
 impl AuthManager {
@@ -1109,6 +1134,8 @@ impl AuthManager {
         enable_codex_api_key_env: bool,
         auth_credentials_store_mode: AuthCredentialsStoreMode,
     ) -> Self {
+        let storage = create_auth_storage(codex_home.clone(), auth_credentials_store_mode);
+        let loader = CredentialLoader::new(storage);
         let auth = load_auth(
             &codex_home,
             enable_codex_api_key_env,
@@ -1121,6 +1148,9 @@ impl AuthManager {
             inner: RwLock::new(CachedAuth { auth }),
             enable_codex_api_key_env,
             auth_credentials_store_mode,
+            loader,
+            provider_cache: RwLock::new(HashMap::new()),
+            client: crate::default_client::create_client(),
         }
     }
 
@@ -1131,6 +1161,8 @@ impl AuthManager {
         let cached = CachedAuth { auth: Some(auth) };
         let temp_dir = tempfile::tempdir().expect("temp codex home");
         let codex_home = temp_dir.path().to_path_buf();
+        let storage = create_auth_storage(codex_home.clone(), AuthCredentialsStoreMode::File);
+        let loader = CredentialLoader::new(storage);
         TEST_AUTH_TEMP_DIRS
             .lock()
             .expect("lock test codex homes")
@@ -1140,6 +1172,9 @@ impl AuthManager {
             inner: RwLock::new(cached),
             enable_codex_api_key_env: false,
             auth_credentials_store_mode: AuthCredentialsStoreMode::File,
+            loader,
+            provider_cache: RwLock::new(HashMap::new()),
+            client: crate::default_client::create_client(),
         })
     }
 
@@ -1147,11 +1182,16 @@ impl AuthManager {
     /// Create an AuthManager with a specific CodexAuth and codex home, for testing only.
     pub fn from_auth_for_testing_with_home(auth: CodexAuth, codex_home: PathBuf) -> Arc<Self> {
         let cached = CachedAuth { auth: Some(auth) };
+        let storage = create_auth_storage(codex_home.clone(), AuthCredentialsStoreMode::File);
+        let loader = CredentialLoader::new(storage);
         Arc::new(Self {
             codex_home,
             inner: RwLock::new(cached),
             enable_codex_api_key_env: false,
             auth_credentials_store_mode: AuthCredentialsStoreMode::File,
+            loader,
+            provider_cache: RwLock::new(HashMap::new()),
+            client: crate::default_client::create_client(),
         })
     }
 
@@ -1239,5 +1279,109 @@ impl AuthManager {
 
     pub fn get_auth_mode(&self) -> Option<AuthMode> {
         self.auth().map(|a| a.mode)
+    }
+
+    // === Multi-provider auth methods ===
+
+    /// Get or create auth for a specific provider.
+    /// Returns `None` if no credentials found (e.g., local Ollama).
+    pub fn get_provider_auth(
+        &self,
+        provider_id: &str,
+        provider_info: &ModelProviderInfo,
+    ) -> Option<Arc<dyn ProviderAuth>> {
+        // Check cache first
+        if let Ok(guard) = self.provider_cache.read()
+            && let Some(auth) = guard.get(provider_id)
+        {
+            return Some(auth.clone());
+        }
+
+        // Create new
+        let auth = self.loader.create_provider_auth(provider_id, provider_info)?;
+        let auth: Arc<dyn ProviderAuth> = Arc::from(auth);
+
+        // Cache it
+        if let Ok(mut guard) = self.provider_cache.write() {
+            guard.insert(provider_id.to_string(), auth.clone());
+        }
+
+        Some(auth)
+    }
+
+    /// Get token for a specific provider (convenience method).
+    pub fn get_provider_token(
+        &self,
+        provider_id: &str,
+        provider_info: &ModelProviderInfo,
+    ) -> Option<String> {
+        self.get_provider_auth(provider_id, provider_info)?
+            .get_token()
+    }
+
+    /// Refresh token for a specific provider.
+    pub async fn refresh_provider_token(
+        &self,
+        provider_id: &str,
+    ) -> Result<Option<String>, RefreshTokenError> {
+        let auth = {
+            let guard = self.provider_cache.read().ok();
+            guard.and_then(|g| g.get(provider_id).cloned())
+        };
+
+        let auth = match auth {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+
+        // Check if needs refresh (uses credential's own last_refresh/expires_at)
+        if !auth.needs_refresh() {
+            return Ok(auth.get_token());
+        }
+
+        // Do refresh - new credential includes updated last_refresh
+        if let Some(new_cred) = auth.refresh(&self.client).await? {
+            self.loader.save_credential(provider_id, new_cred)?;
+
+            // Invalidate cache so next call gets fresh auth
+            if let Ok(mut guard) = self.provider_cache.write() {
+                guard.remove(provider_id);
+            }
+        }
+
+        Ok(auth.get_token())
+    }
+
+    /// Login with API key for a specific provider.
+    pub fn login_provider_with_api_key(
+        &self,
+        provider_id: &str,
+        api_key: &str,
+    ) -> std::io::Result<()> {
+        self.loader.save_credential(
+            provider_id,
+            ProviderCredential::Api {
+                key: api_key.to_string(),
+            },
+        )?;
+        // Invalidate cache
+        if let Ok(mut guard) = self.provider_cache.write() {
+            guard.remove(provider_id);
+        }
+        Ok(())
+    }
+
+    /// Logout a specific provider.
+    pub fn logout_provider(&self, provider_id: &str) -> std::io::Result<()> {
+        self.loader.remove_credential(provider_id)?;
+        if let Ok(mut guard) = self.provider_cache.write() {
+            guard.remove(provider_id);
+        }
+        Ok(())
+    }
+
+    /// Get the credential loader (for advanced use cases).
+    pub fn credential_loader(&self) -> &CredentialLoader {
+        &self.loader
     }
 }
