@@ -45,6 +45,9 @@ pub enum WireApi {
     /// Regular Chat Completions compatible with `/v1/chat/completions`.
     #[default]
     Chat,
+
+    /// Anthropic Messages API at `/v1/messages`.
+    Anthropic,
 }
 
 /// Serializable representation of a provider definition.
@@ -131,10 +134,12 @@ impl ModelProviderInfo {
         &self,
         auth_mode: Option<AuthMode>,
     ) -> crate::error::Result<ApiProvider> {
-        let default_base_url = if matches!(auth_mode, Some(AuthMode::ChatGPT)) {
-            "https://chatgpt.com/backend-api/codex"
-        } else {
-            "https://api.openai.com/v1"
+        let default_base_url = match self.wire_api {
+            WireApi::Anthropic => "https://api.anthropic.com/v1",
+            _ if matches!(auth_mode, Some(AuthMode::ChatGPT)) => {
+                "https://chatgpt.com/backend-api/codex"
+            }
+            _ => "https://api.openai.com/v1",
         };
         let base_url = self
             .base_url
@@ -157,6 +162,7 @@ impl ModelProviderInfo {
             wire: match self.wire_api {
                 WireApi::Responses => ApiWireApi::Responses,
                 WireApi::Chat => ApiWireApi::Chat,
+                WireApi::Anthropic => ApiWireApi::Anthropic,
             },
             headers,
             retry,

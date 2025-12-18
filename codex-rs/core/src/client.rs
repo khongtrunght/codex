@@ -131,6 +131,12 @@ impl ModelClient {
                     ))
                 }
             }
+            WireApi::Anthropic => {
+                // TODO(Phase 6): Implement stream_anthropic_api
+                Err(CodexErr::UnsupportedOperation(
+                    "Anthropic Messages API streaming not yet implemented".to_string(),
+                ))
+            }
         }
     }
 

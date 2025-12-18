@@ -1,6 +1,9 @@
+mod loader;
 mod storage;
 pub mod provider_auth;
 pub mod providers;
+
+pub use loader::CredentialLoader;
 
 use chrono::Utc;
 use reqwest::StatusCode;
