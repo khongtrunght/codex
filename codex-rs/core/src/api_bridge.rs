@@ -1,6 +1,7 @@
 use chrono::DateTime;
 use chrono::Utc;
 use codex_api::AuthProvider as ApiAuthProvider;
+use codex_api::AuthScheme;
 use codex_api::TransportError;
 use codex_api::error::ApiError;
 use codex_api::rate_limits::parse_rate_limit;
@@ -8,6 +9,7 @@ use http::HeaderMap;
 use serde::Deserialize;
 
 use crate::auth::CodexAuth;
+use crate::auth::ProviderAuth;
 use crate::error::CodexErr;
 use crate::error::RetryLimitReachedError;
 use crate::error::UnexpectedResponseError;
@@ -108,6 +110,8 @@ pub(crate) async fn auth_provider_from_auth(
         return Ok(CoreAuthProvider {
             token: Some(api_key),
             account_id: None,
+            auth_scheme: AuthScheme::Bearer, // Legacy always uses Bearer
+            extra_headers: HeaderMap::new(),
         });
     }
 
@@ -115,6 +119,8 @@ pub(crate) async fn auth_provider_from_auth(
         return Ok(CoreAuthProvider {
             token: Some(token),
             account_id: None,
+            auth_scheme: AuthScheme::Bearer,
+            extra_headers: HeaderMap::new(),
         });
     }
 
@@ -123,13 +129,56 @@ pub(crate) async fn auth_provider_from_auth(
         Ok(CoreAuthProvider {
             token: Some(token),
             account_id: auth.get_account_id(),
+            auth_scheme: AuthScheme::Bearer, // Legacy CodexAuth is always OpenAI
+            extra_headers: HeaderMap::new(),
         })
     } else {
-        Ok(CoreAuthProvider {
-            token: None,
-            account_id: None,
-        })
+        Ok(CoreAuthProvider::default())
     }
+}
+
+/// Create auth provider from provider-specific auth (new path for multi-provider support)
+#[allow(dead_code)] // Will be used when stream_anthropic_api is implemented in Phase 6
+pub(crate) fn auth_provider_from_provider_auth(
+    provider_auth: Option<&dyn ProviderAuth>,
+    provider: &ModelProviderInfo,
+) -> crate::error::Result<CoreAuthProvider> {
+    // Priority 1: Provider-specific env key
+    if let Some(api_key) = provider.api_key()? {
+        return Ok(CoreAuthProvider {
+            token: Some(api_key),
+            account_id: None,
+            auth_scheme: provider_auth
+                .map(ProviderAuth::auth_scheme)
+                .unwrap_or(AuthScheme::Bearer),
+            extra_headers: provider_auth
+                .map(ProviderAuth::extra_headers)
+                .unwrap_or_default(),
+        });
+    }
+
+    // Priority 2: Config override
+    if let Some(token) = provider.experimental_bearer_token.clone() {
+        return Ok(CoreAuthProvider {
+            token: Some(token),
+            account_id: None,
+            auth_scheme: AuthScheme::Bearer,
+            extra_headers: HeaderMap::new(), // Config override doesn't use extra headers
+        });
+    }
+
+    // Priority 3: Provider-specific auth
+    if let Some(auth) = provider_auth {
+        return Ok(CoreAuthProvider {
+            token: auth.get_token(),
+            account_id: auth.account_id(),
+            auth_scheme: auth.auth_scheme(),
+            extra_headers: auth.extra_headers(),
+        });
+    }
+
+    // No auth
+    Ok(CoreAuthProvider::default())
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,6 +198,9 @@ struct UsageErrorBody {
 pub(crate) struct CoreAuthProvider {
     token: Option<String>,
     account_id: Option<String>,
+    auth_scheme: AuthScheme,
+    /// Additional headers required for this auth type (e.g., anthropic-beta for OAuth)
+    extra_headers: HeaderMap,
 }
 
 impl ApiAuthProvider for CoreAuthProvider {
@@ -158,5 +210,13 @@ impl ApiAuthProvider for CoreAuthProvider {
 
     fn account_id(&self) -> Option<String> {
         self.account_id.clone()
+    }
+
+    fn auth_scheme(&self) -> AuthScheme {
+        self.auth_scheme
+    }
+
+    fn extra_headers(&self) -> HeaderMap {
+        self.extra_headers.clone()
     }
 }

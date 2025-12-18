@@ -1,4 +1,5 @@
 use codex_client::Request;
+use http::HeaderMap;
 
 /// Authentication scheme used by a provider.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -24,6 +25,11 @@ pub trait AuthProvider: Send + Sync {
     fn auth_scheme(&self) -> AuthScheme {
         AuthScheme::Bearer
     }
+    /// Additional headers to add to requests (e.g., anthropic-beta for OAuth).
+    /// Returns empty HeaderMap if no extra headers needed.
+    fn extra_headers(&self) -> HeaderMap {
+        HeaderMap::new()
+    }
 }
 
 pub(crate) fn add_auth_headers<A: AuthProvider>(auth: &A, mut req: Request) -> Request {
@@ -46,6 +52,8 @@ pub(crate) fn add_auth_headers<A: AuthProvider>(auth: &A, mut req: Request) -> R
     {
         let _ = req.headers.insert("ChatGPT-Account-ID", header);
     }
+    // Extend with any provider-specific headers (e.g., anthropic-beta for OAuth)
+    req.headers.extend(auth.extra_headers());
     req
 }
 
@@ -59,6 +67,7 @@ mod tests {
         token: Option<String>,
         account_id: Option<String>,
         scheme: AuthScheme,
+        extra_headers: HeaderMap,
     }
 
     impl AuthProvider for TestAuth {
@@ -70,6 +79,9 @@ mod tests {
         }
         fn auth_scheme(&self) -> AuthScheme {
             self.scheme
+        }
+        fn extra_headers(&self) -> HeaderMap {
+            self.extra_headers.clone()
         }
     }
 
@@ -89,6 +101,7 @@ mod tests {
             token: Some("test-token".to_string()),
             account_id: None,
             scheme: AuthScheme::Bearer,
+            extra_headers: HeaderMap::new(),
         };
         let req = add_auth_headers(&auth, make_request());
 
@@ -103,6 +116,7 @@ mod tests {
             token: Some("sk-ant-test-key".to_string()),
             account_id: None,
             scheme: AuthScheme::ApiKey,
+            extra_headers: HeaderMap::new(),
         };
         let req = add_auth_headers(&auth, make_request());
 
@@ -117,6 +131,7 @@ mod tests {
             token: None,
             account_id: None,
             scheme: AuthScheme::Bearer,
+            extra_headers: HeaderMap::new(),
         };
         let req = add_auth_headers(&auth, make_request());
 
@@ -130,10 +145,30 @@ mod tests {
             token: Some("test-token".to_string()),
             account_id: Some("acct-123".to_string()),
             scheme: AuthScheme::Bearer,
+            extra_headers: HeaderMap::new(),
         };
         let req = add_auth_headers(&auth, make_request());
 
         let account_header = req.headers.get("ChatGPT-Account-ID").unwrap();
         assert_eq!(account_header, "acct-123");
+    }
+
+    #[test]
+    fn extra_headers_are_added_to_request() {
+        let mut extra = HeaderMap::new();
+        extra.insert("anthropic-beta", "oauth-2025-04-20".parse().unwrap());
+        let auth = TestAuth {
+            token: Some("access-token".to_string()),
+            account_id: None,
+            scheme: AuthScheme::Bearer,
+            extra_headers: extra,
+        };
+        let req = add_auth_headers(&auth, make_request());
+
+        let beta_header = req.headers.get("anthropic-beta").unwrap();
+        assert_eq!(beta_header, "oauth-2025-04-20");
+        // Also verify auth header is present
+        let auth_header = req.headers.get(http::header::AUTHORIZATION).unwrap();
+        assert_eq!(auth_header, "Bearer access-token");
     }
 }
