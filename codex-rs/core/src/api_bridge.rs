@@ -106,7 +106,9 @@ pub(crate) async fn auth_provider_from_auth(
     auth: Option<CodexAuth>,
     provider: &ModelProviderInfo,
 ) -> crate::error::Result<CoreAuthProvider> {
-    if let Some(api_key) = provider.api_key()? {
+    // Priority 1: Provider-specific env key
+    // Use .ok().flatten() to treat missing env var as None, allowing fallback to auth/config
+    if let Some(api_key) = provider.api_key().ok().flatten() {
         return Ok(CoreAuthProvider {
             token: Some(api_key),
             account_id: None,
@@ -115,6 +117,7 @@ pub(crate) async fn auth_provider_from_auth(
         });
     }
 
+    // Priority 2: Config override
     if let Some(token) = provider.experimental_bearer_token.clone() {
         return Ok(CoreAuthProvider {
             token: Some(token),
@@ -124,6 +127,7 @@ pub(crate) async fn auth_provider_from_auth(
         });
     }
 
+    // Priority 3: CodexAuth (legacy OpenAI auth)
     if let Some(auth) = auth {
         let token = auth.get_token().await?;
         Ok(CoreAuthProvider {
@@ -143,7 +147,8 @@ pub(crate) fn auth_provider_from_provider_auth(
     provider: &ModelProviderInfo,
 ) -> crate::error::Result<CoreAuthProvider> {
     // Priority 1: Provider-specific env key
-    if let Some(api_key) = provider.api_key()? {
+    // Use .ok().flatten() to treat missing env var as None, allowing fallback to auth.json
+    if let Some(api_key) = provider.api_key().ok().flatten() {
         return Ok(CoreAuthProvider {
             token: Some(api_key),
             account_id: None,
@@ -166,7 +171,7 @@ pub(crate) fn auth_provider_from_provider_auth(
         });
     }
 
-    // Priority 3: Provider-specific auth
+    // Priority 3: Provider-specific auth (from auth.json via CredentialLoader)
     if let Some(auth) = provider_auth {
         return Ok(CoreAuthProvider {
             token: auth.get_token(),
