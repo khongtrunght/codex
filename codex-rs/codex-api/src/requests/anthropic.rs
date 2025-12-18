@@ -28,6 +28,9 @@ pub struct AnthropicRequest {
     pub headers: HeaderMap,
 }
 
+/// System prompt header for Claude Code identification
+pub const CLAUDE_CODE_SYSTEM_HEADER: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+
 /// Builder for Anthropic Messages API requests.
 pub struct AnthropicRequestBuilder<'a> {
     model: &'a str,
@@ -63,10 +66,20 @@ impl<'a> AnthropicRequestBuilder<'a> {
     /// Build the Anthropic request.
     pub fn build(self) -> Result<AnthropicRequest, ApiError> {
         // Build system prompt as content blocks
-        let system = vec![json!({
-            "type": "text",
-            "text": self.instructions
-        })];
+        // Always prepend the Claude Code identification header
+        let system = vec![
+            json!({
+                "type": "text",
+                "text": CLAUDE_CODE_SYSTEM_HEADER,
+                "cache_control": {
+                    "type": "ephemeral"
+                }
+            }),
+            json!({
+                "type": "text",
+                "text": self.instructions
+            }),
+        ];
 
         // Convert ResponseItems to Anthropic messages format
         let messages = self.build_messages()?;
@@ -438,7 +451,9 @@ mod tests {
             .expect("should build");
 
         assert_eq!(request.body["model"], "claude-3-sonnet");
-        assert_eq!(request.body["system"][0]["text"], "Be helpful");
+        // system[0] is the Claude Code header, system[1] is the instructions
+        assert_eq!(request.body["system"][0]["text"], CLAUDE_CODE_SYSTEM_HEADER);
+        assert_eq!(request.body["system"][1]["text"], "Be helpful");
 
         let messages = request.body["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 1);
