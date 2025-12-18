@@ -20,6 +20,7 @@ use codex_protocol::config_types::ForcedLoginMethod;
 
 pub use crate::auth::storage::AuthCredentialsStoreMode;
 pub use crate::auth::storage::AuthDotJson;
+pub use crate::auth::storage::ProviderCredential;
 use crate::auth::storage::AuthStorageBackend;
 use crate::auth::storage::create_auth_storage;
 use crate::config::Config;
@@ -32,11 +33,7 @@ use crate::token_data::parse_id_token;
 use crate::util::try_parse_error_message;
 use codex_client::CodexHttpClient;
 use codex_protocol::account::PlanType as AccountPlanType;
-#[cfg(any(test, feature = "test-support"))]
-use once_cell::sync::Lazy;
 use serde_json::Value;
-#[cfg(any(test, feature = "test-support"))]
-use tempfile::TempDir;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -66,6 +63,10 @@ const REFRESH_TOKEN_UNKNOWN_MESSAGE: &str =
 const REFRESH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 pub const REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR: &str = "CODEX_REFRESH_TOKEN_URL_OVERRIDE";
 
+#[cfg(any(test, feature = "test-support"))]
+use once_cell::sync::Lazy;
+#[cfg(any(test, feature = "test-support"))]
+use tempfile::TempDir;
 #[cfg(any(test, feature = "test-support"))]
 static TEST_AUTH_TEMP_DIRS: Lazy<Mutex<Vec<TempDir>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
@@ -245,16 +246,27 @@ impl CodexAuth {
 
     /// Consider this private to integration tests.
     pub fn create_dummy_chatgpt_auth_for_testing() -> Self {
-        let auth_dot_json = AuthDotJson {
-            openai_api_key: None,
-            tokens: Some(TokenData {
-                id_token: Default::default(),
+        let mut auth_dot_json = AuthDotJson::default();
+        auth_dot_json.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::OAuth {
                 access_token: "Access Token".to_string(),
                 refresh_token: "test".to_string(),
+                expires_at: None,
+                last_refresh: Some(Utc::now()),
                 account_id: Some("account_id".to_string()),
-            }),
-            last_refresh: Some(Utc::now()),
-        };
+                exchanged_api_key: None,
+                extra: None,
+            },
+        );
+        // Also set legacy fields for backwards compatibility with existing code
+        auth_dot_json.tokens = Some(TokenData {
+            id_token: Default::default(),
+            access_token: "Access Token".to_string(),
+            refresh_token: "test".to_string(),
+            account_id: Some("account_id".to_string()),
+        });
+        auth_dot_json.last_refresh = Some(Utc::now());
 
         let auth_dot_json = Arc::new(Mutex::new(Some(auth_dot_json)));
         Self {
@@ -314,11 +326,15 @@ pub fn login_with_api_key(
     api_key: &str,
     auth_credentials_store_mode: AuthCredentialsStoreMode,
 ) -> std::io::Result<()> {
-    let auth_dot_json = AuthDotJson {
-        openai_api_key: Some(api_key.to_string()),
-        tokens: None,
-        last_refresh: None,
-    };
+    let mut auth_dot_json = AuthDotJson::default();
+    auth_dot_json.credentials.insert(
+        "openai".to_string(),
+        ProviderCredential::Api {
+            key: api_key.to_string(),
+        },
+    );
+    // Also set legacy field for backwards compatibility
+    auth_dot_json.openai_api_key = Some(api_key.to_string());
     save_auth(codex_home, &auth_dot_json, auth_credentials_store_mode)
 }
 
@@ -456,6 +472,7 @@ fn load_auth(
         openai_api_key: auth_json_api_key,
         tokens,
         last_refresh,
+        credentials: _,
     } = auth_dot_json;
 
     // Prefer AuthMode.ApiKey if it's set in the auth.json.
@@ -468,6 +485,7 @@ fn load_auth(
         mode: AuthMode::ChatGPT,
         storage: storage.clone(),
         auth_dot_json: Arc::new(Mutex::new(Some(AuthDotJson {
+            credentials: std::collections::HashMap::new(),
             openai_api_key: None,
             tokens,
             last_refresh,
@@ -751,23 +769,16 @@ mod tests {
             .last_refresh
             .expect("last_refresh should be recorded");
 
+        // Check the legacy fields are populated correctly
+        assert!(auth_dot_json.openai_api_key.is_none());
+        assert_eq!(auth_dot_json.last_refresh, Some(last_refresh));
+        let tokens = auth_dot_json.tokens.as_ref().expect("tokens should exist");
+        assert_eq!(tokens.access_token, "test-access-token");
+        assert_eq!(tokens.refresh_token, "test-refresh-token");
+        assert_eq!(tokens.id_token.email, Some("user@example.com".to_string()));
         assert_eq!(
-            &AuthDotJson {
-                openai_api_key: None,
-                tokens: Some(TokenData {
-                    id_token: IdTokenInfo {
-                        email: Some("user@example.com".to_string()),
-                        chatgpt_plan_type: Some(InternalPlanType::Known(InternalKnownPlan::Pro)),
-                        chatgpt_account_id: None,
-                        raw_jwt: fake_jwt,
-                    },
-                    access_token: "test-access-token".to_string(),
-                    refresh_token: "test-refresh-token".to_string(),
-                    account_id: None,
-                }),
-                last_refresh: Some(last_refresh),
-            },
-            auth_dot_json
+            tokens.id_token.chatgpt_plan_type,
+            Some(InternalPlanType::Known(InternalKnownPlan::Pro))
         );
     }
 
@@ -794,11 +805,13 @@ mod tests {
     #[test]
     fn logout_removes_auth_file() -> Result<(), std::io::Error> {
         let dir = tempdir()?;
-        let auth_dot_json = AuthDotJson {
-            openai_api_key: Some("sk-test-key".to_string()),
-            tokens: None,
-            last_refresh: None,
-        };
+        let mut auth_dot_json = AuthDotJson::default();
+        auth_dot_json.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::Api {
+                key: "sk-test-key".to_string(),
+            },
+        );
         super::save_auth(dir.path(), &auth_dot_json, AuthCredentialsStoreMode::File)?;
         let auth_file = get_auth_file(dir.path());
         assert!(auth_file.exists());

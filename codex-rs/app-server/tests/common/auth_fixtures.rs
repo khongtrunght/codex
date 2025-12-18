@@ -8,6 +8,7 @@ use chrono::DateTime;
 use chrono::Utc;
 use codex_core::auth::AuthCredentialsStoreMode;
 use codex_core::auth::AuthDotJson;
+use codex_core::auth::ProviderCredential;
 use codex_core::auth::save_auth;
 use codex_core::token_data::TokenData;
 use codex_core::token_data::parse_id_token;
@@ -125,11 +126,23 @@ pub fn write_chatgpt_auth(
 
     let last_refresh = fixture.last_refresh.unwrap_or_else(|| Some(Utc::now()));
 
-    let auth = AuthDotJson {
-        openai_api_key: None,
-        tokens: Some(tokens),
-        last_refresh,
-    };
+    let mut auth = AuthDotJson::default();
+    // Store in new credentials format
+    auth.credentials.insert(
+        "openai".to_string(),
+        ProviderCredential::OAuth {
+            access_token: tokens.access_token.clone(),
+            refresh_token: tokens.refresh_token.clone(),
+            expires_at: None,
+            last_refresh,
+            account_id: tokens.account_id.clone(),
+            exchanged_api_key: None,
+            extra: serde_json::to_value(&tokens.id_token).ok(),
+        },
+    );
+    // Also set legacy fields for backwards compatibility
+    auth.tokens = Some(tokens);
+    auth.last_refresh = last_refresh;
 
     save_auth(codex_home, &auth, cli_auth_credentials_store_mode).context("write auth.json")
 }

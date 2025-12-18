@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -33,17 +34,156 @@ pub enum AuthCredentialsStoreMode {
     Auto,
 }
 
+/// Credential types for different authentication methods
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ProviderCredential {
+    /// Simple API key (Anthropic, OpenAI API key mode, etc.)
+    Api { key: String },
+    /// OAuth tokens with refresh capability (ChatGPT, Anthropic OAuth, etc.)
+    OAuth {
+        access_token: String,
+        refresh_token: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<DateTime<Utc>>,
+        /// When we last refreshed this credential
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_refresh: Option<DateTime<Utc>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account_id: Option<String>,
+        /// API key obtained via token exchange (OpenAI) or API creation endpoint (Anthropic)
+        /// OpenAI: Uses RFC 8693 token exchange with `requested_token=openai-api-key`
+        /// Anthropic: Uses dedicated endpoint, but typically discards OAuth tokens after
+        /// When present, this key may be preferred over access_token for API requests
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exchanged_api_key: Option<String>,
+        /// Provider-specific data (e.g., ChatGPT id_token info)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extra: Option<serde_json::Value>,
+    },
+}
+
 /// Expected structure for $CODEX_HOME/auth.json.
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+/// Supports both legacy (OpenAI-only) and new (multi-provider) formats.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AuthDotJson {
-    #[serde(rename = "OPENAI_API_KEY")]
+    /// Provider credentials keyed by provider ID (e.g., "openai", "anthropic")
+    #[serde(default)]
+    pub credentials: HashMap<String, ProviderCredential>,
+
+    // === BACKWARDS COMPATIBILITY (deprecated, migrate on load) ===
+    /// Legacy: OpenAI API key (migrate to credentials["openai"])
+    #[serde(rename = "OPENAI_API_KEY", default, skip_serializing_if = "Option::is_none")]
     pub openai_api_key: Option<String>,
 
+    /// Legacy: ChatGPT OAuth tokens (migrate to credentials["openai"])
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens: Option<TokenData>,
 
+    /// Legacy: Single last_refresh timestamp (migrate into OAuth credential)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_refresh: Option<DateTime<Utc>>,
+}
+
+impl AuthDotJson {
+    /// Migrate legacy fields to new structure. Called automatically on load.
+    /// Note: Legacy fields are preserved (not cleared) for backwards compatibility
+    /// with existing code that reads from them.
+    pub fn migrate_legacy(&mut self) {
+        // Skip if already migrated
+        if self.credentials.contains_key("openai") {
+            return;
+        }
+
+        // Case 1: Both API key AND tokens exist (OpenAI's dual-storage pattern)
+        // Store as OAuth with exchanged_api_key
+        if let (Some(api_key), Some(tokens)) = (&self.openai_api_key, &self.tokens) {
+            self.credentials.insert(
+                "openai".to_string(),
+                ProviderCredential::OAuth {
+                    access_token: tokens.access_token.clone(),
+                    refresh_token: tokens.refresh_token.clone(),
+                    expires_at: None,
+                    last_refresh: self.last_refresh,
+                    account_id: tokens.account_id.clone(),
+                    exchanged_api_key: Some(api_key.clone()), // Preserve the exchanged API key
+                    extra: serde_json::to_value(&tokens.id_token).ok(),
+                },
+            );
+            return;
+        }
+
+        // Case 2: Only API key (manual API key entry)
+        if let Some(key) = &self.openai_api_key {
+            self.credentials.insert(
+                "openai".to_string(),
+                ProviderCredential::Api { key: key.clone() },
+            );
+            return;
+        }
+
+        // Case 3: Only tokens (OAuth without API key exchange)
+        if let Some(tokens) = &self.tokens {
+            self.credentials.insert(
+                "openai".to_string(),
+                ProviderCredential::OAuth {
+                    access_token: tokens.access_token.clone(),
+                    refresh_token: tokens.refresh_token.clone(),
+                    expires_at: None,
+                    last_refresh: self.last_refresh,
+                    account_id: tokens.account_id.clone(),
+                    exchanged_api_key: None,
+                    extra: serde_json::to_value(&tokens.id_token).ok(),
+                },
+            );
+        }
+    }
+
+    /// Get credential for a provider
+    pub fn get_credential(&self, provider_id: &str) -> Option<&ProviderCredential> {
+        self.credentials.get(provider_id)
+    }
+
+    /// Set credential for a provider
+    pub fn set_credential(&mut self, provider_id: &str, credential: ProviderCredential) {
+        self.credentials.insert(provider_id.to_string(), credential);
+    }
+
+    /// Remove credential for a provider
+    pub fn remove_credential(&mut self, provider_id: &str) -> Option<ProviderCredential> {
+        self.credentials.remove(provider_id)
+    }
+
+    /// Get API key/access token for a provider (convenience method)
+    /// For OAuth credentials with exchanged_api_key, returns the API key (preferred for OpenAI)
+    /// Otherwise returns the access_token
+    pub fn api_key(&self, provider_id: &str) -> Option<&str> {
+        match self.credentials.get(provider_id)? {
+            ProviderCredential::Api { key } => Some(key),
+            ProviderCredential::OAuth {
+                exchanged_api_key: Some(key),
+                ..
+            } => Some(key),
+            ProviderCredential::OAuth { access_token, .. } => Some(access_token),
+        }
+    }
+
+    /// Get last refresh time for a provider (only applicable for OAuth credentials)
+    pub fn get_last_refresh(&self, provider_id: &str) -> Option<DateTime<Utc>> {
+        match self.credentials.get(provider_id)? {
+            ProviderCredential::Api { .. } => None,
+            ProviderCredential::OAuth { last_refresh, .. } => *last_refresh,
+        }
+    }
+
+    /// Set last refresh time for a provider's OAuth credential
+    pub fn set_last_refresh(&mut self, provider_id: &str, time: DateTime<Utc>) {
+        if let Some(ProviderCredential::OAuth { last_refresh, .. }) =
+            self.credentials.get_mut(provider_id)
+        {
+            *last_refresh = Some(time);
+        }
+    }
 }
 
 pub(super) fn get_auth_file(codex_home: &Path) -> PathBuf {
@@ -90,11 +230,13 @@ impl FileAuthStorage {
 impl AuthStorageBackend for FileAuthStorage {
     fn load(&self) -> std::io::Result<Option<AuthDotJson>> {
         let auth_file = get_auth_file(&self.codex_home);
-        let auth_dot_json = match self.try_read_auth_json(&auth_file) {
+        let mut auth_dot_json = match self.try_read_auth_json(&auth_file) {
             Ok(auth) => auth,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err),
         };
+        // Auto-migrate legacy format
+        auth_dot_json.migrate_legacy();
         Ok(Some(auth_dot_json))
     }
 
@@ -154,11 +296,16 @@ impl KeyringAuthStorage {
 
     fn load_from_keyring(&self, key: &str) -> std::io::Result<Option<AuthDotJson>> {
         match self.keyring_store.load(KEYRING_SERVICE, key) {
-            Ok(Some(serialized)) => serde_json::from_str(&serialized).map(Some).map_err(|err| {
-                std::io::Error::other(format!(
-                    "failed to deserialize CLI auth from keyring: {err}"
-                ))
-            }),
+            Ok(Some(serialized)) => {
+                let mut auth: AuthDotJson = serde_json::from_str(&serialized).map_err(|err| {
+                    std::io::Error::other(format!(
+                        "failed to deserialize CLI auth from keyring: {err}"
+                    ))
+                })?;
+                // Auto-migrate legacy format
+                auth.migrate_legacy();
+                Ok(Some(auth))
+            }
             Ok(None) => Ok(None),
             Err(error) => Err(std::io::Error::other(format!(
                 "failed to load CLI auth from keyring: {}",
@@ -294,11 +441,12 @@ mod tests {
     async fn file_storage_load_returns_auth_dot_json() -> anyhow::Result<()> {
         let codex_home = tempdir()?;
         let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
-        let auth_dot_json = AuthDotJson {
-            openai_api_key: Some("test-key".to_string()),
-            tokens: None,
-            last_refresh: Some(Utc::now()),
-        };
+        // Use new format with credentials map
+        let mut auth_dot_json = AuthDotJson::default();
+        auth_dot_json.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::Api { key: "test-key".to_string() },
+        );
 
         storage
             .save(&auth_dot_json)
@@ -313,11 +461,12 @@ mod tests {
     async fn file_storage_save_persists_auth_dot_json() -> anyhow::Result<()> {
         let codex_home = tempdir()?;
         let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
-        let auth_dot_json = AuthDotJson {
-            openai_api_key: Some("test-key".to_string()),
-            tokens: None,
-            last_refresh: Some(Utc::now()),
-        };
+        // Use new format with credentials map
+        let mut auth_dot_json = AuthDotJson::default();
+        auth_dot_json.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::Api { key: "test-key".to_string() },
+        );
 
         let file = get_auth_file(codex_home.path());
         storage
@@ -334,11 +483,11 @@ mod tests {
     #[test]
     fn file_storage_delete_removes_auth_file() -> anyhow::Result<()> {
         let dir = tempdir()?;
-        let auth_dot_json = AuthDotJson {
-            openai_api_key: Some("sk-test-key".to_string()),
-            tokens: None,
-            last_refresh: None,
-        };
+        let mut auth_dot_json = AuthDotJson::default();
+        auth_dot_json.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::Api { key: "sk-test-key".to_string() },
+        );
         let storage = create_auth_storage(dir.path().to_path_buf(), AuthCredentialsStoreMode::File);
         storage.save(&auth_dot_json)?;
         assert!(dir.path().join("auth.json").exists());
@@ -346,6 +495,32 @@ mod tests {
         let removed = storage.delete()?;
         assert!(removed);
         assert!(!dir.path().join("auth.json").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn file_storage_migrates_legacy_api_key() -> anyhow::Result<()> {
+        let codex_home = tempdir()?;
+        // Write legacy format directly to file
+        let legacy_json = json!({
+            "OPENAI_API_KEY": "sk-legacy-key",
+            "tokens": null,
+            "last_refresh": null
+        });
+        let auth_file = get_auth_file(codex_home.path());
+        std::fs::write(&auth_file, serde_json::to_string_pretty(&legacy_json)?)?;
+
+        let storage = FileAuthStorage::new(codex_home.path().to_path_buf());
+        let loaded = storage.load()?.expect("auth should load");
+
+        // Legacy fields are preserved for backwards compatibility
+        assert_eq!(loaded.openai_api_key, Some("sk-legacy-key".to_string()));
+        assert!(loaded.tokens.is_none());
+        assert!(loaded.last_refresh.is_none());
+
+        // Also migrated to credentials
+        let cred = loaded.credentials.get("openai").expect("openai cred should exist");
+        assert!(matches!(cred, ProviderCredential::Api { key } if key == "sk-legacy-key"));
         Ok(())
     }
 
@@ -423,16 +598,21 @@ mod tests {
     }
 
     fn auth_with_prefix(prefix: &str) -> AuthDotJson {
-        AuthDotJson {
-            openai_api_key: Some(format!("{prefix}-api-key")),
-            tokens: Some(TokenData {
-                id_token: id_token_with_prefix(prefix),
+        // Use new format with credentials map
+        let mut auth = AuthDotJson::default();
+        auth.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::OAuth {
                 access_token: format!("{prefix}-access"),
                 refresh_token: format!("{prefix}-refresh"),
+                expires_at: None,
+                last_refresh: None,
                 account_id: Some(format!("{prefix}-account-id")),
-            }),
-            last_refresh: None,
-        }
+                exchanged_api_key: Some(format!("{prefix}-api-key")),
+                extra: serde_json::to_value(&id_token_with_prefix(prefix)).ok(),
+            },
+        );
+        auth
     }
 
     #[test]
@@ -443,11 +623,11 @@ mod tests {
             codex_home.path().to_path_buf(),
             Arc::new(mock_keyring.clone()),
         );
-        let expected = AuthDotJson {
-            openai_api_key: Some("sk-test".to_string()),
-            tokens: None,
-            last_refresh: None,
-        };
+        let mut expected = AuthDotJson::default();
+        expected.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::Api { key: "sk-test".to_string() },
+        );
         seed_keyring_with_auth(
             &mock_keyring,
             || compute_store_key(codex_home.path()),
@@ -479,16 +659,19 @@ mod tests {
         );
         let auth_file = get_auth_file(codex_home.path());
         std::fs::write(&auth_file, "stale")?;
-        let auth = AuthDotJson {
-            openai_api_key: None,
-            tokens: Some(TokenData {
-                id_token: Default::default(),
+        let mut auth = AuthDotJson::default();
+        auth.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::OAuth {
                 access_token: "access".to_string(),
                 refresh_token: "refresh".to_string(),
+                expires_at: None,
+                last_refresh: Some(Utc::now()),
                 account_id: Some("account".to_string()),
-            }),
-            last_refresh: Some(Utc::now()),
-        };
+                exchanged_api_key: None,
+                extra: None,
+            },
+        );
 
         storage.save(&auth)?;
 

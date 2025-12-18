@@ -16,6 +16,7 @@ use base64::Engine;
 use chrono::Utc;
 use codex_core::auth::AuthCredentialsStoreMode;
 use codex_core::auth::AuthDotJson;
+use codex_core::auth::ProviderCredential;
 use codex_core::auth::save_auth;
 use codex_core::default_client::originator;
 use codex_core::token_data::TokenData;
@@ -558,11 +559,36 @@ pub(crate) async fn persist_tokens_async(
         {
             tokens.account_id = Some(acc.to_string());
         }
-        let auth = AuthDotJson {
-            openai_api_key: api_key,
-            tokens: Some(tokens),
-            last_refresh: Some(Utc::now()),
+        let mut auth = AuthDotJson::default();
+        // Store in new credentials format
+        let credential = if let Some(ref key) = api_key {
+            // Both API key and tokens (OpenAI's dual-storage pattern)
+            ProviderCredential::OAuth {
+                access_token: tokens.access_token.clone(),
+                refresh_token: tokens.refresh_token.clone(),
+                expires_at: None,
+                last_refresh: Some(Utc::now()),
+                account_id: tokens.account_id.clone(),
+                exchanged_api_key: Some(key.clone()),
+                extra: serde_json::to_value(&tokens.id_token).ok(),
+            }
+        } else {
+            // OAuth only (no exchanged API key)
+            ProviderCredential::OAuth {
+                access_token: tokens.access_token.clone(),
+                refresh_token: tokens.refresh_token.clone(),
+                expires_at: None,
+                last_refresh: Some(Utc::now()),
+                account_id: tokens.account_id.clone(),
+                exchanged_api_key: None,
+                extra: serde_json::to_value(&tokens.id_token).ok(),
+            }
         };
+        auth.credentials.insert("openai".to_string(), credential);
+        // Also set legacy fields for backwards compatibility
+        auth.openai_api_key = api_key;
+        auth.tokens = Some(tokens);
+        auth.last_refresh = Some(Utc::now());
         save_auth(&codex_home, &auth, auth_credentials_store_mode)
     })
     .await

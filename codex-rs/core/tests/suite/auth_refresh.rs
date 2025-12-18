@@ -6,6 +6,7 @@ use chrono::Utc;
 use codex_core::CodexAuth;
 use codex_core::auth::AuthCredentialsStoreMode;
 use codex_core::auth::AuthDotJson;
+use codex_core::auth::ProviderCredential;
 use codex_core::auth::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_core::auth::RefreshTokenError;
 use codex_core::auth::load_auth_dot_json;
@@ -174,17 +175,29 @@ impl RefreshTokenTestContext {
         let initial_last_refresh = Utc::now() - Duration::days(1);
         let mut id_token = IdTokenInfo::default();
         id_token.raw_jwt = minimal_jwt();
+        let id_token_json = serde_json::to_value(&id_token).ok();
         let tokens = TokenData {
             id_token,
             access_token: INITIAL_ACCESS_TOKEN.to_string(),
             refresh_token: INITIAL_REFRESH_TOKEN.to_string(),
             account_id: Some("account-id".to_string()),
         };
-        let auth_dot_json = AuthDotJson {
-            openai_api_key: None,
-            tokens: Some(tokens),
-            last_refresh: Some(initial_last_refresh),
-        };
+        let mut auth_dot_json = AuthDotJson::default();
+        auth_dot_json.credentials.insert(
+            "openai".to_string(),
+            ProviderCredential::OAuth {
+                access_token: INITIAL_ACCESS_TOKEN.to_string(),
+                refresh_token: INITIAL_REFRESH_TOKEN.to_string(),
+                expires_at: None,
+                last_refresh: Some(initial_last_refresh),
+                account_id: Some("account-id".to_string()),
+                exchanged_api_key: None,
+                extra: id_token_json,
+            },
+        );
+        // Also set legacy fields for backwards compatibility with existing code paths
+        auth_dot_json.tokens = Some(tokens);
+        auth_dot_json.last_refresh = Some(initial_last_refresh);
         save_auth(
             codex_home.path(),
             &auth_dot_json,
