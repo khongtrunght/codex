@@ -1,4 +1,6 @@
 mod storage;
+pub mod provider_auth;
+pub mod providers;
 
 use chrono::Utc;
 use reqwest::StatusCode;
@@ -22,6 +24,11 @@ pub use crate::auth::storage::AuthCredentialsStoreMode;
 pub use crate::auth::storage::AuthDotJson;
 pub use crate::auth::storage::ProviderCredential;
 use crate::auth::storage::AuthStorageBackend;
+
+pub use crate::auth::provider_auth::ProviderAuth;
+pub use crate::auth::providers::AnthropicAuth;
+pub use crate::auth::providers::GenericAuth;
+pub use crate::auth::providers::OpenAIAuth;
 use crate::auth::storage::create_auth_storage;
 use crate::config::Config;
 use crate::error::RefreshTokenFailedError;
@@ -519,6 +526,14 @@ async fn update_tokens(
     Ok(auth_dot_json)
 }
 
+/// Internal function for OpenAI token refresh - used by providers/openai.rs
+pub(crate) async fn try_refresh_token_internal(
+    refresh_token: String,
+    client: &CodexHttpClient,
+) -> Result<RefreshResponse, RefreshTokenError> {
+    try_refresh_token(refresh_token, client).await
+}
+
 async fn try_refresh_token(
     refresh_token: String,
     client: &CodexHttpClient,
@@ -626,10 +641,10 @@ struct RefreshRequest {
 }
 
 #[derive(Deserialize, Clone)]
-struct RefreshResponse {
-    id_token: Option<String>,
-    access_token: Option<String>,
-    refresh_token: Option<String>,
+pub(crate) struct RefreshResponse {
+    pub(crate) id_token: Option<String>,
+    pub(crate) access_token: Option<String>,
+    pub(crate) refresh_token: Option<String>,
 }
 
 // Shared constant for token refresh (client id used for oauth token refresh flow)
