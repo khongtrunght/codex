@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt::Debug;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -373,6 +376,9 @@ pub(crate) struct TurnContext {
     pub(crate) tool_call_gate: Arc<ReadinessFlag>,
     pub(crate) exec_policy: Arc<RwLock<ExecPolicy>>,
     pub(crate) truncation_policy: TruncationPolicy,
+    /// Files that have been read during this turn.
+    /// Used to validate that files are read before being edited/written.
+    pub(crate) read_files: StdMutex<HashSet<PathBuf>>,
 }
 
 impl TurnContext {
@@ -386,6 +392,25 @@ impl TurnContext {
         self.compact_prompt
             .as_deref()
             .unwrap_or(compact::SUMMARIZATION_PROMPT)
+    }
+
+    /// Record that a file has been read during this turn.
+    pub(crate) fn mark_file_read(&self, path: &Path) {
+        if let Ok(canonical) = dunce::canonicalize(path) {
+            if let Ok(mut files) = self.read_files.lock() {
+                files.insert(canonical);
+            }
+        }
+    }
+
+    /// Check if a file has been read during this turn.
+    pub(crate) fn was_file_read(&self, path: &Path) -> bool {
+        if let Ok(canonical) = dunce::canonicalize(path) {
+            if let Ok(files) = self.read_files.lock() {
+                return files.contains(&canonical);
+            }
+        }
+        false
     }
 }
 
@@ -538,6 +563,7 @@ impl Session {
                 per_turn_config.as_ref(),
                 model_family.truncation_policy,
             ),
+            read_files: StdMutex::new(HashSet::new()),
         }
     }
 
@@ -2156,6 +2182,7 @@ async fn spawn_review_thread(
         tool_call_gate: Arc::new(ReadinessFlag::new()),
         exec_policy: parent_turn_context.exec_policy.clone(),
         truncation_policy: TruncationPolicy::new(&per_turn_config, model_family.truncation_policy),
+        read_files: StdMutex::new(HashSet::new()),
     };
 
     // Seed the child task with the review prompt as the initial user message.

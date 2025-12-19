@@ -7,8 +7,8 @@ use crate::tools::handlers::PLAN_TOOL;
 use crate::tools::handlers::apply_patch::create_apply_patch_freeform_tool;
 use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
 use crate::tools::registry::ToolRegistryBuilder;
-use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::EditToolType;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub(crate) struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
-    pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    pub edit_tool_type: Option<EditToolType>,
     pub web_search_request: bool,
     pub include_view_image_tool: bool,
     pub experimental_supported_tools: Vec<String>,
@@ -36,7 +36,6 @@ impl ToolsConfig {
             model_family,
             features,
         } = params;
-        let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_web_search_request = features.enabled(Feature::WebSearchRequest);
         let include_view_image_tool = features.enabled(Feature::ViewImageTool);
 
@@ -53,21 +52,9 @@ impl ToolsConfig {
             model_family.shell_type
         };
 
-        let apply_patch_tool_type = match model_family.apply_patch_tool_type {
-            Some(ApplyPatchToolType::Freeform) => Some(ApplyPatchToolType::Freeform),
-            Some(ApplyPatchToolType::Function) => Some(ApplyPatchToolType::Function),
-            None => {
-                if include_apply_patch_tool {
-                    Some(ApplyPatchToolType::Freeform)
-                } else {
-                    None
-                }
-            }
-        };
-
         Self {
             shell_type,
-            apply_patch_tool_type,
+            edit_tool_type: model_family.edit_tool_type.clone(),
             web_search_request: include_web_search_request,
             include_view_image_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
@@ -528,6 +515,118 @@ fn create_grep_files_tool() -> ToolSpec {
     })
 }
 
+fn create_glob_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "pattern".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Glob pattern to match files against (e.g. \"**/*.rs\", \"src/**/*.ts\")."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "path".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Directory to search in. Defaults to the session's working directory.".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "glob".to_string(),
+        description: "Finds files matching a glob pattern and lists them by modification time."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["pattern".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_write_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some("Absolute path to the file to write.".to_string()),
+        },
+    );
+    properties.insert(
+        "content".to_string(),
+        JsonSchema::String {
+            description: Some("The content to write to the file.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "write_file".to_string(),
+        description:
+            "Writes content to a file. For existing files, you must read the file first using read_file."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["file_path".to_string(), "content".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_edit_file_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "file_path".to_string(),
+        JsonSchema::String {
+            description: Some("Absolute path to the file to edit.".to_string()),
+        },
+    );
+    properties.insert(
+        "old_string".to_string(),
+        JsonSchema::String {
+            description: Some("The text to replace.".to_string()),
+        },
+    );
+    properties.insert(
+        "new_string".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "The text to replace it with (must be different from old_string).".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "replace_all".to_string(),
+        JsonSchema::Boolean {
+            description: Some(
+                "Replace all occurrences of old_string (default false).".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "edit_file".to_string(),
+        description:
+            "Performs exact string replacement in a file. You must read the file first using read_file. \
+             Uses fallback matching strategies: exact match, then normalized whitespace, then line-trimmed."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec![
+                "file_path".to_string(),
+                "old_string".to_string(),
+                "new_string".to_string(),
+            ]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 fn create_read_file_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
@@ -981,6 +1080,8 @@ pub(crate) fn build_specs(
     mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::EditFileHandler;
+    use crate::tools::handlers::GlobHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
@@ -992,6 +1093,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WriteFileHandler;
     use std::sync::Arc;
 
     let mut builder = ToolRegistryBuilder::new();
@@ -1041,19 +1143,38 @@ pub(crate) fn build_specs(
     builder.register_handler("list_mcp_resource_templates", mcp_resource_handler.clone());
     builder.register_handler("read_mcp_resource", mcp_resource_handler);
 
+    // Glob tool - available for all models
+    {
+        let glob_handler = Arc::new(GlobHandler);
+        builder.push_spec_with_parallel_support(create_glob_tool(), true);
+        builder.register_handler("glob", glob_handler);
+    }
+
     builder.push_spec(PLAN_TOOL.clone());
     builder.register_handler("update_plan", plan_handler);
 
-    if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
-        match apply_patch_tool_type {
-            ApplyPatchToolType::Freeform => {
+    // Edit tools based on edit_tool_type
+    if let Some(edit_tool_type) = &config.edit_tool_type {
+        match edit_tool_type {
+            EditToolType::ApplyPatchFreeform => {
                 builder.push_spec(create_apply_patch_freeform_tool());
+                builder.register_handler("apply_patch", apply_patch_handler);
             }
-            ApplyPatchToolType::Function => {
+            EditToolType::ApplyPatchFunction => {
                 builder.push_spec(create_apply_patch_json_tool());
+                builder.register_handler("apply_patch", apply_patch_handler);
+            }
+            EditToolType::FileEdit => {
+                // write_file and edit_file tools for non-OpenAI models
+                let write_file_handler = Arc::new(WriteFileHandler);
+                builder.push_spec_with_parallel_support(create_write_file_tool(), true);
+                builder.register_handler("write_file", write_file_handler);
+
+                let edit_file_handler = Arc::new(EditFileHandler);
+                builder.push_spec_with_parallel_support(create_edit_file_tool(), true);
+                builder.register_handler("edit_file", edit_file_handler);
             }
         }
-        builder.register_handler("apply_patch", apply_patch_handler);
     }
 
     if config
@@ -1257,6 +1378,7 @@ mod tests {
             create_list_mcp_resources_tool(),
             create_list_mcp_resource_templates_tool(),
             create_read_mcp_resource_tool(),
+            create_glob_tool(),
             PLAN_TOOL.clone(),
             create_apply_patch_freeform_tool(),
             ToolSpec::WebSearch {},
@@ -1302,6 +1424,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "apply_patch",
                 "view_image",
@@ -1319,6 +1442,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "apply_patch",
                 "view_image",
@@ -1339,6 +1463,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "apply_patch",
                 "web_search",
@@ -1360,6 +1485,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "apply_patch",
                 "web_search",
@@ -1370,6 +1496,7 @@ mod tests {
 
     #[test]
     fn test_codex_mini_defaults() {
+        // codex-mini-latest is an OpenAI model without edit tools
         assert_model_tools(
             "codex-mini-latest",
             &Features::with_defaults(),
@@ -1378,6 +1505,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "view_image",
             ],
@@ -1394,6 +1522,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "apply_patch",
                 "view_image",
@@ -1403,6 +1532,7 @@ mod tests {
 
     #[test]
     fn test_gpt_5_defaults() {
+        // gpt-5 is an OpenAI model without edit tools
         assert_model_tools(
             "gpt-5",
             &Features::with_defaults(),
@@ -1411,6 +1541,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "view_image",
             ],
@@ -1427,6 +1558,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "apply_patch",
                 "view_image",
@@ -1445,6 +1577,7 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "apply_patch",
                 "view_image",
@@ -1454,6 +1587,7 @@ mod tests {
 
     #[test]
     fn test_codex_mini_unified_exec_web_search() {
+        // codex-mini-latest is an OpenAI model without edit tools
         assert_model_tools(
             "codex-mini-latest",
             Features::with_defaults()
@@ -1465,8 +1599,29 @@ mod tests {
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
+                "glob",
                 "update_plan",
                 "web_search",
+                "view_image",
+            ],
+        );
+    }
+
+    #[test]
+    fn test_unknown_model_gets_file_edit() {
+        // Unknown/non-OpenAI models (like Anthropic Claude) should get write_file and edit_file
+        assert_model_tools(
+            "claude-3-5-sonnet",
+            &Features::with_defaults(),
+            &[
+                "shell",
+                "list_mcp_resources",
+                "list_mcp_resource_templates",
+                "read_mcp_resource",
+                "glob",
+                "update_plan",
+                "write_file",
+                "edit_file",
                 "view_image",
             ],
         );

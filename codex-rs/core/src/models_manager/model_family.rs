@@ -1,6 +1,7 @@
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::EditToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
@@ -55,9 +56,11 @@ pub struct ModelFamily {
     /// Responses API.
     pub supports_parallel_tool_calls: bool,
 
-    /// Present if the model performs better when `apply_patch` is provided as
-    /// a tool call instead of just a bash command
-    pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    /// Specifies which editing tools are available for this model family.
+    /// - Some(ApplyPatchFreeform/ApplyPatchFunction): Uses apply_patch tool (OpenAI models)
+    /// - Some(FileEdit): Uses edit_file and write_file tools (non-OpenAI models)
+    /// - None: No edit tools available
+    pub edit_tool_type: Option<EditToolType>,
 
     // Instructions to use for querying the model
     pub base_instructions: String,
@@ -141,7 +144,13 @@ impl ModelFamily {
         self.supports_reasoning_summaries = supports_reasoning_summaries;
         self.support_verbosity = support_verbosity;
         self.default_verbosity = default_verbosity;
-        self.apply_patch_tool_type = apply_patch_tool_type;
+        // Convert old apply_patch_tool_type to new edit_tool_type
+        // Note: Server still uses apply_patch_tool_type, we convert to our internal type
+        self.edit_tool_type = match apply_patch_tool_type {
+            Some(ApplyPatchToolType::Freeform) => Some(EditToolType::ApplyPatchFreeform),
+            Some(ApplyPatchToolType::Function) => Some(EditToolType::ApplyPatchFunction),
+            None => self.edit_tool_type.clone(), // Keep existing if server doesn't specify
+        };
         self.truncation_policy = truncation_policy.into();
         self.supports_parallel_tool_calls = supports_parallel_tool_calls;
         self.context_window = context_window;
@@ -178,7 +187,7 @@ macro_rules! model_family {
             supports_reasoning_summaries: false,
             reasoning_summary_format: ReasoningSummaryFormat::None,
             supports_parallel_tool_calls: false,
-            apply_patch_tool_type: None,
+            edit_tool_type: None,
             base_instructions: BASE_INSTRUCTIONS.to_string(),
             experimental_supported_tools: Vec::new(),
             effective_context_window_percent: 95,
@@ -232,7 +241,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
     } else if slug.starts_with("gpt-oss") || slug.starts_with("openai/gpt-oss") {
         model_family!(
             slug, "gpt-oss",
-            apply_patch_tool_type: Some(ApplyPatchToolType::Function),
+            edit_tool_type: Some(EditToolType::ApplyPatchFunction),
             context_window: Some(96_000),
         )
     } else if slug.starts_with("gpt-4o") {
@@ -273,7 +282,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
             support_verbosity: false,
@@ -284,7 +293,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
         model_family!(
             slug, slug,
             supports_reasoning_summaries: true,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
             base_instructions: BASE_INSTRUCTIONS.to_string(),
@@ -302,7 +311,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
             support_verbosity: false,
@@ -315,7 +324,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
             support_verbosity: false,
@@ -328,7 +337,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             base_instructions: GPT_5_1_CODEX_MAX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: false,
             support_verbosity: false,
@@ -344,7 +353,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
             base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: false,
             support_verbosity: false,
@@ -355,7 +364,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
         model_family!(
             slug, slug,
             supports_reasoning_summaries: true,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
             base_instructions: GPT_5_2_INSTRUCTIONS.to_string(),
@@ -369,7 +378,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
         model_family!(
             slug, slug,
             supports_reasoning_summaries: true,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
             base_instructions: GPT_5_2_INSTRUCTIONS.to_string(),
@@ -383,7 +392,7 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
         model_family!(
             slug, "gpt-5.1",
             supports_reasoning_summaries: true,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
             base_instructions: GPT_5_1_INSTRUCTIONS.to_string(),
@@ -419,7 +428,7 @@ fn derive_default_model_family(model: &str) -> ModelFamily {
         supports_reasoning_summaries: false,
         reasoning_summary_format: ReasoningSummaryFormat::None,
         supports_parallel_tool_calls: false,
-        apply_patch_tool_type: None,
+        edit_tool_type: Some(EditToolType::FileEdit),
         base_instructions: BASE_INSTRUCTIONS.to_string(),
         experimental_supported_tools: Vec::new(),
         effective_context_window_percent: 95,
@@ -522,7 +531,7 @@ mod tests {
             supports_reasoning_summaries: false,
             support_verbosity: false,
             default_verbosity: None,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Function),
+            edit_tool_type: Some(EditToolType::ApplyPatchFunction),
             supports_parallel_tool_calls: false,
             experimental_supported_tools: vec!["local".to_string()],
             truncation_policy: TruncationPolicy::Bytes(10_000),
@@ -566,8 +575,8 @@ mod tests {
         assert_eq!(updated.default_verbosity, Some(Verbosity::High));
         assert_eq!(updated.shell_type, ConfigShellToolType::ShellCommand);
         assert_eq!(
-            updated.apply_patch_tool_type,
-            Some(ApplyPatchToolType::Freeform)
+            updated.edit_tool_type,
+            Some(EditToolType::ApplyPatchFreeform)
         );
         assert_eq!(updated.truncation_policy, TruncationPolicy::Tokens(2_000));
         assert!(updated.supports_parallel_tool_calls);

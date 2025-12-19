@@ -118,11 +118,25 @@ pub enum ConfigShellToolType {
     ShellCommand,
 }
 
+/// Deprecated: Use EditToolType instead.
+/// Kept for backward compatibility during transition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyPatchToolType {
     Freeform,
     Function,
+}
+
+/// Specifies which editing tools are available for a model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditToolType {
+    /// Uses apply_patch tool with freeform text input (OpenAI models)
+    ApplyPatchFreeform,
+    /// Uses apply_patch tool with structured function call (OpenAI models)
+    ApplyPatchFunction,
+    /// Uses edit_file and write_file tools (non-OpenAI models)
+    FileEdit,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq, Default, Hash, TS, JsonSchema, Serialize)]

@@ -1,4 +1,6 @@
 pub mod apply_patch;
+mod edit_file;
+mod glob;
 mod grep_files;
 mod list_dir;
 mod mcp;
@@ -9,10 +11,13 @@ mod shell;
 mod test_sync;
 mod unified_exec;
 mod view_image;
+mod write_file;
 
 pub use plan::PLAN_TOOL;
 
 pub use apply_patch::ApplyPatchHandler;
+pub use edit_file::EditFileHandler;
+pub use glob::GlobHandler;
 pub use grep_files::GrepFilesHandler;
 pub use list_dir::ListDirHandler;
 pub use mcp::McpHandler;
@@ -24,3 +29,4 @@ pub use shell::ShellHandler;
 pub use test_sync::TestSyncHandler;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;
+pub use write_file::WriteFileHandler;
