@@ -23,6 +23,9 @@ pub(crate) struct ToolsConfig {
     pub web_search_request: bool,
     pub include_view_image_tool: bool,
     pub experimental_supported_tools: Vec<String>,
+    /// Descriptions of available agent types for the Task tool.
+    /// If None, the task tool will not be registered.
+    pub agent_descriptions: Option<String>,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -58,7 +61,14 @@ impl ToolsConfig {
             web_search_request: include_web_search_request,
             include_view_image_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
+            agent_descriptions: None,
         }
+    }
+
+    /// Set the agent descriptions for the Task tool.
+    pub fn with_agent_descriptions(mut self, descriptions: String) -> Self {
+        self.agent_descriptions = Some(descriptions);
+        self
     }
 }
 
@@ -870,6 +880,82 @@ fn create_read_mcp_resource_tool() -> ToolSpec {
         },
     })
 }
+
+/// Creates the task tool spec for spawning sub-agents.
+///
+/// The Task tool allows the main agent to spawn specialized sub-agents that
+/// autonomously handle complex, multi-step tasks.
+fn create_task_tool(agent_descriptions: &str) -> ToolSpec {
+    let description = format!(
+        r#"Launch a new agent to handle complex, multi-step tasks autonomously.
+
+The Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
+
+Available agent types:
+{agent_descriptions}
+
+When using the Task tool:
+- Launch multiple agents concurrently when possible
+- Agents are stateless - provide all context in the prompt
+- Results are returned when the agent completes
+- Use resume parameter to resume a previous task session"#
+    );
+
+    let mut properties = BTreeMap::new();
+
+    properties.insert(
+        "description".to_string(),
+        JsonSchema::String {
+            description: Some("A short (3-5 word) description of the task".to_string()),
+        },
+    );
+
+    properties.insert(
+        "prompt".to_string(),
+        JsonSchema::String {
+            description: Some("The detailed task for the agent to perform".to_string()),
+        },
+    );
+
+    properties.insert(
+        "subagent_type".to_string(),
+        JsonSchema::String {
+            description: Some("The type of specialized agent to use for this task".to_string()),
+        },
+    );
+
+    properties.insert(
+        "resume".to_string(),
+        JsonSchema::String {
+            description: Some("Optional session ID to resume from a previous task".to_string()),
+        },
+    );
+
+    properties.insert(
+        "model".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional model override (e.g., 'sonnet', 'opus', 'haiku')".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "task".to_string(),
+        description,
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec![
+                "description".to_string(),
+                "prompt".to_string(),
+                "subagent_type".to_string(),
+            ]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 /// TODO(dylan): deprecate once we get rid of json tool
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ApplyPatchToolArgs {
@@ -1090,6 +1176,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::ReadFileHandler;
     use crate::tools::handlers::ShellCommandHandler;
     use crate::tools::handlers::ShellHandler;
+    use crate::tools::handlers::TaskHandler;
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
@@ -1221,6 +1308,13 @@ pub(crate) fn build_specs(
     if config.include_view_image_tool {
         builder.push_spec_with_parallel_support(create_view_image_tool(), true);
         builder.register_handler("view_image", view_image_handler);
+    }
+
+    // Task tool for spawning sub-agents
+    if let Some(agent_descriptions) = &config.agent_descriptions {
+        let task_handler = Arc::new(TaskHandler);
+        builder.push_spec_with_parallel_support(create_task_tool(agent_descriptions), true);
+        builder.register_handler("task", task_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {

@@ -587,7 +587,10 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::ReasoningRawContentDelta(_)
             | EventMsg::SkillsUpdateAvailable
             | EventMsg::UndoCompleted(_)
-            | EventMsg::UndoStarted(_) => {}
+            | EventMsg::UndoStarted(_)
+            | EventMsg::SubAgentBegin(_)
+            | EventMsg::SubAgentProgress(_)
+            | EventMsg::SubAgentEnd(_) => {}
         }
         CodexStatus::Running
     }

@@ -544,6 +544,15 @@ pub enum EventMsg {
     /// Agent has completed all actions
     TaskComplete(TaskCompleteEvent),
 
+    /// A sub-agent task (via Task tool) has begun execution.
+    SubAgentBegin(SubAgentBeginEvent),
+
+    /// Progress update from a running sub-agent task.
+    SubAgentProgress(SubAgentProgressEvent),
+
+    /// A sub-agent task has completed.
+    SubAgentEnd(SubAgentEndEvent),
+
     /// Usage update for the current session, including totals and last turn.
     /// Optional means unknown — UIs should not display when `None`.
     TokenCount(TokenCountEvent),
@@ -842,6 +851,66 @@ pub struct TaskCompleteEvent {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct TaskStartedEvent {
     pub model_context_window: Option<i64>,
+}
+
+/// Emitted when a sub-agent task (via Task tool) begins execution.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct SubAgentBeginEvent {
+    /// The tool call ID that spawned this sub-agent.
+    pub call_id: String,
+    /// The type of sub-agent (e.g., "explore", "plan", "general").
+    pub agent_type: String,
+    /// Short description of the task.
+    pub description: String,
+    /// Unique session ID for this sub-agent task.
+    pub session_id: String,
+    /// Whether this is resuming a previous session.
+    #[serde(default)]
+    pub resumed: bool,
+}
+
+/// Summary of a tool call made by a sub-agent.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct SubAgentToolSummary {
+    /// Name of the tool that was called.
+    pub tool_name: String,
+    /// Short title or description of the tool call.
+    pub title: Option<String>,
+    /// Status of the tool call: "running", "completed", or "error".
+    pub status: String,
+}
+
+/// Emitted for sub-agent progress updates during task execution.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct SubAgentProgressEvent {
+    /// The tool call ID for the parent Task invocation.
+    pub call_id: String,
+    /// The sub-agent session ID.
+    pub session_id: String,
+    /// Summary of completed tool calls so far.
+    #[serde(default)]
+    pub completed_tools: Vec<SubAgentToolSummary>,
+    /// Current status message.
+    pub status: Option<String>,
+}
+
+/// Emitted when a sub-agent task completes.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct SubAgentEndEvent {
+    /// The tool call ID for the parent Task invocation.
+    pub call_id: String,
+    /// The sub-agent session ID.
+    pub session_id: String,
+    /// Whether the task completed successfully.
+    pub success: bool,
+    /// Final text output from the sub-agent.
+    pub output: String,
+    /// Duration of the task in milliseconds.
+    #[ts(type = "number")]
+    pub duration_ms: u64,
+    /// Summary of all tool calls made by the sub-agent.
+    #[serde(default)]
+    pub tool_summary: Vec<SubAgentToolSummary>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema, TS)]
@@ -1224,6 +1293,15 @@ pub enum SessionSource {
 pub enum SubAgentSource {
     Review,
     Compact,
+    /// Task sub-agent spawned via the Task tool.
+    Task {
+        /// The type of specialized agent (e.g., "explore", "plan", "general").
+        agent_type: String,
+        /// Short description of the task being performed.
+        description: String,
+        /// Optional session ID for resuming a previous task session.
+        resume_session_id: Option<String>,
+    },
     Other(String),
 }
 
@@ -1245,6 +1323,7 @@ impl fmt::Display for SubAgentSource {
         match self {
             SubAgentSource::Review => f.write_str("review"),
             SubAgentSource::Compact => f.write_str("compact"),
+            SubAgentSource::Task { agent_type, .. } => write!(f, "task_{agent_type}"),
             SubAgentSource::Other(other) => f.write_str(other),
         }
     }

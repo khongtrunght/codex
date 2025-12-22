@@ -353,6 +353,10 @@ pub struct Config {
 
     /// OTEL configuration (exporter type, endpoint, headers, etc.).
     pub otel: crate::config::types::OtelConfig,
+
+    /// Custom agent type configurations for the Task tool.
+    /// These extend/override the built-in agent types (general, explore, plan).
+    pub agent_types: HashMap<String, crate::agent_types::AgentTypeConfig>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -826,6 +830,11 @@ pub struct ConfigToml {
     pub experimental_use_freeform_apply_patch: Option<bool>,
     /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
     pub oss_provider: Option<String>,
+
+    /// Custom agent type configurations for the Task tool.
+    /// These extend/override the built-in agent types (general, explore, plan).
+    #[serde(default)]
+    pub agent_types: HashMap<String, crate::agent_types::AgentTypeConfig>,
 }
 
 impl From<ConfigToml> for UserSavedConfig {
@@ -1430,6 +1439,7 @@ impl Config {
                     trace_exporter,
                 }
             },
+            agent_types: cfg.agent_types,
         };
         Ok(config)
     }
@@ -3210,6 +3220,7 @@ model_verbosity = "high"
                 tui_scroll_wheel_like_max_duration_ms: None,
                 tui_scroll_invert: false,
                 otel: OtelConfig::default(),
+                agent_types: HashMap::new(),
             },
             o3_profile_config
         );
@@ -3293,6 +3304,7 @@ model_verbosity = "high"
             tui_scroll_wheel_like_max_duration_ms: None,
             tui_scroll_invert: false,
             otel: OtelConfig::default(),
+            agent_types: HashMap::new(),
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -3391,6 +3403,7 @@ model_verbosity = "high"
             tui_scroll_wheel_like_max_duration_ms: None,
             tui_scroll_invert: false,
             otel: OtelConfig::default(),
+            agent_types: HashMap::new(),
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -3475,6 +3488,7 @@ model_verbosity = "high"
             tui_scroll_wheel_like_max_duration_ms: None,
             tui_scroll_invert: false,
             otel: OtelConfig::default(),
+            agent_types: HashMap::new(),
         };
 
         assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);

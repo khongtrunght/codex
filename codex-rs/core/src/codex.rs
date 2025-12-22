@@ -537,10 +537,16 @@ impl Session {
             session_configuration.session_source.clone(),
         );
 
+        // Build agent descriptions for the Task tool from the default registry.
+        // In the future, this could be made dynamic by accessing the session's agent registry.
+        let agent_descriptions = crate::agent_types::AgentTypeRegistry::with_defaults()
+            .generate_agent_descriptions();
+
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &per_turn_config.features,
-        });
+        })
+        .with_agent_descriptions(agent_descriptions);
 
         TurnContext {
             sub_id,
@@ -684,6 +690,10 @@ impl Session {
         }
         let state = SessionState::new(session_configuration.clone());
 
+        // Initialize agent type registry with defaults and merge user config
+        let mut agent_type_registry = crate::agent_types::AgentTypeRegistry::with_defaults();
+        agent_type_registry.merge_from_config(config.agent_types.clone());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: CancellationToken::new(),
@@ -697,6 +707,7 @@ impl Session {
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            agent_type_registry,
         };
 
         let sess = Arc::new(Session {
@@ -787,6 +798,13 @@ impl Session {
     async fn get_total_token_usage(&self) -> i64 {
         let state = self.state.lock().await;
         state.get_total_token_usage()
+    }
+
+    /// Get a copy of the session's base config.
+    /// This is used by the Task handler to spawn sub-agents with the same configuration.
+    pub(crate) async fn get_config(&self) -> Config {
+        let state = self.state.lock().await;
+        (*state.session_configuration.original_config_do_not_use).clone()
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -3161,6 +3179,9 @@ mod tests {
         let state = SessionState::new(session_configuration.clone());
         let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone()));
 
+        let mut agent_type_registry = crate::agent_types::AgentTypeRegistry::with_defaults();
+        agent_type_registry.merge_from_config(config.agent_types.clone());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: CancellationToken::new(),
@@ -3174,6 +3195,7 @@ mod tests {
             models_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            agent_type_registry,
         };
 
         let turn_context = Session::make_turn_context(
@@ -3247,6 +3269,9 @@ mod tests {
         let state = SessionState::new(session_configuration.clone());
         let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone()));
 
+        let mut agent_type_registry = crate::agent_types::AgentTypeRegistry::with_defaults();
+        agent_type_registry.merge_from_config(config.agent_types.clone());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: CancellationToken::new(),
@@ -3260,6 +3285,7 @@ mod tests {
             models_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            agent_type_registry,
         };
 
         let turn_context = Arc::new(Session::make_turn_context(
