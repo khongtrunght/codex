@@ -211,6 +211,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let mut newline = Line::from("");
     let mut file_paths = Line::from("");
     let mut paste_image = Line::from("");
+    let mut external_editor = Line::from("");
     let mut edit_previous = Line::from("");
     let mut quit = Line::from("");
     let mut show_transcript = Line::from("");
@@ -222,6 +223,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
                 ShortcutId::InsertNewline => newline = text,
                 ShortcutId::FilePaths => file_paths = text,
                 ShortcutId::PasteImage => paste_image = text,
+                ShortcutId::ExternalEditor => external_editor = text,
                 ShortcutId::EditPrevious => edit_previous = text,
                 ShortcutId::Quit => quit = text,
                 ShortcutId::ShowTranscript => show_transcript = text,
@@ -234,6 +236,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
         newline,
         file_paths,
         paste_image,
+        external_editor,
         edit_previous,
         quit,
         Line::from(""),
@@ -310,6 +313,7 @@ enum ShortcutId {
     InsertNewline,
     FilePaths,
     PasteImage,
+    ExternalEditor,
     EditPrevious,
     Quit,
     ShowTranscript,
@@ -429,6 +433,15 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
         ],
         prefix: "",
         label: " to paste images",
+    },
+    ShortcutDescriptor {
+        id: ShortcutId::ExternalEditor,
+        bindings: &[ShortcutBinding {
+            key: key_hint::ctrl(KeyCode::Char('g')),
+            condition: DisplayCondition::Always,
+        }],
+        prefix: "",
+        label: " to edit in external editor",
     },
     ShortcutDescriptor {
         id: ShortcutId::EditPrevious,

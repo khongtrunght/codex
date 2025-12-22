@@ -444,6 +444,7 @@ async fn make_chatwidget_manual(
         pending_completed_subagents: Vec::new(),
         verbose_mode: false,
         pre_plan_display_mode: None,
+        external_editor_state: ExternalEditorState::Closed,
     };
     (widget, rx, op_rx)
 }
