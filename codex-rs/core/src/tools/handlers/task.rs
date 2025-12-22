@@ -17,6 +17,7 @@ use crate::codex::{Session, TurnContext};
 use crate::codex_delegate::run_codex_conversation_one_shot;
 use crate::config::Config;
 use crate::function_tool::FunctionCallError;
+use crate::subagent_prompt::{augment_system_prompt, DEFAULT_SUBAGENT_PROMPT};
 use crate::protocol::{
     EventMsg, SubAgentBeginEvent, SubAgentEndEvent, SubAgentProgressEvent, SubAgentToolSummary,
 };
@@ -175,9 +176,8 @@ impl ToolHandler for TaskHandler {
         );
 
         // Format output with metadata
-        let formatted_output = format!(
-            "{output}\n\n<task_metadata>\nsession_id: {task_session_id}\n</task_metadata>"
-        );
+        let formatted_output =
+            format!("{output}\n\n<task_metadata>\nsession_id: {task_session_id}\n</task_metadata>");
 
         Ok(ToolOutput::Function {
             content: formatted_output,
@@ -187,6 +187,14 @@ impl ToolHandler for TaskHandler {
     }
 }
 
+/// Build configuration for a sub-agent with augmented system prompt.
+///
+/// Unlike the parent session, sub-agents receive a fresh system prompt that includes:
+/// 1. Agent-specific instructions (from AgentTypeConfig.system_prompt or default)
+/// 2. Standard agent notes (absolute paths, no emojis)
+///
+/// Environment context (cwd, sandbox, etc.) is injected separately via EnvironmentContext.
+/// The parent's user_instructions and developer_instructions are NOT inherited.
 fn build_subagent_config(
     parent_config: &Config,
     agent_config: &AgentTypeConfig,
@@ -203,20 +211,32 @@ fn build_subagent_config(
         } else {
             // Just model name - map common aliases
             let mapped_model = match model_str.as_str() {
-                "sonnet" => "claude-sonnet-4-20250514",
-                "opus" => "claude-opus-4-20250514",
-                "haiku" => "claude-3-5-haiku-20241022",
+                "sonnet" => "claude-sonnet-4-5-20250929",
+                "opus" => "claude-opus-4-5-20251101",
+                "haiku" => "claude-haiku-4-5-20251001",
                 other => other,
             };
             config.model = Some(mapped_model.to_string());
         }
     }
 
-    // Apply system prompt addition
-    if let Some(system_prompt) = &agent_config.system_prompt {
-        let base = config.user_instructions.clone().unwrap_or_default();
-        config.user_instructions = Some(format!("{base}\n\n{system_prompt}"));
-    }
+    // Build augmented system prompt for sub-agent
+    // Use agent's custom prompt or fall back to default
+    let agent_prompt = agent_config
+        .system_prompt
+        .as_deref()
+        .unwrap_or(DEFAULT_SUBAGENT_PROMPT);
+
+    // Augment with standard notes (absolute paths, no emojis, etc.)
+    let augmented = augment_system_prompt(agent_prompt);
+
+    // Set as base_instructions (system prompt), not user_instructions
+    // This REPLACES the parent's instructions, following Claude Code's approach
+    config.base_instructions = Some(augmented);
+
+    // Clear parent's instructions - sub-agents should not inherit these
+    config.user_instructions = None;
+    config.developer_instructions = None;
 
     // Set up tool filtering for this sub-agent.
     // This blocks the task tool (preventing infinite nesting) and applies
@@ -230,6 +250,7 @@ fn build_subagent_config(
     config
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_task_subagent(
     parent_session: Arc<Session>,
     parent_turn: Arc<TurnContext>,
@@ -381,6 +402,8 @@ async fn run_task_subagent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::test_config;
+    use crate::subagent_prompt::SUBAGENT_NOTES;
 
     #[test]
     fn test_parse_task_params() {
@@ -411,5 +434,114 @@ mod tests {
         let params: TaskParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.resume, Some("task-123".to_string()));
         assert_eq!(params.model, Some("sonnet".to_string()));
+    }
+
+    #[test]
+    fn test_build_subagent_config_sets_base_instructions() {
+        let parent_config = test_config();
+        let agent_config = AgentTypeConfig {
+            name: "test".to_string(),
+            system_prompt: Some("You are a test agent.".to_string()),
+            ..Default::default()
+        };
+        let params = TaskParams {
+            description: "Test".to_string(),
+            prompt: "Do something".to_string(),
+            subagent_type: "test".to_string(),
+            resume: None,
+            model: None,
+        };
+
+        let sub_config = build_subagent_config(&parent_config, &agent_config, &params);
+
+        // Should have base_instructions set with augmented prompt
+        assert!(sub_config.base_instructions.is_some());
+        let base = sub_config.base_instructions.unwrap();
+        assert!(base.contains("You are a test agent."));
+        assert!(base.contains(SUBAGENT_NOTES));
+    }
+
+    #[test]
+    fn test_build_subagent_config_clears_parent_instructions() {
+        let mut parent_config = test_config();
+        parent_config.user_instructions = Some("Parent user instructions".to_string());
+        parent_config.developer_instructions = Some("Parent dev instructions".to_string());
+
+        let agent_config = AgentTypeConfig {
+            name: "test".to_string(),
+            system_prompt: Some("Agent prompt.".to_string()),
+            ..Default::default()
+        };
+        let params = TaskParams {
+            description: "Test".to_string(),
+            prompt: "Do something".to_string(),
+            subagent_type: "test".to_string(),
+            resume: None,
+            model: None,
+        };
+
+        let sub_config = build_subagent_config(&parent_config, &agent_config, &params);
+
+        // Parent's instructions should NOT be inherited
+        assert!(sub_config.user_instructions.is_none());
+        assert!(sub_config.developer_instructions.is_none());
+    }
+
+    #[test]
+    fn test_build_subagent_config_uses_default_prompt_when_none() {
+        let parent_config = test_config();
+        let agent_config = AgentTypeConfig {
+            name: "general".to_string(),
+            system_prompt: None, // No custom prompt
+            ..Default::default()
+        };
+        let params = TaskParams {
+            description: "Test".to_string(),
+            prompt: "Do something".to_string(),
+            subagent_type: "general".to_string(),
+            resume: None,
+            model: None,
+        };
+
+        let sub_config = build_subagent_config(&parent_config, &agent_config, &params);
+
+        // Should use default fallback prompt
+        assert!(sub_config.base_instructions.is_some());
+        let base = sub_config.base_instructions.unwrap();
+        assert!(base.contains(DEFAULT_SUBAGENT_PROMPT));
+        assert!(base.contains(SUBAGENT_NOTES));
+    }
+
+    #[test]
+    fn test_build_subagent_config_model_resolution() {
+        let parent_config = test_config();
+        let agent_config = AgentTypeConfig::default();
+
+        // Test alias resolution
+        let params = TaskParams {
+            description: "Test".to_string(),
+            prompt: "Do something".to_string(),
+            subagent_type: "test".to_string(),
+            resume: None,
+            model: Some("sonnet".to_string()),
+        };
+
+        let sub_config = build_subagent_config(&parent_config, &agent_config, &params);
+        assert_eq!(
+            sub_config.model,
+            Some("claude-sonnet-4-5-20250929".to_string())
+        );
+
+        // Test provider:model format
+        let params2 = TaskParams {
+            description: "Test".to_string(),
+            prompt: "Do something".to_string(),
+            subagent_type: "test".to_string(),
+            resume: None,
+            model: Some("anthropic:claude-custom".to_string()),
+        };
+
+        let sub_config2 = build_subagent_config(&parent_config, &agent_config, &params2);
+        assert_eq!(sub_config2.model, Some("claude-custom".to_string()));
     }
 }

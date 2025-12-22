@@ -56,6 +56,9 @@ pub struct AgentTypeRegistry {
     agents: HashMap<String, AgentTypeConfig>,
 }
 
+const EXPLORE_AGENT_PROMPT_TEMPLATE: &str = include_str!("../explore_agent_prompt.md");
+const PLAN_SUB_AGENT_PROMPT_TEMPLATE: &str = include_str!("../plan_subagent_prompt.md");
+
 impl AgentTypeRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
@@ -74,9 +77,8 @@ impl AgentTypeRegistry {
             AgentTypeConfig {
                 name: "general".to_string(),
                 description: Some(
-                    "General-purpose agent for complex multi-step tasks. Use for research, \
-                     code exploration, and tasks requiring multiple tool calls."
-                        .to_string(),
+                    r#"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."#
+                        .to_string()
                 ),
                 model: None,
                 system_prompt: None,
@@ -93,27 +95,27 @@ impl AgentTypeRegistry {
             AgentTypeConfig {
                 name: "explore".to_string(),
                 description: Some(
-                    "Fast agent for exploring codebases, finding files, and searching code. \
-                     Read-only - cannot modify files or run commands."
-                        .to_string(),
+                    r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
                 ),
                 model: None,
                 system_prompt: Some(
-                    "Focus on exploration and information gathering. Be thorough but efficient. \
-                     Return specific file paths and line numbers when possible."
-                        .to_string(),
+                    EXPLORE_AGENT_PROMPT_TEMPLATE
+                        .replace("{GlobToolName}", "glob")
+                        .replace("{ReadToolName}", "read_file")
+                        .replace("{GrepToolName}", "grep_files")
+                        .replace("{BashToolName}", "shell"),
                 ),
                 tools: Some(HashMap::from([
                     ("read_file".to_string(), true),
                     ("grep_files".to_string(), true),
                     ("list_dir".to_string(), true),
                     ("glob".to_string(), true),
-                    ("shell".to_string(), false),
+                    ("shell".to_string(), true),
                     ("apply_patch".to_string(), false),
                     ("edit_file".to_string(), false),
                     ("write_file".to_string(), false),
-                    ("exec_command".to_string(), false),
-                    ("shell_command".to_string(), false),
+                    ("exec_command".to_string(), true),
+                    ("shell_command".to_string(), true),
                 ])),
                 max_steps: Some(30),
                 temperature: None,
@@ -127,15 +129,15 @@ impl AgentTypeRegistry {
             AgentTypeConfig {
                 name: "plan".to_string(),
                 description: Some(
-                    "Agent for creating detailed implementation plans. Explores the codebase \
-                     and produces structured plans with specific file references."
-                        .to_string(),
+                    r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
                 ),
                 model: None,
                 system_prompt: Some(
-                    "Create thorough, actionable implementation plans. Include specific file paths, \
-                     function names, and step-by-step instructions. Be explicit about changes needed."
-                        .to_string(),
+                    PLAN_SUB_AGENT_PROMPT_TEMPLATE
+                        .replace("{GlobToolName}", "glob")
+                        .replace("{ReadToolName}", "read_file")
+                        .replace("{GrepToolName}", "grep_files")
+                        .replace("{BashToolName}", "shell"),
                 ),
                 tools: Some(HashMap::from([
                     ("read_file".to_string(), true),
