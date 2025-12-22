@@ -13,6 +13,7 @@ use crate::config::types::ShellEnvironmentPolicy;
 use crate::config::types::ShellEnvironmentPolicyToml;
 use crate::config::types::Tui;
 use crate::config::types::UriBasedFileOpener;
+use crate::config_loader::ConfigLayerStack;
 use crate::config_loader::ConfigRequirements;
 use crate::config_loader::LoaderOverrides;
 use crate::config_loader::load_config_layers_state;
@@ -95,6 +96,10 @@ pub(crate) fn test_config() -> Config {
 /// Application configuration loaded from disk and merged with overrides.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
+    /// Provenance for how this [`Config`] was derived (merged layers + enforced
+    /// requirements).
+    pub config_layer_stack: ConfigLayerStack,
+
     /// Optional override of model selection.
     pub model: Option<String>,
 
@@ -433,11 +438,11 @@ impl ConfigBuilder {
         let config_toml: ConfigToml = merged_toml
             .try_into()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        Config::load_config_with_requirements(
+        Config::load_config_with_layer_stack(
             config_toml,
             harness_overrides,
             codex_home,
-            config_layer_stack.requirements().clone(),
+            config_layer_stack,
         )
     }
 }
@@ -1103,16 +1108,17 @@ impl Config {
         codex_home: PathBuf,
     ) -> std::io::Result<Self> {
         // Note this ignores requirements.toml enforcement for tests.
-        let requirements = ConfigRequirements::default();
-        Self::load_config_with_requirements(cfg, overrides, codex_home, requirements)
+        let config_layer_stack = ConfigLayerStack::default();
+        Self::load_config_with_layer_stack(cfg, overrides, codex_home, config_layer_stack)
     }
 
-    fn load_config_with_requirements(
+    fn load_config_with_layer_stack(
         cfg: ConfigToml,
         overrides: ConfigOverrides,
         codex_home: PathBuf,
-        requirements: ConfigRequirements,
+        config_layer_stack: ConfigLayerStack,
     ) -> std::io::Result<Self> {
+        let requirements = config_layer_stack.requirements().clone();
         let user_instructions = Self::load_instructions(Some(&codex_home));
 
         // Destructure ConfigOverrides fully to ensure all overrides are applied.
@@ -1413,6 +1419,7 @@ impl Config {
                 .collect(),
             tool_output_token_limit: cfg.tool_output_token_limit,
             codex_home,
+            config_layer_stack,
             history,
             file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
             codex_linux_sandbox_exe,
@@ -3237,6 +3244,7 @@ model_verbosity = "high"
                 project_doc_fallback_filenames: Vec::new(),
                 tool_output_token_limit: None,
                 codex_home: fixture.codex_home(),
+                config_layer_stack: Default::default(),
                 history: History::default(),
                 file_opener: UriBasedFileOpener::VsCode,
                 codex_linux_sandbox_exe: None,
@@ -3325,6 +3333,7 @@ model_verbosity = "high"
             project_doc_fallback_filenames: Vec::new(),
             tool_output_token_limit: None,
             codex_home: fixture.codex_home(),
+            config_layer_stack: Default::default(),
             history: History::default(),
             file_opener: UriBasedFileOpener::VsCode,
             codex_linux_sandbox_exe: None,
@@ -3428,6 +3437,7 @@ model_verbosity = "high"
             project_doc_fallback_filenames: Vec::new(),
             tool_output_token_limit: None,
             codex_home: fixture.codex_home(),
+            config_layer_stack: Default::default(),
             history: History::default(),
             file_opener: UriBasedFileOpener::VsCode,
             codex_linux_sandbox_exe: None,
@@ -3517,6 +3527,7 @@ model_verbosity = "high"
             project_doc_fallback_filenames: Vec::new(),
             tool_output_token_limit: None,
             codex_home: fixture.codex_home(),
+            config_layer_stack: Default::default(),
             history: History::default(),
             file_opener: UriBasedFileOpener::VsCode,
             codex_linux_sandbox_exe: None,
