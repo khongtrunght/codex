@@ -716,6 +716,7 @@ async fn read_capped<R: AsyncRead + Unpin + Send + 'static>(
             let event = Event {
                 id: stream.sub_id.clone(),
                 msg,
+                source_session_id: None,
             };
             #[allow(clippy::let_unit_value)]
             let _ = stream.tx_event.send(event).await;

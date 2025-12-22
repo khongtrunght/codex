@@ -146,6 +146,7 @@ impl ConversationManager {
             Event {
                 id,
                 msg: EventMsg::SessionConfigured(session_configured),
+                ..
             } if id == INITIAL_SUBMIT_ID => session_configured,
             _ => {
                 return Err(CodexErr::SessionConfiguredNotFirstEvent);

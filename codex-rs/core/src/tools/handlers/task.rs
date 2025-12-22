@@ -19,7 +19,8 @@ use crate::config::Config;
 use crate::function_tool::FunctionCallError;
 use crate::subagent_prompt::{augment_system_prompt, DEFAULT_SUBAGENT_PROMPT};
 use crate::protocol::{
-    EventMsg, SubAgentBeginEvent, SubAgentEndEvent, SubAgentProgressEvent, SubAgentToolSummary,
+    EventMsg, SubAgentBeginEvent, SubAgentEndEvent, SubAgentProgressEvent, SubAgentTokenUsage,
+    SubAgentToolSummary,
 };
 use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
 use crate::tools::registry::{ToolHandler, ToolKind};
@@ -130,6 +131,8 @@ impl ToolHandler for TaskHandler {
 
         // Track tool calls for progress
         let tool_summary = Arc::new(Mutex::new(Vec::<SubAgentToolSummary>::new()));
+        // Track token usage
+        let token_usage = Arc::new(Mutex::new(SubAgentTokenUsage::default()));
 
         // Run sub-agent
         let result = run_task_subagent(
@@ -141,11 +144,13 @@ impl ToolHandler for TaskHandler {
             call_id.clone(),
             task_session_id.clone(),
             Arc::clone(&tool_summary),
+            Arc::clone(&token_usage),
         )
         .await;
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
         let final_summary = tool_summary.lock().await.clone();
+        let final_token_usage = token_usage.lock().await.clone();
 
         // Emit SubAgentEnd event
         let (success, output) = match &result {
@@ -163,6 +168,11 @@ impl ToolHandler for TaskHandler {
                     output: output.clone(),
                     duration_ms,
                     tool_summary: final_summary,
+                    token_usage: if final_token_usage.total_tokens > 0 {
+                        Some(final_token_usage)
+                    } else {
+                        None
+                    },
                 }),
             )
             .await;
@@ -260,6 +270,7 @@ async fn run_task_subagent(
     call_id: String,
     session_id: String,
     tool_summary: Arc<Mutex<Vec<SubAgentToolSummary>>>,
+    token_usage: Arc<Mutex<SubAgentTokenUsage>>,
 ) -> Result<String, String> {
     // Build user input
     let input = vec![UserInput::Text { text: prompt }];
@@ -294,6 +305,27 @@ async fn run_task_subagent(
                     Ok(event) => event,
                     Err(_) => break,
                 };
+
+                // Forward most events to parent session for TUI visibility
+                let should_forward = !matches!(
+                    &event.msg,
+                    EventMsg::SessionConfigured(_)
+                    | EventMsg::TaskComplete(_)
+                    | EventMsg::TurnAborted(_)
+                    | EventMsg::SubAgentBegin(_)
+                    | EventMsg::SubAgentProgress(_)
+                    | EventMsg::SubAgentEnd(_)
+                );
+
+                if should_forward {
+                    parent_session
+                        .send_event_with_source(
+                            parent_turn.as_ref(),
+                            event.msg.clone(),
+                            Some(session_id.clone()),
+                        )
+                        .await;
+                }
 
                 match &event.msg {
                     // Track command executions for progress
@@ -368,6 +400,23 @@ async fn run_task_subagent(
                         }
                     }
 
+                    // Track token usage
+                    EventMsg::TokenCount(tc) => {
+                        if let Some(info) = &tc.info {
+                            let mut usage = token_usage.lock().await;
+                            // Accumulate the last turn's usage into our totals
+                            let last = &info.last_token_usage;
+                            // Use absolute values since tokens are i64 in protocol
+                            usage.input_tokens = usage
+                                .input_tokens
+                                .saturating_add(last.input_tokens.max(0) as u64);
+                            usage.output_tokens = usage
+                                .output_tokens
+                                .saturating_add(last.output_tokens.max(0) as u64);
+                            usage.total_tokens = usage.input_tokens + usage.output_tokens;
+                        }
+                    }
+
                     // Capture final agent response
                     EventMsg::AgentMessage(msg) => {
                         final_output = msg.message.clone();
@@ -404,6 +453,57 @@ mod tests {
     use super::*;
     use crate::config::test_config;
     use crate::subagent_prompt::SUBAGENT_NOTES;
+
+    #[test]
+    fn test_subagent_token_usage_default() {
+        let usage = SubAgentTokenUsage::default();
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
+
+    #[test]
+    fn test_subagent_token_usage_accumulation() {
+        let mut usage = SubAgentTokenUsage::default();
+
+        // Simulate accumulating tokens like we do in the event loop
+        let input1: i64 = 100;
+        let output1: i64 = 50;
+        usage.input_tokens = usage.input_tokens.saturating_add(input1.max(0) as u64);
+        usage.output_tokens = usage.output_tokens.saturating_add(output1.max(0) as u64);
+        usage.total_tokens = usage.input_tokens + usage.output_tokens;
+
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 50);
+        assert_eq!(usage.total_tokens, 150);
+
+        // Accumulate more
+        let input2: i64 = 200;
+        let output2: i64 = 75;
+        usage.input_tokens = usage.input_tokens.saturating_add(input2.max(0) as u64);
+        usage.output_tokens = usage.output_tokens.saturating_add(output2.max(0) as u64);
+        usage.total_tokens = usage.input_tokens + usage.output_tokens;
+
+        assert_eq!(usage.input_tokens, 300);
+        assert_eq!(usage.output_tokens, 125);
+        assert_eq!(usage.total_tokens, 425);
+    }
+
+    #[test]
+    fn test_subagent_token_usage_handles_negative_gracefully() {
+        let mut usage = SubAgentTokenUsage::default();
+
+        // Negative values should be treated as 0
+        let input: i64 = -100;
+        let output: i64 = -50;
+        usage.input_tokens = usage.input_tokens.saturating_add(input.max(0) as u64);
+        usage.output_tokens = usage.output_tokens.saturating_add(output.max(0) as u64);
+        usage.total_tokens = usage.input_tokens + usage.output_tokens;
+
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.total_tokens, 0);
+    }
 
     #[test]
     fn test_parse_task_params() {

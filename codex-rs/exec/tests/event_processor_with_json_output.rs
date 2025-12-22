@@ -62,6 +62,7 @@ fn event(id: &str, msg: EventMsg) -> Event {
     Event {
         id: id.to_string(),
         msg,
+        source_session_id: None,
     }
 }
 

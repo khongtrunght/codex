@@ -511,6 +511,7 @@ impl EventProcessor for EventProcessorWithJsonOutput {
         self.process_event(Event {
             id: "".to_string(),
             msg: EventMsg::SessionConfigured(ev.clone()),
+            source_session_id: None,
         });
     }
 

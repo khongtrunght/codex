@@ -183,14 +183,17 @@ async fn forward_events(
                     Event {
                         id: _,
                         msg: EventMsg::AgentMessageDelta(_) | EventMsg::AgentReasoningDelta(_),
+                        ..
                     } => {}
                     Event {
                         id: _,
                         msg: EventMsg::SessionConfigured(_),
+                        ..
                     } => {}
                     Event {
                         id,
                         msg: EventMsg::ExecApprovalRequest(event),
+                        ..
                     } => {
                         // Initiate approval via parent session; do not surface to consumer.
                         handle_exec_approval(
@@ -206,6 +209,7 @@ async fn forward_events(
                     Event {
                         id,
                         msg: EventMsg::ApplyPatchApprovalRequest(event),
+                        ..
                     } => {
                         handle_patch_approval(
                             &codex,
@@ -375,6 +379,7 @@ mod tests {
                 msg: EventMsg::TurnAborted(TurnAbortedEvent {
                     reason: TurnAbortReason::Interrupted,
                 }),
+                source_session_id: None,
             })
             .await
             .unwrap();
@@ -400,6 +405,7 @@ mod tests {
                         input: "{}".to_string(),
                     },
                 }),
+                source_session_id: None,
             })
             .await
             .unwrap();

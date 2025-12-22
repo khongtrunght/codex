@@ -164,6 +164,7 @@ impl ElicitationRequestManager {
                             id,
                             message: elicitation.message,
                         }),
+                        source_session_id: None,
                     })
                     .await;
                 rx.await
@@ -374,6 +375,7 @@ impl McpConnectionManager {
                 .send(Event {
                     id: INITIAL_SUBMIT_ID.to_owned(),
                     msg: EventMsg::McpStartupComplete(summary),
+                    source_session_id: None,
                 })
                 .await;
         });
@@ -665,6 +667,7 @@ async fn emit_update(
         .send(Event {
             id: INITIAL_SUBMIT_ID.to_owned(),
             msg: EventMsg::McpStartupUpdate(update),
+            source_session_id: None,
         })
         .await
 }

@@ -205,6 +205,7 @@ fn maybe_push_chat_wire_api_deprecation(
             summary: CHAT_WIRE_API_DEPRECATION_SUMMARY.to_string(),
             details: None,
         }),
+        source_session_id: None,
     });
 }
 
@@ -662,6 +663,7 @@ impl Session {
             post_session_configured_events.push(Event {
                 id: INITIAL_SUBMIT_ID.to_owned(),
                 msg: EventMsg::DeprecationNotice(DeprecationNoticeEvent { summary, details }),
+                source_session_id: None,
             });
         }
         maybe_push_chat_wire_api_deprecation(&config, &mut post_session_configured_events);
@@ -749,6 +751,7 @@ impl Session {
                 initial_messages,
                 rollout_path,
             }),
+            source_session_id: None,
         })
         .chain(post_session_configured_events.into_iter());
         for event in events {
@@ -918,6 +921,7 @@ impl Session {
                             message: err.to_string(),
                             codex_error_info: Some(CodexErrorInfo::BadRequest),
                         }),
+                        source_session_id: None,
                     })
                     .await;
                     return Err(err);
@@ -1019,10 +1023,22 @@ impl Session {
 
     /// Persist the event to rollout and send it to clients.
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
+        self.send_event_with_source(turn_context, msg, None).await;
+    }
+
+    /// Persist the event to rollout and send it to clients with source session ID.
+    /// Use this for events forwarded from sub-agents.
+    pub(crate) async fn send_event_with_source(
+        &self,
+        turn_context: &TurnContext,
+        msg: EventMsg,
+        source_session_id: Option<String>,
+    ) {
         let legacy_source = msg.clone();
         let event = Event {
             id: turn_context.sub_id.clone(),
             msg,
+            source_session_id: source_session_id.clone(),
         };
         self.send_event_raw(event).await;
 
@@ -1031,6 +1047,7 @@ impl Session {
             let legacy_event = Event {
                 id: turn_context.sub_id.clone(),
                 msg: legacy,
+                source_session_id: source_session_id.clone(),
             };
             self.send_event_raw(legacy_event).await;
         }
@@ -1789,6 +1806,7 @@ mod handlers {
                     message: err.to_string(),
                     codex_error_info: Some(CodexErrorInfo::BadRequest),
                 }),
+                source_session_id: None,
             })
             .await;
         }
@@ -1908,6 +1926,7 @@ mod handlers {
             sess.send_event_raw(Event {
                 id: id.clone(),
                 msg: warning,
+                source_session_id: None,
             })
             .await;
         }
@@ -1969,6 +1988,7 @@ mod handlers {
                         }),
                     },
                 ),
+                source_session_id: None,
             };
 
             sess_clone.send_event_raw(event).await;
@@ -1989,6 +2009,7 @@ mod handlers {
         let event = Event {
             id: sub_id,
             msg: EventMsg::McpListToolsResponse(snapshot),
+            source_session_id: None,
         };
         sess.send_event_raw(event).await;
     }
@@ -2006,6 +2027,7 @@ mod handlers {
             msg: EventMsg::ListCustomPromptsResponse(ListCustomPromptsResponseEvent {
                 custom_prompts,
             }),
+            source_session_id: None,
         };
         sess.send_event_raw(event).await;
     }
@@ -2048,6 +2070,7 @@ mod handlers {
         let event = Event {
             id: sub_id,
             msg: EventMsg::ListSkillsResponse(ListSkillsResponseEvent { skills }),
+            source_session_id: None,
         };
         sess.send_event_raw(event).await;
     }
@@ -2095,6 +2118,7 @@ mod handlers {
                     message: "Failed to shutdown rollout recorder".to_string(),
                     codex_error_info: Some(CodexErrorInfo::Other),
                 }),
+                source_session_id: None,
             };
             sess.send_event_raw(event).await;
         }
@@ -2102,6 +2126,7 @@ mod handlers {
         let event = Event {
             id: sub_id,
             msg: EventMsg::ShutdownComplete,
+            source_session_id: None,
         };
         sess.send_event_raw(event).await;
         true
@@ -2132,6 +2157,7 @@ mod handlers {
                         message: err.to_string(),
                         codex_error_info: Some(CodexErrorInfo::Other),
                     }),
+                    source_session_id: None,
                 };
                 sess.send_event(&turn_context, event.msg).await;
             }
