@@ -126,6 +126,7 @@ async fn resumed_initial_messages_render_history() {
     chat.handle_codex_event(Event {
         id: "initial".into(),
         msg: EventMsg::SessionConfigured(configured),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -163,6 +164,7 @@ async fn entered_review_mode_uses_request_hint() {
             },
             user_facing_hint: Some("feature branch".to_string()),
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -182,6 +184,7 @@ async fn entered_review_mode_defaults_to_current_changes_banner() {
             target: ReviewTarget::UncommittedChanges,
             user_facing_hint: None,
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -205,6 +208,7 @@ async fn review_restores_context_window_indicator() {
             info: Some(make_token_info(pre_review_tokens, context_window)),
             rate_limits: None,
         }),
+        source_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), Some(30));
 
@@ -216,6 +220,7 @@ async fn review_restores_context_window_indicator() {
             },
             user_facing_hint: Some("feature branch".to_string()),
         }),
+        source_session_id: None,
     });
 
     chat.handle_codex_event(Event {
@@ -224,6 +229,7 @@ async fn review_restores_context_window_indicator() {
             info: Some(make_token_info(review_tokens, context_window)),
             rate_limits: None,
         }),
+        source_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), Some(97));
 
@@ -232,6 +238,7 @@ async fn review_restores_context_window_indicator() {
         msg: EventMsg::ExitedReviewMode(ExitedReviewModeEvent {
             review_output: None,
         }),
+        source_session_id: None,
     });
     let _ = drain_insert_history(&mut rx);
 
@@ -253,6 +260,7 @@ async fn token_count_none_resets_context_indicator() {
             info: Some(make_token_info(pre_compact_tokens, context_window)),
             rate_limits: None,
         }),
+        source_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), Some(30));
 
@@ -262,6 +270,7 @@ async fn token_count_none_resets_context_indicator() {
             info: None,
             rate_limits: None,
         }),
+        source_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), None);
 }
@@ -292,6 +301,7 @@ async fn context_indicator_shows_used_tokens_when_window_unknown() {
             info: Some(token_info),
             rate_limits: None,
         }),
+        source_session_id: None,
     });
 
     assert_eq!(chat.bottom_pane.context_window_percent(), None);
@@ -724,6 +734,7 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
     chat.handle_codex_event(Event {
         id: "sub-short".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
+        source_session_id: None,
     });
 
     let proposed_cells = drain_insert_history(&mut rx);
@@ -768,6 +779,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
     chat.handle_codex_event(Event {
         id: "sub-multi".into(),
         msg: EventMsg::ExecApprovalRequest(ev_multi),
+        source_session_id: None,
     });
     let proposed_multi = drain_insert_history(&mut rx);
     assert!(
@@ -818,6 +830,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
     chat.handle_codex_event(Event {
         id: "sub-long".into(),
         msg: EventMsg::ExecApprovalRequest(ev_long),
+        source_session_id: None,
     });
     let proposed_long = drain_insert_history(&mut rx);
     assert!(
@@ -860,6 +873,7 @@ fn begin_exec_with_source(
     chat.handle_codex_event(Event {
         id: call_id.to_string(),
         msg: EventMsg::ExecCommandBegin(event.clone()),
+        source_session_id: None,
     });
     event
 }
@@ -908,6 +922,7 @@ fn end_exec(
             duration: std::time::Duration::from_millis(5),
             formatted_output: aggregated,
         }),
+        source_session_id: None,
     });
 }
 
@@ -1163,6 +1178,7 @@ async fn exec_end_without_begin_uses_event_command() {
             duration: std::time::Duration::from_millis(5),
             formatted_output: "done".to_string(),
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1347,6 +1363,7 @@ async fn undo_success_events_render_info_messages() {
         msg: EventMsg::UndoStarted(UndoStartedEvent {
             message: Some("Undo requested for the last turn...".to_string()),
         }),
+        source_session_id: None,
     });
     assert!(
         chat.bottom_pane.status_indicator_visible(),
@@ -1359,6 +1376,7 @@ async fn undo_success_events_render_info_messages() {
             success: true,
             message: None,
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1382,6 +1400,7 @@ async fn undo_failure_events_render_error_message() {
     chat.handle_codex_event(Event {
         id: "turn-2".to_string(),
         msg: EventMsg::UndoStarted(UndoStartedEvent { message: None }),
+        source_session_id: None,
     });
     assert!(
         chat.bottom_pane.status_indicator_visible(),
@@ -1394,6 +1413,7 @@ async fn undo_failure_events_render_error_message() {
             success: false,
             message: Some("Failed to restore workspace state.".to_string()),
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1417,6 +1437,7 @@ async fn undo_started_hides_interrupt_hint() {
     chat.handle_codex_event(Event {
         id: "turn-hint".to_string(),
         msg: EventMsg::UndoStarted(UndoStartedEvent { message: None }),
+        source_session_id: None,
     });
 
     let status = chat
@@ -1543,6 +1564,7 @@ async fn view_image_tool_call_adds_history_cell() {
             call_id: "call-image".into(),
             path: image_path,
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1567,6 +1589,7 @@ async fn interrupt_exec_marks_failed_snapshot() {
         msg: EventMsg::TurnAborted(codex_core::protocol::TurnAbortedEvent {
             reason: TurnAbortReason::Interrupted,
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1592,6 +1615,7 @@ async fn interrupted_turn_error_message_snapshot() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
 
     // Abort the turn (like pressing Esc) and drain inserted history.
@@ -1600,6 +1624,7 @@ async fn interrupted_turn_error_message_snapshot() {
         msg: EventMsg::TurnAborted(codex_core::protocol::TurnAbortedEvent {
             reason: TurnAbortReason::Interrupted,
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2069,6 +2094,7 @@ async fn approval_modal_exec_snapshot() {
     chat.handle_codex_event(Event {
         id: "sub-approve".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
+        source_session_id: None,
     });
     // Render to a fixed-size test terminal and snapshot.
     // Call desired_height first and use that exact height for rendering.
@@ -2120,6 +2146,7 @@ async fn approval_modal_exec_without_reason_snapshot() {
     chat.handle_codex_event(Event {
         id: "sub-approve-noreason".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
+        source_session_id: None,
     });
 
     let width = 100;
@@ -2160,6 +2187,7 @@ async fn approval_modal_patch_snapshot() {
     chat.handle_codex_event(Event {
         id: "sub-approve-patch".into(),
         msg: EventMsg::ApplyPatchApprovalRequest(ev),
+        source_session_id: None,
     });
 
     // Render at the widget's desired height and snapshot.
@@ -2196,6 +2224,7 @@ async fn interrupt_restores_queued_messages_into_composer() {
         msg: EventMsg::TurnAborted(codex_core::protocol::TurnAbortedEvent {
             reason: TurnAbortReason::Interrupted,
         }),
+        source_session_id: None,
     });
 
     // Composer should now contain the queued messages joined by newlines, in order.
@@ -2234,6 +2263,7 @@ async fn interrupt_prepends_queued_messages_before_existing_composer_text() {
         msg: EventMsg::TurnAborted(codex_core::protocol::TurnAbortedEvent {
             reason: TurnAbortReason::Interrupted,
         }),
+        source_session_id: None,
     });
 
     assert_eq!(
@@ -2279,12 +2309,14 @@ async fn ui_snapshots_small_heights_task_running() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "task-1".into(),
         msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
             delta: "**Thinking**".into(),
         }),
+        source_session_id: None,
     });
     for h in [1u16, 2, 3] {
         let name = format!("chat_small_running_h{h}");
@@ -2310,6 +2342,7 @@ async fn status_widget_and_approval_modal_snapshot() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
     // Provide a deterministic header for the status line.
     chat.handle_codex_event(Event {
@@ -2317,6 +2350,7 @@ async fn status_widget_and_approval_modal_snapshot() {
         msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
             delta: "**Analyzing**".into(),
         }),
+        source_session_id: None,
     });
 
     // Now show an approval modal (e.g. exec approval).
@@ -2337,6 +2371,7 @@ async fn status_widget_and_approval_modal_snapshot() {
     chat.handle_codex_event(Event {
         id: "sub-approve-exec".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
+        source_session_id: None,
     });
 
     // Render at the widget's desired height and snapshot.
@@ -2362,6 +2397,7 @@ async fn status_widget_active_snapshot() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
     // Provide a deterministic header via a bold reasoning chunk.
     chat.handle_codex_event(Event {
@@ -2369,6 +2405,7 @@ async fn status_widget_active_snapshot() {
         msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
             delta: "**Analyzing**".into(),
         }),
+        source_session_id: None,
     });
     // Render and snapshot.
     let height = chat.desired_height(80);
@@ -2391,6 +2428,7 @@ async fn mcp_startup_header_booting_snapshot() {
             server: "alpha".into(),
             status: McpStartupStatus::Starting,
         }),
+        source_session_id: None,
     });
 
     let height = chat.desired_height(80);
@@ -2411,6 +2449,7 @@ async fn background_event_updates_status_header() {
         msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
             message: "Waiting for `vim`".to_string(),
         }),
+        source_session_id: None,
     });
 
     assert!(chat.bottom_pane.status_indicator_visible());
@@ -2440,6 +2479,7 @@ async fn apply_patch_events_emit_history_cells() {
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::ApplyPatchApprovalRequest(ev),
+        source_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(
@@ -2480,6 +2520,7 @@ async fn apply_patch_events_emit_history_cells() {
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::PatchApplyBegin(begin),
+        source_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected apply block cell to be sent");
@@ -2508,6 +2549,7 @@ async fn apply_patch_events_emit_history_cells() {
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::PatchApplyEnd(end),
+        source_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(
@@ -2536,6 +2578,7 @@ async fn apply_patch_manual_approval_adjusts_header() {
             reason: None,
             grant_root: None,
         }),
+        source_session_id: None,
     });
     drain_insert_history(&mut rx);
 
@@ -2554,6 +2597,7 @@ async fn apply_patch_manual_approval_adjusts_header() {
             auto_approved: false,
             changes: apply_changes,
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2585,6 +2629,7 @@ async fn apply_patch_manual_flow_snapshot() {
             reason: Some("Manual review required".into()),
             grant_root: None,
         }),
+        source_session_id: None,
     });
     let history_before_apply = drain_insert_history(&mut rx);
     assert!(
@@ -2607,6 +2652,7 @@ async fn apply_patch_manual_flow_snapshot() {
             auto_approved: false,
             changes: apply_changes,
         }),
+        source_session_id: None,
     });
     let approved_lines = drain_insert_history(&mut rx)
         .pop()
@@ -2639,6 +2685,7 @@ async fn apply_patch_approval_sends_op_with_submission_id() {
     chat.handle_codex_event(Event {
         id: "sub-123".into(),
         msg: EventMsg::ApplyPatchApprovalRequest(ev),
+        source_session_id: None,
     });
 
     // Approve via key press 'y'
@@ -2676,6 +2723,7 @@ async fn apply_patch_full_flow_integration_like() {
             reason: None,
             grant_root: None,
         }),
+        source_session_id: None,
     });
 
     // 2) User approves via 'y' and App receives a CodexOp
@@ -2716,6 +2764,7 @@ async fn apply_patch_full_flow_integration_like() {
             auto_approved: false,
             changes: changes2,
         }),
+        source_session_id: None,
     });
     let mut end_changes = HashMap::new();
     end_changes.insert(
@@ -2732,6 +2781,7 @@ async fn apply_patch_full_flow_integration_like() {
             success: true,
             changes: end_changes,
         }),
+        source_session_id: None,
     });
 }
 
@@ -2756,6 +2806,7 @@ async fn apply_patch_untrusted_shows_approval_modal() {
             reason: None,
             grant_root: None,
         }),
+        source_session_id: None,
     });
 
     // Render and ensure the approval modal title is present
@@ -2805,6 +2856,7 @@ async fn apply_patch_request_shows_diff_summary() {
             reason: None,
             grant_root: None,
         }),
+        source_session_id: None,
     });
 
     // No history entries yet; the modal should contain the diff summary
@@ -2869,6 +2921,7 @@ async fn plan_update_renders_history_cell() {
     chat.handle_codex_event(Event {
         id: "sub-1".into(),
         msg: EventMsg::PlanUpdate(update),
+        source_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected plan update cell to be sent");
@@ -2893,6 +2946,7 @@ async fn stream_error_updates_status_indicator() {
             message: msg.to_string(),
             codex_error_info: Some(CodexErrorInfo::Other),
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2915,6 +2969,7 @@ async fn warning_event_adds_warning_history_cell() {
         msg: EventMsg::Warning(WarningEvent {
             message: "test warning message".to_string(),
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2934,6 +2989,7 @@ async fn stream_recovery_restores_previous_status_header() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
     drain_insert_history(&mut rx);
     chat.handle_codex_event(Event {
@@ -2942,6 +2998,7 @@ async fn stream_recovery_restores_previous_status_header() {
             message: "Reconnecting... 1/5".to_string(),
             codex_error_info: Some(CodexErrorInfo::Other),
         }),
+        source_session_id: None,
     });
     drain_insert_history(&mut rx);
     chat.handle_codex_event(Event {
@@ -2949,6 +3006,7 @@ async fn stream_recovery_restores_previous_status_header() {
         msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
             delta: "hello".to_string(),
         }),
+        source_session_id: None,
     });
 
     let status = chat
@@ -2969,6 +3027,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
 
     // First finalized assistant message
@@ -2977,6 +3036,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
         msg: EventMsg::AgentMessage(AgentMessageEvent {
             message: "First message".into(),
         }),
+        source_session_id: None,
     });
 
     // Second finalized assistant message in the same turn
@@ -2985,6 +3045,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
         msg: EventMsg::AgentMessage(AgentMessageEvent {
             message: "Second message".into(),
         }),
+        source_session_id: None,
     });
 
     // End turn
@@ -2993,6 +3054,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
         msg: EventMsg::TaskComplete(TaskCompleteEvent {
             last_agent_message: None,
         }),
+        source_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -3023,12 +3085,14 @@ async fn final_reasoning_then_message_without_deltas_are_rendered() {
         msg: EventMsg::AgentReasoning(AgentReasoningEvent {
             text: "I will first analyze the request.".into(),
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::AgentMessage(AgentMessageEvent {
             message: "Here is the result.".into(),
         }),
+        source_session_id: None,
     });
 
     // Drain history and snapshot the combined visible content.
@@ -3050,24 +3114,28 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
         msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
             delta: "I will ".into(),
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
             delta: "first analyze the ".into(),
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
             delta: "request.".into(),
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::AgentReasoning(AgentReasoningEvent {
             text: "request.".into(),
         }),
+        source_session_id: None,
     });
 
     // Then stream answer deltas, followed by the exact same final message.
@@ -3076,12 +3144,14 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
         msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
             delta: "Here is the ".into(),
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
         msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
             delta: "result.".into(),
         }),
+        source_session_id: None,
     });
 
     chat.handle_codex_event(Event {
@@ -3089,6 +3159,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
         msg: EventMsg::AgentMessage(AgentMessageEvent {
             message: "Here is the result.".into(),
         }),
+        source_session_id: None,
     });
 
     // Snapshot the combined visible content to ensure we render as expected
@@ -3110,6 +3181,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
     chat.handle_codex_event(Event {
         id: "t1".into(),
         msg: EventMsg::AgentMessage(AgentMessageEvent { message: "I’m going to search the repo for where “Change Approved” is rendered to update that view.".into() }),
+        source_session_id: None,
     });
 
     let command = vec!["bash".into(), "-lc".into(), "rg \"Change Approved\"".into()];
@@ -3138,6 +3210,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             source: ExecCommandSource::Agent,
             interaction_input: None,
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "c1".into(),
@@ -3157,18 +3230,21 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             duration: std::time::Duration::from_millis(16000),
             formatted_output: String::new(),
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "t1".into(),
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "t1".into(),
         msg: EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent {
             delta: "**Investigating rendering code**".into(),
         }),
+        source_session_id: None,
     });
     chat.bottom_pane
         .set_composer_text("Summarize recent commits".to_string());
@@ -3207,6 +3283,7 @@ async fn chatwidget_markdown_code_blocks_vt100_snapshot() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
     // Build a vt100 visual from the history insertions only (no UI overlay)
     let width: u16 = 80;
@@ -3253,6 +3330,7 @@ printf 'fenced within fenced\n'
         chat.handle_codex_event(Event {
             id: "t1".into(),
             msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }),
+            source_session_id: None,
         });
         // Drive commit ticks and drain emitted history lines into the vt100 buffer.
         loop {
@@ -3278,6 +3356,7 @@ printf 'fenced within fenced\n'
         msg: EventMsg::TaskComplete(TaskCompleteEvent {
             last_agent_message: None,
         }),
+        source_session_id: None,
     });
     for lines in drain_insert_history(&mut rx) {
         crate::insert_history::insert_history_lines(&mut term, lines)
@@ -3295,6 +3374,7 @@ async fn chatwidget_tall() {
         msg: EventMsg::TaskStarted(TaskStartedEvent {
             model_context_window: None,
         }),
+        source_session_id: None,
     });
     for i in 0..30 {
         chat.queue_user_message(format!("Hello, world! {i}").into());

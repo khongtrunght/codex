@@ -2604,6 +2604,7 @@ mod tests {
         app.chat_widget.handle_codex_event(Event {
             id: String::new(),
             msg: EventMsg::SessionConfigured(event),
+            source_session_id: None,
         });
 
         while app_event_rx.try_recv().is_ok() {}

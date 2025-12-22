@@ -32,6 +32,9 @@ use codex_core::protocol::FileChange;
 use codex_core::protocol::McpAuthStatus;
 use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::protocol::SubAgentBeginEvent;
+use codex_core::protocol::SubAgentEndEvent;
+use codex_core::protocol::SubAgentTokenUsage;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
 use codex_protocol::plan_tool::PlanItemArg;
@@ -1725,6 +1728,235 @@ impl HistoryCell for FinalMessageSeparator {
         } else {
             vec![Line::from_iter(["─".repeat(width as usize).dim()])]
         }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SubAgentCell - Compact view for sub-agent tasks
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Status of a sub-agent task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SubAgentStatus {
+    Running,
+    Completed,
+    Error,
+}
+
+/// A forwarded tool event from a sub-agent for expanded view.
+#[derive(Debug, Clone)]
+pub(crate) struct ForwardedToolEvent {
+    pub tool_name: String,
+    pub title: Option<String>,
+    pub status: String,
+}
+
+/// Cell displaying a sub-agent task with compact view.
+#[derive(Debug)]
+pub(crate) struct SubAgentCell {
+    call_id: String,
+    session_id: String,
+    agent_type: String,
+    description: String,
+    status: SubAgentStatus,
+    start_time: Option<Instant>,
+
+    // Statistics
+    tool_uses_count: usize,
+    token_usage: Option<SubAgentTokenUsage>,
+    duration_ms: Option<u64>,
+
+    // Forwarded events for expanded view (transient)
+    forwarded_events: Vec<ForwardedToolEvent>,
+
+    // UI state
+    expanded: bool,
+    animations_enabled: bool,
+}
+
+impl SubAgentCell {
+    /// Format token usage in a human-readable format.
+    fn format_tokens(&self) -> String {
+        match &self.token_usage {
+            Some(usage) if usage.total_tokens > 0 => {
+                let k = usage.total_tokens as f64 / 1000.0;
+                if k >= 1.0 {
+                    format!("{:.1}k tokens", k)
+                } else {
+                    format!("{} tokens", usage.total_tokens)
+                }
+            }
+            _ => "-- tokens".to_string(),
+        }
+    }
+
+    /// Toggle expanded/collapsed state.
+    pub fn toggle_expanded(&mut self) {
+        self.expanded = !self.expanded;
+    }
+
+    /// Add a forwarded tool event.
+    pub fn add_forwarded_event(&mut self, event: ForwardedToolEvent) {
+        self.forwarded_events.push(event);
+        self.tool_uses_count = self.forwarded_events.len();
+    }
+
+    /// Mark the sub-agent as complete with final statistics.
+    pub fn complete(&mut self, end_event: &SubAgentEndEvent) {
+        self.status = if end_event.success {
+            SubAgentStatus::Completed
+        } else {
+            SubAgentStatus::Error
+        };
+        self.duration_ms = Some(end_event.duration_ms);
+        self.token_usage = end_event.token_usage.clone();
+        self.tool_uses_count = end_event.tool_summary.len();
+        self.start_time = None;
+    }
+
+    /// Get the call ID for this sub-agent.
+    pub fn call_id(&self) -> &str {
+        &self.call_id
+    }
+
+    /// Get the session ID for this sub-agent.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Get the agent type.
+    pub fn agent_type(&self) -> &str {
+        &self.agent_type
+    }
+
+    /// Check if this sub-agent is still running.
+    pub fn is_running(&self) -> bool {
+        self.status == SubAgentStatus::Running
+    }
+
+    /// Update tool uses count from progress event.
+    pub fn update_tool_count(&mut self, count: usize) {
+        self.tool_uses_count = count;
+    }
+}
+
+impl HistoryCell for SubAgentCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Status bullet
+        let bullet = match self.status {
+            SubAgentStatus::Completed => "●".green().bold(),
+            SubAgentStatus::Error => "●".red().bold(),
+            SubAgentStatus::Running => spinner(Some(self.start_time.unwrap_or(Instant::now())), self.animations_enabled),
+        };
+
+        let status_text = match self.status {
+            SubAgentStatus::Running => "Running",
+            SubAgentStatus::Completed => "Done",
+            SubAgentStatus::Error => "Error",
+        };
+
+        // Format: "● agent-type · Status · N tool uses · XXk tokens"
+        let header = format!(
+            "{} · {} · {} tool uses · {}",
+            self.agent_type,
+            status_text,
+            self.tool_uses_count,
+            self.format_tokens(),
+        );
+
+        lines.push(Line::from(vec![
+            bullet,
+            " ".into(),
+            header.into(),
+        ]));
+
+        // Description line
+        let desc_width = (width as usize).saturating_sub(4).max(1);
+        let truncated_desc = if self.description.len() > desc_width {
+            format!("{}…", &self.description[..desc_width.saturating_sub(1)])
+        } else {
+            self.description.clone()
+        };
+        lines.push(Line::from(vec![
+            "  └ ".dim(),
+            truncated_desc.dim(),
+        ]));
+
+        // If expanded, show forwarded events
+        if self.expanded && !self.forwarded_events.is_empty() {
+            for (i, event) in self.forwarded_events.iter().enumerate() {
+                let prefix = if i == self.forwarded_events.len() - 1 {
+                    "    └ "
+                } else {
+                    "    ├ "
+                };
+                let status_icon = match event.status.as_str() {
+                    "completed" => "✓".green(),
+                    "error" => "✗".red(),
+                    _ => "○".yellow(),
+                };
+                let title_text = event.title.clone().unwrap_or_default();
+                lines.push(Line::from(vec![
+                    prefix.dim(),
+                    status_icon,
+                    " ".into(),
+                    event.tool_name.clone().into(),
+                    " ".into(),
+                    title_text.dim(),
+                ]));
+            }
+        } else if self.expanded {
+            lines.push(Line::from(vec![
+                "    └ ".dim(),
+                "(no tool calls)".dim().italic(),
+            ]));
+        }
+
+        // Show expand/collapse hint
+        if !self.forwarded_events.is_empty() || self.expanded {
+            let hint = if self.expanded {
+                "(ctrl+o to collapse)"
+            } else {
+                "(ctrl+o to expand)"
+            };
+            lines.push(Line::from(hint.dim()));
+        }
+
+        lines
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        let base = 2; // Header + description
+        let hint = if !self.forwarded_events.is_empty() || self.expanded { 1 } else { 0 };
+        if self.expanded {
+            let events = if self.forwarded_events.is_empty() { 1 } else { self.forwarded_events.len() };
+            base + events as u16 + hint
+        } else {
+            base + hint
+        }
+    }
+}
+
+/// Create a new SubAgentCell from a SubAgentBeginEvent.
+pub(crate) fn new_subagent_cell(
+    begin_event: SubAgentBeginEvent,
+    animations_enabled: bool,
+) -> SubAgentCell {
+    SubAgentCell {
+        call_id: begin_event.call_id,
+        session_id: begin_event.session_id,
+        agent_type: begin_event.agent_type,
+        description: begin_event.description,
+        status: SubAgentStatus::Running,
+        start_time: Some(Instant::now()),
+        tool_uses_count: 0,
+        token_usage: None,
+        duration_ms: None,
+        forwarded_events: Vec::new(),
+        expanded: false,
+        animations_enabled,
     }
 }
 
