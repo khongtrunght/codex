@@ -77,6 +77,7 @@ mod style;
 mod terminal_palette;
 mod text_formatting;
 mod tooltips;
+mod transcript_selection;
 mod tui;
 mod tui_display_mode;
 mod ui_consts;
