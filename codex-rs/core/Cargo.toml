@@ -17,6 +17,7 @@ anyhow = { workspace = true }
 askama = "0.15"
 async-channel = { workspace = true }
 async-trait = { workspace = true }
+arc-swap = "1.7.1"
 base64 = { workspace = true }
 chardetng = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
