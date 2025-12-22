@@ -26,6 +26,9 @@ pub(crate) struct ToolsConfig {
     /// Descriptions of available agent types for the Task tool.
     /// If None, the task tool will not be registered.
     pub agent_descriptions: Option<String>,
+    /// Tool filter for sub-agent sessions.
+    /// When set, applies agent-specific tool restrictions.
+    pub subagent_filter: Option<crate::tools::filtering::SubAgentToolFilter>,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -62,12 +65,22 @@ impl ToolsConfig {
             include_view_image_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
             agent_descriptions: None,
+            subagent_filter: None,
         }
     }
 
     /// Set the agent descriptions for the Task tool.
     pub fn with_agent_descriptions(mut self, descriptions: String) -> Self {
         self.agent_descriptions = Some(descriptions);
+        self
+    }
+
+    /// Set the sub-agent tool filter.
+    pub fn with_subagent_filter(
+        mut self,
+        filter: Option<crate::tools::filtering::SubAgentToolFilter>,
+    ) -> Self {
+        self.subagent_filter = filter;
         self
     }
 }
@@ -1332,6 +1345,13 @@ pub(crate) fn build_specs(
                 }
             }
         }
+    }
+
+    // Apply sub-agent tool filtering if configured.
+    // This removes tools that are blocked for sub-agents (like the task tool)
+    // and applies any agent-specific tool restrictions.
+    if let Some(filter) = &config.subagent_filter {
+        builder.apply_subagent_filter(filter);
     }
 
     builder

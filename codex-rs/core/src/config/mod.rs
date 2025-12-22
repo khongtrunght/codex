@@ -357,6 +357,10 @@ pub struct Config {
     /// Custom agent type configurations for the Task tool.
     /// These extend/override the built-in agent types (general, explore, plan).
     pub agent_types: HashMap<String, crate::agent_types::AgentTypeConfig>,
+
+    /// Tool filter for sub-agent sessions. Only set when spawning a sub-agent.
+    /// When set, this restricts which tools are available to the sub-agent.
+    pub subagent_tool_filter: Option<crate::tools::filtering::SubAgentToolFilter>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1440,6 +1444,7 @@ impl Config {
                 }
             },
             agent_types: cfg.agent_types,
+            subagent_tool_filter: None,
         };
         Ok(config)
     }
@@ -3221,6 +3226,7 @@ model_verbosity = "high"
                 tui_scroll_invert: false,
                 otel: OtelConfig::default(),
                 agent_types: HashMap::new(),
+                subagent_tool_filter: None,
             },
             o3_profile_config
         );
@@ -3305,6 +3311,7 @@ model_verbosity = "high"
             tui_scroll_invert: false,
             otel: OtelConfig::default(),
             agent_types: HashMap::new(),
+            subagent_tool_filter: None,
         };
 
         assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
@@ -3404,6 +3411,7 @@ model_verbosity = "high"
             tui_scroll_invert: false,
             otel: OtelConfig::default(),
             agent_types: HashMap::new(),
+            subagent_tool_filter: None,
         };
 
         assert_eq!(expected_zdr_profile_config, zdr_profile_config);
@@ -3489,6 +3497,7 @@ model_verbosity = "high"
             tui_scroll_invert: false,
             otel: OtelConfig::default(),
             agent_types: HashMap::new(),
+            subagent_tool_filter: None,
         };
 
         assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);

@@ -218,10 +218,14 @@ fn build_subagent_config(
         config.user_instructions = Some(format!("{base}\n\n{system_prompt}"));
     }
 
-    // Note: Tool restrictions from agent_config.tools are not applied here yet.
-    // The sub-agent spawned via run_codex_conversation_one_shot uses SubAgentSource::Review
-    // which already has appropriate tool restrictions. Additional tool filtering
-    // would require changes to the tool registry builder or session initialization.
+    // Set up tool filtering for this sub-agent.
+    // This blocks the task tool (preventing infinite nesting) and applies
+    // any agent-specific tool restrictions.
+    config.subagent_tool_filter = Some(
+        crate::tools::filtering::SubAgentToolFilter::with_agent_tools(
+            agent_config.tools.clone().unwrap_or_default(),
+        ),
+    );
 
     config
 }

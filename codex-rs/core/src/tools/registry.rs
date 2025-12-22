@@ -213,6 +213,25 @@ impl ToolRegistryBuilder {
     //     }
     // }
 
+    /// Filter tools based on a sub-agent filter.
+    ///
+    /// This removes tool specs and handlers for tools that are not allowed
+    /// according to the filter. Used to restrict tool access for sub-agents.
+    pub fn apply_subagent_filter(
+        &mut self,
+        filter: &crate::tools::filtering::SubAgentToolFilter,
+    ) {
+        // Filter the specs
+        self.specs.retain(|configured_spec| {
+            let tool_name = configured_spec.spec.name();
+            filter.is_tool_allowed(tool_name)
+        });
+
+        // Filter the handlers
+        self.handlers
+            .retain(|name, _| filter.is_tool_allowed(name));
+    }
+
     pub fn build(self) -> (Vec<ConfiguredToolSpec>, ToolRegistry) {
         let registry = ToolRegistry::new(self.handlers);
         (self.specs, registry)

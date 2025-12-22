@@ -537,16 +537,27 @@ impl Session {
             session_configuration.session_source.clone(),
         );
 
-        // Build agent descriptions for the Task tool from the default registry.
-        // In the future, this could be made dynamic by accessing the session's agent registry.
-        let agent_descriptions = crate::agent_types::AgentTypeRegistry::with_defaults()
-            .generate_agent_descriptions();
-
+        // Build tools config. For sub-agents (when subagent_tool_filter is set),
+        // we don't include agent descriptions, which prevents the task tool from
+        // being registered (blocking infinite sub-agent nesting).
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &per_turn_config.features,
-        })
-        .with_agent_descriptions(agent_descriptions);
+        });
+
+        // Only add agent descriptions (and thus the task tool) for main sessions,
+        // not for sub-agents.
+        let tools_config = if per_turn_config.subagent_tool_filter.is_none() {
+            let agent_descriptions = crate::agent_types::AgentTypeRegistry::with_defaults()
+                .generate_agent_descriptions();
+            tools_config.with_agent_descriptions(agent_descriptions)
+        } else {
+            tools_config
+        };
+
+        // Store the tool filter in the tools config for later use in build_specs
+        let tools_config = tools_config
+            .with_subagent_filter(per_turn_config.subagent_tool_filter.clone());
 
         TurnContext {
             sub_id,
