@@ -192,7 +192,6 @@ pub struct ModelInfo {
     pub supported_reasoning_levels: Vec<ReasoningEffortPreset>,
     pub shell_type: ConfigShellToolType,
     pub visibility: ModelVisibility,
-    pub minimal_client_version: ClientVersion,
     pub supported_in_api: bool,
     pub priority: i32,
     pub upgrade: Option<String>,
@@ -230,7 +229,6 @@ impl From<SimpleModelInfo> for ModelInfo {
             supported_reasoning_levels: vec![],
             shell_type: ConfigShellToolType::Default,
             visibility: ModelVisibility::List,
-            minimal_client_version: ClientVersion(0, 0, 0),
             supported_in_api: true,
             priority: 100, // Lower priority than official models
             upgrade: None,
