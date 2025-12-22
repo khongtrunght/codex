@@ -1,9 +1,10 @@
 //! Anthropic Messages API request builder.
 //!
 //! Converts canonical prompts to Anthropic's Messages API format:
-//! - System prompt as array of content blocks
+//! - System prompt as array of content blocks with cache control
 //! - Strict user/assistant message alternation
 //! - Tools use `input_schema` instead of `parameters`
+//! - Cache control on tail messages for prompt caching
 //!
 //! See: https://docs.anthropic.com/claude/reference/messages
 
@@ -21,6 +22,12 @@ pub const ANTHROPIC_API_VERSION: &str = "2023-06-01";
 
 /// Default max tokens for Anthropic requests (required field)
 pub const DEFAULT_MAX_TOKENS: u32 = 8192;
+
+/// Maximum number of cache breakpoints allowed by Anthropic API
+const MAX_CACHE_BREAKPOINTS: usize = 4;
+
+/// Number of tail messages to mark for caching
+const CACHE_TAIL_MESSAGES: usize = 2;
 
 /// Assembled request body plus headers for Anthropic Messages API.
 pub struct AnthropicRequest {
@@ -65,24 +72,18 @@ impl<'a> AnthropicRequestBuilder<'a> {
 
     /// Build the Anthropic request.
     pub fn build(self) -> Result<AnthropicRequest, ApiError> {
-        // Build system prompt as content blocks
-        // Always prepend the Claude Code identification header
+        // Build system prompt as content blocks with cache control
+        // Both blocks get cache_control for optimal caching
         let system = vec![
-            json!({
-                "type": "text",
-                "text": CLAUDE_CODE_SYSTEM_HEADER,
-                "cache_control": {
-                    "type": "ephemeral"
-                }
-            }),
-            json!({
-                "type": "text",
-                "text": self.instructions
-            }),
+            Self::build_system_block(CLAUDE_CODE_SYSTEM_HEADER),
+            Self::build_system_block(self.instructions),
         ];
 
         // Convert ResponseItems to Anthropic messages format
-        let messages = self.build_messages()?;
+        let mut messages = self.build_messages()?;
+
+        // Mark tail messages for caching (uses remaining cache breakpoints)
+        Self::mark_tail_messages_for_cache(&mut messages, CACHE_TAIL_MESSAGES);
 
         // Convert tools to Anthropic format
         let tools = self.convert_tools();
@@ -117,61 +118,25 @@ impl<'a> AnthropicRequestBuilder<'a> {
 
     /// Convert ResponseItems to Anthropic messages format.
     ///
-    /// Anthropic requires strict user/assistant alternation.
+    /// Follows the simple 1:1 mapping pattern from CLIProxyAPI:
+    /// - message → user/assistant message based on role
+    /// - function_call → assistant message with tool_use
+    /// - function_call_output → user message with tool_result
+    ///
+    /// After processing, consecutive messages of the same role are merged.
     fn build_messages(&self) -> Result<Vec<Value>, ApiError> {
         let mut messages: Vec<Value> = Vec::new();
-        let mut pending_tool_results: Vec<Value> = Vec::new();
-        let mut last_role: Option<&str> = None;
 
+        // Simple 1:1 mapping: each input item → one message
         for item in self.input {
             match item {
                 ResponseItem::Message { role, content, .. } => {
-                    // Flush any pending tool results before user message
-                    if role == "user" && !pending_tool_results.is_empty() {
-                        // If last message was user, we need an assistant placeholder
-                        if last_role == Some("user") {
-                            messages.push(json!({
-                                "role": "assistant",
-                                "content": [{"type": "text", "text": "I'll help with that."}]
-                            }));
-                        }
-                        messages.push(json!({
-                            "role": "user",
-                            "content": std::mem::take(&mut pending_tool_results)
-                        }));
-                        last_role = Some("user");
-                    }
-
                     let anthropic_content = self.convert_content(content);
-
-                    // Handle alternation requirement
-                    if last_role == Some(role.as_str()) {
-                        // Same role twice - merge or insert placeholder
-                        if role == "user" {
-                            // Merge user messages
-                            if let Some(last_msg) = messages.last_mut()
-                                && let Some(content_arr) = last_msg.get_mut("content")
-                                && let Some(arr) = content_arr.as_array_mut()
-                            {
-                                for c in anthropic_content {
-                                    arr.push(c);
-                                }
-                                continue;
-                            }
-                        } else {
-                            // Insert user placeholder between assistant messages
-                            messages.push(json!({
-                                "role": "user",
-                                "content": [{"type": "text", "text": "Continue."}]
-                            }));
-                        }
-                    }
-
+                    let msg_role = if role == "user" { "user" } else { "assistant" };
                     messages.push(json!({
-                        "role": role,
+                        "role": msg_role,
                         "content": anthropic_content
                     }));
-                    last_role = Some(if role == "user" { "user" } else { "assistant" });
                 }
 
                 ResponseItem::FunctionCall {
@@ -180,17 +145,8 @@ impl<'a> AnthropicRequestBuilder<'a> {
                     call_id,
                     ..
                 } => {
-                    // Anthropic uses tool_use blocks within assistant messages
+                    // Map to assistant tool_use (like Go: case "function_call")
                     let input: Value = serde_json::from_str(arguments).unwrap_or(json!({}));
-
-                    // Insert user placeholder if last was assistant
-                    if last_role == Some("assistant") {
-                        messages.push(json!({
-                            "role": "user",
-                            "content": [{"type": "text", "text": "Continue."}]
-                        }));
-                    }
-
                     messages.push(json!({
                         "role": "assistant",
                         "content": [{
@@ -200,22 +156,25 @@ impl<'a> AnthropicRequestBuilder<'a> {
                             "input": input
                         }]
                     }));
-                    last_role = Some("assistant");
+                }
+
+                ResponseItem::FunctionCallOutput { call_id, output } => {
+                    // Map to user tool_result (like Go: case "function_call_output")
+                    let content = self.convert_function_call_output(output);
+                    messages.push(json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": call_id,
+                            "content": content
+                        }]
+                    }));
                 }
 
                 ResponseItem::LocalShellCall { id, action, .. } => {
-                    // Convert local shell call to Anthropic tool_use
+                    // Convert local shell call to assistant tool_use
                     let input =
                         serde_json::to_value(action).unwrap_or_else(|_| json!({"command": []}));
-
-                    // Insert user placeholder if last was assistant
-                    if last_role == Some("assistant") {
-                        messages.push(json!({
-                            "role": "user",
-                            "content": [{"type": "text", "text": "Continue."}]
-                        }));
-                    }
-
                     messages.push(json!({
                         "role": "assistant",
                         "content": [{
@@ -225,75 +184,12 @@ impl<'a> AnthropicRequestBuilder<'a> {
                             "input": input
                         }]
                     }));
-                    last_role = Some("assistant");
-                }
-
-                ResponseItem::FunctionCallOutput { call_id, output } => {
-                    // Anthropic uses tool_result blocks in user messages
-                    let content = if let Some(items) = &output.content_items {
-                        let parts: Vec<Value> = items
-                            .iter()
-                            .map(|it| match it {
-                                FunctionCallOutputContentItem::InputText { text } => {
-                                    json!({"type": "text", "text": text})
-                                }
-                                FunctionCallOutputContentItem::InputImage { image_url } => {
-                                    // Anthropic uses base64 images differently
-                                    if image_url.starts_with("data:") {
-                                        // Parse data URL
-                                        let parts: Vec<&str> = image_url.splitn(2, ',').collect();
-                                        if parts.len() == 2 {
-                                            let media_type = parts[0]
-                                                .strip_prefix("data:")
-                                                .and_then(|s| s.strip_suffix(";base64"))
-                                                .unwrap_or("image/png");
-                                            json!({
-                                                "type": "image",
-                                                "source": {
-                                                    "type": "base64",
-                                                    "media_type": media_type,
-                                                    "data": parts[1]
-                                                }
-                                            })
-                                        } else {
-                                            json!({"type": "text", "text": "[Image]"})
-                                        }
-                                    } else {
-                                        // URL-based image
-                                        json!({
-                                            "type": "image",
-                                            "source": {
-                                                "type": "url",
-                                                "url": image_url
-                                            }
-                                        })
-                                    }
-                                }
-                            })
-                            .collect();
-                        json!(parts)
-                    } else {
-                        json!([{"type": "text", "text": &output.content}])
-                    };
-
-                    pending_tool_results.push(json!({
-                        "type": "tool_result",
-                        "tool_use_id": call_id,
-                        "content": content
-                    }));
                 }
 
                 ResponseItem::CustomToolCall {
                     id, name, input, ..
                 } => {
-                    // Insert user placeholder if last was assistant
-                    if last_role == Some("assistant") {
-                        messages.push(json!({
-                            "role": "user",
-                            "content": [{"type": "text", "text": "Continue."}]
-                        }));
-                    }
-
+                    // Map to assistant tool_use
                     messages.push(json!({
                         "role": "assistant",
                         "content": [{
@@ -303,14 +199,17 @@ impl<'a> AnthropicRequestBuilder<'a> {
                             "input": input
                         }]
                     }));
-                    last_role = Some("assistant");
                 }
 
                 ResponseItem::CustomToolCallOutput { call_id, output } => {
-                    pending_tool_results.push(json!({
-                        "type": "tool_result",
-                        "tool_use_id": call_id,
-                        "content": [{"type": "text", "text": output}]
+                    // Map to user tool_result
+                    messages.push(json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": call_id,
+                            "content": [{"type": "text", "text": output}]
+                        }]
                     }));
                 }
 
@@ -323,19 +222,116 @@ impl<'a> AnthropicRequestBuilder<'a> {
             }
         }
 
-        // Flush any remaining tool results
-        if !pending_tool_results.is_empty() {
-            messages.push(json!({
-                "role": "user",
-                "content": pending_tool_results
-            }));
-        }
+        // Merge consecutive messages of the same role
+        messages = Self::merge_consecutive_messages(messages);
 
         // Ensure messages start with user and alternate
         self.ensure_valid_alternation(&mut messages);
 
         Ok(messages)
     }
+
+    /// Merge consecutive messages of the same role into single messages.
+    /// This ensures proper alternation for Anthropic's API.
+    fn merge_consecutive_messages(messages: Vec<Value>) -> Vec<Value> {
+        if messages.is_empty() {
+            return messages;
+        }
+
+        let mut merged: Vec<Value> = Vec::new();
+
+        for msg in messages {
+            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            let content = msg.get("content").cloned().unwrap_or(json!([]));
+
+            // Check if we can merge with the last message
+            if let Some(last) = merged.last_mut() {
+                let last_role = last.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                if last_role == role {
+                    // Same role - merge content arrays
+                    if let Some(last_content) = last.get_mut("content")
+                        && let Some(arr) = last_content.as_array_mut()
+                    {
+                        if let Some(new_content) = content.as_array() {
+                            for item in new_content {
+                                arr.push(item.clone());
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            // Different role or first message - add as new
+            merged.push(msg);
+        }
+
+        merged
+    }
+
+    // =========================================================================
+    // Cache Control Helpers
+    // =========================================================================
+
+    /// Build a system block with cache control.
+    /// Following the pattern from anthropic_messages.rs
+    fn build_system_block(text: &str) -> Value {
+        json!({
+            "type": "text",
+            "text": text,
+            "cache_control": {
+                "type": "ephemeral"
+            }
+        })
+    }
+
+    /// Attach cache_control to a content block.
+    fn attach_cache_control(content_block: &mut Value) {
+        if let Some(obj) = content_block.as_object_mut() {
+            obj.insert(
+                "cache_control".to_string(),
+                json!({"type": "ephemeral"}),
+            );
+        }
+    }
+
+    /// Mark the last N messages with cache_control on their final content block.
+    /// This enables prompt caching for frequently repeated conversation prefixes.
+    ///
+    /// Anthropic allows maximum 4 cache breakpoints per request.
+    /// We use 2 for system blocks, leaving 2 for tail messages.
+    fn mark_tail_messages_for_cache(messages: &mut [Value], n_messages: usize) {
+        // Respect the maximum cache breakpoints (minus 2 used for system blocks)
+        let available_breakpoints = MAX_CACHE_BREAKPOINTS.saturating_sub(2);
+        let n_to_mark = n_messages.min(available_breakpoints);
+
+        for msg in messages.iter_mut().rev().take(n_to_mark) {
+            if let Some(content) = msg.get_mut("content") {
+                match content {
+                    Value::Array(blocks) => {
+                        // Mark the last block in the content array
+                        if let Some(last_block) = blocks.last_mut() {
+                            Self::attach_cache_control(last_block);
+                        }
+                    }
+                    Value::String(text) => {
+                        // Convert string shorthand to array form with cache marker
+                        let text_clone = text.clone();
+                        *content = json!([{
+                            "type": "text",
+                            "text": text_clone,
+                            "cache_control": {"type": "ephemeral"}
+                        }]);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // Content Conversion Helpers
+    // =========================================================================
 
     /// Convert content items to Anthropic format.
     fn convert_content(&self, content: &[ContentItem]) -> Vec<Value> {
@@ -378,6 +374,55 @@ impl<'a> AnthropicRequestBuilder<'a> {
                 }
             })
             .collect()
+    }
+
+    /// Convert function call output to Anthropic content format.
+    fn convert_function_call_output(
+        &self,
+        output: &codex_protocol::models::FunctionCallOutputPayload,
+    ) -> Value {
+        if let Some(items) = &output.content_items {
+            let parts: Vec<Value> = items
+                .iter()
+                .map(|it| match it {
+                    FunctionCallOutputContentItem::InputText { text } => {
+                        json!({"type": "text", "text": text})
+                    }
+                    FunctionCallOutputContentItem::InputImage { image_url } => {
+                        if image_url.starts_with("data:") {
+                            let parts: Vec<&str> = image_url.splitn(2, ',').collect();
+                            if parts.len() == 2 {
+                                let media_type = parts[0]
+                                    .strip_prefix("data:")
+                                    .and_then(|s| s.strip_suffix(";base64"))
+                                    .unwrap_or("image/png");
+                                json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": parts[1]
+                                    }
+                                })
+                            } else {
+                                json!({"type": "text", "text": "[Image]"})
+                            }
+                        } else {
+                            json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "url",
+                                    "url": image_url
+                                }
+                            })
+                        }
+                    }
+                })
+                .collect();
+            json!(parts)
+        } else {
+            json!([{"type": "text", "text": &output.content}])
+        }
     }
 
     /// Convert OpenAI-style tools to Anthropic format.
@@ -584,5 +629,275 @@ mod tests {
             .expect("should build");
 
         assert_eq!(request.body["max_tokens"], 4096);
+    }
+
+    #[test]
+    fn test_assistant_text_and_tool_call_combined() {
+        // This tests the fix for the "Continue." bug - assistant text and tool_use
+        // should be combined into a single message, not split with "Continue." between them
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Create a file".to_string(),
+                }],
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "I'll create a file.".to_string(),
+                }],
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                arguments: r#"{"command":"touch test.py"}"#.to_string(),
+                call_id: "call_123".to_string(),
+            },
+        ];
+
+        let request = AnthropicRequestBuilder::new("claude-3-sonnet", "Be helpful", &input, &[])
+            .build()
+            .expect("should build");
+
+        let messages = request.body["messages"].as_array().unwrap();
+
+        // Should have: user, assistant (text + tool_use combined)
+        // NOT: user, assistant (text), user (Continue.), assistant (tool_use)
+        assert_eq!(messages.len(), 2, "Expected 2 messages, got {}: {:?}", messages.len(), messages);
+
+        // First message is user
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"][0]["text"], "Create a file");
+
+        // Second message is assistant with BOTH text and tool_use
+        assert_eq!(messages[1]["role"], "assistant");
+        let content = messages[1]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2, "Expected 2 content blocks in assistant message");
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "I'll create a file.");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["name"], "shell");
+
+        // Verify no "Continue." exists anywhere
+        for msg in messages {
+            if let Some(content) = msg["content"].as_array() {
+                for part in content {
+                    if part["type"] == "text" {
+                        assert_ne!(part["text"], "Continue.", "Found unexpected 'Continue.' message");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_multiple_tool_calls_combined() {
+        // Multiple tool calls from the same assistant turn should be combined
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Create two files".to_string(),
+                }],
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                arguments: r#"{"command":"touch file1.txt"}"#.to_string(),
+                call_id: "call_1".to_string(),
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                arguments: r#"{"command":"touch file2.txt"}"#.to_string(),
+                call_id: "call_2".to_string(),
+            },
+        ];
+
+        let request = AnthropicRequestBuilder::new("claude-3-sonnet", "Be helpful", &input, &[])
+            .build()
+            .expect("should build");
+
+        let messages = request.body["messages"].as_array().unwrap();
+
+        // Should have: user, assistant (both tool_use blocks combined)
+        assert_eq!(messages.len(), 2);
+
+        // Second message should have both tool_use blocks
+        assert_eq!(messages[1]["role"], "assistant");
+        let content = messages[1]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2, "Expected 2 tool_use blocks in assistant message");
+        assert_eq!(content[0]["type"], "tool_use");
+        assert_eq!(content[0]["id"], "call_1");
+        assert_eq!(content[1]["type"], "tool_use");
+        assert_eq!(content[1]["id"], "call_2");
+    }
+
+    #[test]
+    fn test_consecutive_messages_merged() {
+        // Following CLIProxyAPI pattern: simple 1:1 mapping then merge consecutive same-role.
+        // All consecutive assistant messages are merged into one.
+        // All consecutive user messages (tool_results) are merged into one.
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Find Rust files".to_string(),
+                }],
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "I'll search for Rust files.".to_string(),
+                }],
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                arguments: r#"{"command":"rg AgentTypeConfig"}"#.to_string(),
+                call_id: "call_A".to_string(),
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "glob".to_string(),
+                arguments: r#"{"pattern":"**/*.rs"}"#.to_string(),
+                call_id: "call_B".to_string(),
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "call_A".to_string(),
+                output: codex_protocol::models::FunctionCallOutputPayload {
+                    success: Some(true),
+                    content: "found matches".to_string(),
+                    content_items: None,
+                },
+            },
+            ResponseItem::FunctionCallOutput {
+                call_id: "call_B".to_string(),
+                output: codex_protocol::models::FunctionCallOutputPayload {
+                    success: Some(true),
+                    content: "file1.rs\nfile2.rs".to_string(),
+                    content_items: None,
+                },
+            },
+        ];
+
+        let request = AnthropicRequestBuilder::new("claude-3-sonnet", "Be helpful", &input, &[])
+            .build()
+            .expect("should build");
+
+        let messages = request.body["messages"].as_array().unwrap();
+
+        // Should have: user, assistant (all merged), user (all tool_results merged)
+        assert_eq!(messages.len(), 3, "Expected 3 messages: {:?}", messages);
+
+        // First message is user
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"][0]["text"], "Find Rust files");
+
+        // Second message is assistant with text + all tool_uses merged
+        assert_eq!(messages[1]["role"], "assistant");
+        let asst_content = messages[1]["content"].as_array().unwrap();
+        assert_eq!(asst_content.len(), 3, "Expected text + 2 tool_uses");
+        assert_eq!(asst_content[0]["type"], "text");
+        assert_eq!(asst_content[1]["type"], "tool_use");
+        assert_eq!(asst_content[1]["id"], "call_A");
+        assert_eq!(asst_content[2]["type"], "tool_use");
+        assert_eq!(asst_content[2]["id"], "call_B");
+
+        // Third message is user with all tool_results merged
+        assert_eq!(messages[2]["role"], "user");
+        let user_content = messages[2]["content"].as_array().unwrap();
+        assert_eq!(user_content.len(), 2, "Expected 2 tool_results");
+        assert_eq!(user_content[0]["type"], "tool_result");
+        assert_eq!(user_content[0]["tool_use_id"], "call_A");
+        assert_eq!(user_content[1]["type"], "tool_result");
+        assert_eq!(user_content[1]["tool_use_id"], "call_B");
+
+        // Verify no "Continue." exists anywhere
+        for msg in messages {
+            if let Some(content) = msg["content"].as_array() {
+                for part in content {
+                    if part["type"] == "text" {
+                        let text = part["text"].as_str().unwrap_or("");
+                        assert_ne!(text, "Continue.", "Found unexpected 'Continue.' message");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_cache_control_on_system_and_tail_messages() {
+        // Verify cache_control is properly applied to:
+        // 1. Both system blocks (ephemeral)
+        // 2. Last 2 messages (tail caching)
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Hello".to_string(),
+                }],
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "Hi there!".to_string(),
+                }],
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "How are you?".to_string(),
+                }],
+            },
+        ];
+
+        let request = AnthropicRequestBuilder::new("claude-3-sonnet", "Be helpful", &input, &[])
+            .build()
+            .expect("should build");
+
+        // Check system blocks have cache_control
+        let system = request.body["system"].as_array().unwrap();
+        assert_eq!(system.len(), 2);
+        assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(system[1]["cache_control"]["type"], "ephemeral");
+
+        // Check tail messages have cache_control on last content block
+        let messages = request.body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+
+        // Last 2 messages should have cache_control
+        // messages[1] (assistant) - last content block should have cache_control
+        let asst_content = messages[1]["content"].as_array().unwrap();
+        let last_asst_block = asst_content.last().unwrap();
+        assert_eq!(
+            last_asst_block["cache_control"]["type"], "ephemeral",
+            "Assistant message should have cache_control"
+        );
+
+        // messages[2] (user) - last content block should have cache_control
+        let user_content = messages[2]["content"].as_array().unwrap();
+        let last_user_block = user_content.last().unwrap();
+        assert_eq!(
+            last_user_block["cache_control"]["type"], "ephemeral",
+            "Last user message should have cache_control"
+        );
+
+        // messages[0] (first user) should NOT have cache_control (only last 2 are marked)
+        let first_user_content = messages[0]["content"].as_array().unwrap();
+        let first_block = &first_user_content[0];
+        assert!(
+            first_block.get("cache_control").is_none(),
+            "First message should NOT have cache_control"
+        );
     }
 }
