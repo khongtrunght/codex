@@ -19,8 +19,7 @@ use crate::config::Config;
 use crate::function_tool::FunctionCallError;
 use crate::subagent_prompt::{augment_system_prompt, DEFAULT_SUBAGENT_PROMPT};
 use crate::protocol::{
-    EventMsg, SubAgentBeginEvent, SubAgentEndEvent, SubAgentProgressEvent, SubAgentTokenUsage,
-    SubAgentToolSummary,
+    EventMsg, SubAgentBeginEvent, SubAgentEndEvent, SubAgentTokenUsage, SubAgentToolSummary,
 };
 use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
 use crate::tools::registry::{ToolHandler, ToolKind};
@@ -276,6 +275,7 @@ async fn run_task_subagent(
     let input = vec![UserInput::Text { text: prompt }];
 
     // Spawn sub-agent using the existing infrastructure
+    // Pass the session_id so the sub-agent Session knows its own identity
     let codex = run_codex_conversation_one_shot(
         config,
         Arc::clone(&parent_session.services.auth_manager),
@@ -285,6 +285,7 @@ async fn run_task_subagent(
         Arc::clone(&parent_turn),
         cancel_token.clone(),
         None, // For now, don't support resume - would need rollout path lookup
+        Some(session_id.clone()), // Sub-agent's own session ID
     )
     .await
     .map_err(|e| format!("Failed to spawn sub-agent: {e}"))?;
@@ -306,7 +307,9 @@ async fn run_task_subagent(
                     Err(_) => break,
                 };
 
-                // Forward most events to parent session for TUI visibility
+                // Forward events to parent session for TUI visibility
+                // Events are tagged with source_session_id so TUI can route them
+                // to the appropriate SubAgentCell
                 let should_forward = !matches!(
                     &event.msg,
                     EventMsg::SessionConfigured(_)
@@ -318,17 +321,20 @@ async fn run_task_subagent(
                 );
 
                 if should_forward {
+                    // For nested sub-agents, parent_session_id is the parent's own session ID
+                    // For first-level sub-agents spawned by root, parent's source_session_id() is None
                     parent_session
                         .send_event_with_source(
                             parent_turn.as_ref(),
                             event.msg.clone(),
                             Some(session_id.clone()),
+                            parent_session.source_session_id().cloned(),
                         )
                         .await;
                 }
 
                 match &event.msg {
-                    // Track command executions for progress
+                    // Track command executions for final summary
                     EventMsg::ExecCommandBegin(cmd) => {
                         let mut summary = tool_summary.lock().await;
                         summary.push(SubAgentToolSummary {
@@ -336,19 +342,6 @@ async fn run_task_subagent(
                             title: Some(cmd.command.join(" ")),
                             status: "running".to_string(),
                         });
-
-                        // Emit progress event
-                        parent_session
-                            .send_event(
-                                parent_turn.as_ref(),
-                                EventMsg::SubAgentProgress(SubAgentProgressEvent {
-                                    call_id: call_id.clone(),
-                                    session_id: session_id.clone(),
-                                    completed_tools: summary.clone(),
-                                    status: Some(format!("Running: {}", cmd.command.join(" "))),
-                                }),
-                            )
-                            .await;
                     }
 
                     EventMsg::ExecCommandEnd(cmd) => {

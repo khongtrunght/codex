@@ -165,6 +165,7 @@ impl ElicitationRequestManager {
                             message: elicitation.message,
                         }),
                         source_session_id: None,
+                        parent_session_id: None,
                     })
                     .await;
                 rx.await
@@ -376,6 +377,7 @@ impl McpConnectionManager {
                     id: INITIAL_SUBMIT_ID.to_owned(),
                     msg: EventMsg::McpStartupComplete(summary),
                     source_session_id: None,
+                    parent_session_id: None,
                 })
                 .await;
         });
@@ -668,6 +670,7 @@ async fn emit_update(
             id: INITIAL_SUBMIT_ID.to_owned(),
             msg: EventMsg::McpStartupUpdate(update),
             source_session_id: None,
+            parent_session_id: None,
         })
         .await
 }

@@ -512,6 +512,7 @@ impl EventProcessor for EventProcessorWithJsonOutput {
             id: "".to_string(),
             msg: EventMsg::SessionConfigured(ev.clone()),
             source_session_id: None,
+            parent_session_id: None,
         });
     }
 

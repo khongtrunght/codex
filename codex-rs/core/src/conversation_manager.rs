@@ -128,6 +128,7 @@ impl ConversationManager {
             self.skills_manager.clone(),
             InitialHistory::New,
             self.session_source.clone(),
+            None, // Main sessions don't have a source_session_id
         )
         .await?;
         self.finalize_spawn(codex, conversation_id).await
@@ -207,6 +208,7 @@ impl ConversationManager {
             self.skills_manager.clone(),
             initial_history,
             self.session_source.clone(),
+            None, // Main sessions don't have a source_session_id
         )
         .await?;
         self.finalize_spawn(codex, conversation_id).await
@@ -249,6 +251,7 @@ impl ConversationManager {
             self.skills_manager.clone(),
             history,
             self.session_source.clone(),
+            None, // Main sessions don't have a source_session_id
         )
         .await?;
 

@@ -101,6 +101,7 @@ async fn start_review_conversation(
         ctx.clone(),
         cancellation_token,
         None,
+        None, // Review sub-agents don't track session IDs in the session tree
     )
     .await)
         .ok()

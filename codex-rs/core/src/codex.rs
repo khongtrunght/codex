@@ -206,6 +206,7 @@ fn maybe_push_chat_wire_api_deprecation(
             details: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 }
 
@@ -218,6 +219,7 @@ impl Codex {
         skills_manager: Arc<SkillsManager>,
         conversation_history: InitialHistory,
         session_source: SessionSource,
+        source_session_id: Option<String>,
     ) -> CodexResult<CodexSpawnOk> {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -286,6 +288,7 @@ impl Codex {
             conversation_history,
             session_source_clone,
             skills_manager,
+            source_session_id,
         )
         .await
         .map_err(|e| {
@@ -352,6 +355,10 @@ pub(crate) struct Session {
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(crate) services: SessionServices,
     next_internal_sub_id: AtomicU64,
+    /// Session ID for sub-agent sessions. None for the main/root session.
+    /// Used for session tree tracking - when a sub-agent spawns another sub-agent,
+    /// this value becomes the child's parent_session_id.
+    source_session_id: Option<String>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -595,6 +602,7 @@ impl Session {
         initial_history: InitialHistory,
         session_source: SessionSource,
         skills_manager: Arc<SkillsManager>,
+        source_session_id: Option<String>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -664,6 +672,7 @@ impl Session {
                 id: INITIAL_SUBMIT_ID.to_owned(),
                 msg: EventMsg::DeprecationNotice(DeprecationNoticeEvent { summary, details }),
                 source_session_id: None,
+                parent_session_id: None,
             });
         }
         maybe_push_chat_wire_api_deprecation(&config, &mut post_session_configured_events);
@@ -731,6 +740,7 @@ impl Session {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            source_session_id,
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -752,6 +762,7 @@ impl Session {
                 rollout_path,
             }),
             source_session_id: None,
+            parent_session_id: None,
         })
         .chain(post_session_configured_events.into_iter());
         for event in events {
@@ -819,6 +830,12 @@ impl Session {
     pub(crate) async fn get_config(&self) -> Config {
         let state = self.state.lock().await;
         (*state.session_configuration.original_config_do_not_use).clone()
+    }
+
+    /// Get the session ID for this session if it's a sub-agent.
+    /// Returns None for the main/root session.
+    pub(crate) fn source_session_id(&self) -> Option<&String> {
+        self.source_session_id.as_ref()
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -922,6 +939,7 @@ impl Session {
                             codex_error_info: Some(CodexErrorInfo::BadRequest),
                         }),
                         source_session_id: None,
+                        parent_session_id: None,
                     })
                     .await;
                     return Err(err);
@@ -1023,7 +1041,7 @@ impl Session {
 
     /// Persist the event to rollout and send it to clients.
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
-        self.send_event_with_source(turn_context, msg, None).await;
+        self.send_event_with_source(turn_context, msg, None, None).await;
     }
 
     /// Persist the event to rollout and send it to clients with source session ID.
@@ -1033,12 +1051,14 @@ impl Session {
         turn_context: &TurnContext,
         msg: EventMsg,
         source_session_id: Option<String>,
+        parent_session_id: Option<String>,
     ) {
         let legacy_source = msg.clone();
         let event = Event {
             id: turn_context.sub_id.clone(),
             msg,
             source_session_id: source_session_id.clone(),
+            parent_session_id: parent_session_id.clone(),
         };
         self.send_event_raw(event).await;
 
@@ -1048,6 +1068,7 @@ impl Session {
                 id: turn_context.sub_id.clone(),
                 msg: legacy,
                 source_session_id: source_session_id.clone(),
+                parent_session_id: parent_session_id.clone(),
             };
             self.send_event_raw(legacy_event).await;
         }
@@ -1807,6 +1828,7 @@ mod handlers {
                     codex_error_info: Some(CodexErrorInfo::BadRequest),
                 }),
                 source_session_id: None,
+                parent_session_id: None,
             })
             .await;
         }
@@ -1927,6 +1949,7 @@ mod handlers {
                 id: id.clone(),
                 msg: warning,
                 source_session_id: None,
+                parent_session_id: None,
             })
             .await;
         }
@@ -1989,6 +2012,7 @@ mod handlers {
                     },
                 ),
                 source_session_id: None,
+                parent_session_id: None,
             };
 
             sess_clone.send_event_raw(event).await;
@@ -2010,6 +2034,7 @@ mod handlers {
             id: sub_id,
             msg: EventMsg::McpListToolsResponse(snapshot),
             source_session_id: None,
+            parent_session_id: None,
         };
         sess.send_event_raw(event).await;
     }
@@ -2028,6 +2053,7 @@ mod handlers {
                 custom_prompts,
             }),
             source_session_id: None,
+            parent_session_id: None,
         };
         sess.send_event_raw(event).await;
     }
@@ -2071,6 +2097,7 @@ mod handlers {
             id: sub_id,
             msg: EventMsg::ListSkillsResponse(ListSkillsResponseEvent { skills }),
             source_session_id: None,
+            parent_session_id: None,
         };
         sess.send_event_raw(event).await;
     }
@@ -2119,6 +2146,7 @@ mod handlers {
                     codex_error_info: Some(CodexErrorInfo::Other),
                 }),
                 source_session_id: None,
+                parent_session_id: None,
             };
             sess.send_event_raw(event).await;
         }
@@ -2127,6 +2155,7 @@ mod handlers {
             id: sub_id,
             msg: EventMsg::ShutdownComplete,
             source_session_id: None,
+            parent_session_id: None,
         };
         sess.send_event_raw(event).await;
         true
@@ -2158,6 +2187,7 @@ mod handlers {
                         codex_error_info: Some(CodexErrorInfo::Other),
                     }),
                     source_session_id: None,
+                    parent_session_id: None,
                 };
                 sess.send_event(&turn_context, event.msg).await;
             }
@@ -3254,6 +3284,7 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            source_session_id: None,
         };
 
         (session, turn_context)
@@ -3344,6 +3375,7 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            source_session_id: None,
         });
 
         (session, turn_context, rx_event)

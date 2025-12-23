@@ -33,6 +33,7 @@ use codex_protocol::protocol::InitialHistory;
 /// The returned `events_rx` yields non-approval events emitted by the sub-agent.
 /// Approval requests are handled via `parent_session` and are not surfaced.
 /// The returned `ops_tx` allows the caller to submit additional `Op`s to the sub-agent.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_codex_conversation_interactive(
     config: Config,
     auth_manager: Arc<AuthManager>,
@@ -41,6 +42,7 @@ pub(crate) async fn run_codex_conversation_interactive(
     parent_ctx: Arc<TurnContext>,
     cancel_token: CancellationToken,
     initial_history: Option<InitialHistory>,
+    source_session_id: Option<String>,
 ) -> Result<Codex, CodexErr> {
     let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_ops, rx_ops) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
@@ -52,6 +54,7 @@ pub(crate) async fn run_codex_conversation_interactive(
         Arc::clone(&parent_session.services.skills_manager),
         initial_history.unwrap_or(InitialHistory::New),
         SessionSource::SubAgent(SubAgentSource::Review),
+        source_session_id,
     )
     .await?;
     let codex = Arc::new(codex);
@@ -102,6 +105,7 @@ pub(crate) async fn run_codex_conversation_one_shot(
     parent_ctx: Arc<TurnContext>,
     cancel_token: CancellationToken,
     initial_history: Option<InitialHistory>,
+    source_session_id: Option<String>,
 ) -> Result<Codex, CodexErr> {
     // Use a child token so we can stop the delegate after completion without
     // requiring the caller to cancel the parent token.
@@ -114,6 +118,7 @@ pub(crate) async fn run_codex_conversation_one_shot(
         parent_ctx,
         child_cancel.clone(),
         initial_history,
+        source_session_id,
     )
     .await?;
 
@@ -380,6 +385,7 @@ mod tests {
                     reason: TurnAbortReason::Interrupted,
                 }),
                 source_session_id: None,
+                parent_session_id: None,
             })
             .await
             .unwrap();
@@ -406,6 +412,7 @@ mod tests {
                     },
                 }),
                 source_session_id: None,
+                parent_session_id: None,
             })
             .await
             .unwrap();

@@ -70,6 +70,7 @@ pub async fn run_codex_tool_session(
         id: "".to_string(),
         msg: EventMsg::SessionConfigured(session_configured.clone()),
         source_session_id: None,
+        parent_session_id: None,
     };
     outgoing
         .send_event_as_notification(

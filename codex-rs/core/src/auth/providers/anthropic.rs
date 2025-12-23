@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use http::HeaderMap;
 
+use crate::auth::RefreshTokenError;
 use crate::auth::provider_auth::ProviderAuth;
 use crate::auth::storage::ProviderCredential;
-use crate::auth::RefreshTokenError;
 use codex_api::AuthScheme;
 use codex_client::CodexHttpClient;
 
@@ -13,7 +13,7 @@ const ANTHROPIC_TOKEN_URL: &str = "https://console.anthropic.com/v1/oauth/token"
 /// Anthropic OAuth client ID (public, used by CLI tools)
 const ANTHROPIC_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 /// Refresh tokens before expiration (buffer time)
-const TOKEN_REFRESH_BUFFER_HOURS: i64 = 1;
+const TOKEN_REFRESH_BUFFER_HOURS: i64 = 0;
 /// Fallback refresh interval if no expires_at is set
 const TOKEN_REFRESH_INTERVAL_DAYS: i64 = 8;
 
@@ -181,9 +181,9 @@ async fn refresh_anthropic_token(
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         // Use Transient for potentially recoverable HTTP errors
-        return Err(RefreshTokenError::Transient(std::io::Error::other(format!(
-            "Anthropic token refresh failed: {status} - {body}"
-        ))));
+        return Err(RefreshTokenError::Transient(std::io::Error::other(
+            format!("Anthropic token refresh failed: {status} - {body}"),
+        )));
     }
 
     response
@@ -275,7 +275,7 @@ mod tests {
         let recent = AnthropicAuth::from_credential(ProviderCredential::OAuth {
             access_token: "token".to_string(),
             refresh_token: "refresh".to_string(),
-            expires_at: None,           // No explicit expiration
+            expires_at: None,               // No explicit expiration
             last_refresh: Some(Utc::now()), // Just refreshed
             account_id: None,
             exchanged_api_key: None,
