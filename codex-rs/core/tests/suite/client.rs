@@ -355,6 +355,7 @@ async fn includes_conversation_id_and_model_headers_in_request() {
         conversation: codex,
         conversation_id,
         session_configured: _,
+        ..
     } = conversation_manager
         .new_conversation(config)
         .await
@@ -478,6 +479,7 @@ async fn chatgpt_auth_sends_correct_request() {
         conversation: codex,
         conversation_id,
         session_configured: _,
+        ..
     } = conversation_manager
         .new_conversation(config)
         .await

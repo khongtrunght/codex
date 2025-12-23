@@ -1,5 +1,6 @@
 //! Persist Codex session rollouts (.jsonl) so sessions can be replayed or inspected later.
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::fs::{self};
 use std::io::Error as IoError;
@@ -33,6 +34,8 @@ use codex_protocol::protocol::RolloutLine;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
+use codex_protocol::protocol::SubAgentFileRef;
+use codex_protocol::protocol::SubagentHistory;
 
 /// Records all [`ResponseItem`]s for a session and flushes them to disk after
 /// every update.
@@ -47,6 +50,8 @@ use codex_protocol::protocol::SessionSource;
 pub struct RolloutRecorder {
     tx: Sender<RolloutCmd>,
     pub(crate) rollout_path: PathBuf,
+    /// Directory containing the main rollout file (and any subagent files)
+    session_dir: PathBuf,
 }
 
 #[derive(Clone)]
@@ -69,6 +74,23 @@ enum RolloutCmd {
     },
     Shutdown {
         ack: oneshot::Sender<()>,
+    },
+    /// Create a new subagent rollout file
+    CreateSubagentFile {
+        session_id: String,
+        parent_session_id: Option<String>,
+        agent_type: String,
+        description: String,
+        ack: oneshot::Sender<std::io::Result<PathBuf>>,
+    },
+    /// Add items to a subagent's rollout file
+    AddSubagentItems {
+        session_id: String,
+        items: Vec<RolloutItem>,
+    },
+    /// Close a subagent's rollout file
+    CloseSubagentFile {
+        session_id: String,
     },
 }
 
@@ -164,6 +186,12 @@ impl RolloutRecorder {
         // Clone the cwd for the spawned task to collect git info asynchronously
         let cwd = config.cwd.clone();
 
+        // Extract session directory from rollout path
+        let session_dir = rollout_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| rollout_path.clone());
+
         // A reasonably-sized bounded channel. If the buffer fills up the send
         // future will yield, which is fine – we only need to ensure we do not
         // perform *blocking* I/O on the caller's thread.
@@ -172,9 +200,13 @@ impl RolloutRecorder {
         // Spawn a Tokio task that owns the file handle and performs async
         // writes. Using `tokio::fs::File` keeps everything on the async I/O
         // driver instead of blocking the runtime.
-        tokio::task::spawn(rollout_writer(file, rx, meta, cwd));
+        tokio::task::spawn(rollout_writer(file, rx, meta, cwd, session_dir.clone()));
 
-        Ok(Self { tx, rollout_path })
+        Ok(Self {
+            tx,
+            rollout_path,
+            session_dir,
+        })
     }
 
     pub(crate) async fn record_items(&self, items: &[RolloutItem]) -> std::io::Result<()> {
@@ -216,6 +248,8 @@ impl RolloutRecorder {
 
         let mut items: Vec<RolloutItem> = Vec::new();
         let mut conversation_id: Option<ConversationId> = None;
+        let mut subagent_refs: Vec<SubAgentFileRef> = Vec::new();
+
         for line in text.lines() {
             if line.trim().is_empty() {
                 continue;
@@ -251,6 +285,10 @@ impl RolloutRecorder {
                     RolloutItem::EventMsg(_ev) => {
                         items.push(RolloutItem::EventMsg(_ev));
                     }
+                    RolloutItem::SubAgentFileRef(ref_) => {
+                        subagent_refs.push(ref_.clone());
+                        items.push(RolloutItem::SubAgentFileRef(ref_));
+                    }
                 },
                 Err(e) => {
                     warn!("failed to parse rollout line: {v:?}, error: {e}");
@@ -259,8 +297,9 @@ impl RolloutRecorder {
         }
 
         info!(
-            "Resumed rollout with {} items, conversation ID: {:?}",
+            "Resumed rollout with {} items, {} subagent refs, conversation ID: {:?}",
             items.len(),
+            subagent_refs.len(),
             conversation_id
         );
         let conversation_id = conversation_id
@@ -270,12 +309,70 @@ impl RolloutRecorder {
             return Ok(InitialHistory::New);
         }
 
-        info!("Resumed rollout successfully from {path:?}");
+        // Load subagent histories from separate files
+        let session_dir = path.parent().unwrap_or(path);
+        let mut subagent_histories: HashMap<String, SubagentHistory> = HashMap::new();
+
+        for ref_ in subagent_refs {
+            let subagent_path = session_dir.join(&ref_.filename);
+            if subagent_path.exists() {
+                match Self::load_subagent_file(&subagent_path).await {
+                    Ok(history) => {
+                        info!(
+                            "Loaded subagent {} with {} items",
+                            ref_.session_id,
+                            history.len()
+                        );
+                        subagent_histories.insert(
+                            ref_.session_id.clone(),
+                            SubagentHistory {
+                                session_id: ref_.session_id,
+                                parent_session_id: ref_.parent_session_id,
+                                agent_type: ref_.agent_type,
+                                description: ref_.description,
+                                rollout_path: subagent_path,
+                                history,
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        warn!("failed to load subagent file {:?}: {e}", subagent_path);
+                    }
+                }
+            } else {
+                warn!("subagent file not found: {:?}", subagent_path);
+            }
+        }
+
+        info!(
+            "Resumed rollout successfully from {path:?} with {} subagent histories",
+            subagent_histories.len()
+        );
         Ok(InitialHistory::Resumed(ResumedHistory {
             conversation_id,
             history: items,
             rollout_path: path.to_path_buf(),
+            subagent_histories,
         }))
+    }
+
+    /// Load a subagent's rollout file and return its items.
+    async fn load_subagent_file(path: &Path) -> std::io::Result<Vec<RolloutItem>> {
+        let text = tokio::fs::read_to_string(path).await?;
+        let mut items: Vec<RolloutItem> = Vec::new();
+
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Ok(v) = serde_json::from_str::<Value>(line) {
+                if let Ok(rollout_line) = serde_json::from_value::<RolloutLine>(v) {
+                    items.push(rollout_line.item);
+                }
+            }
+        }
+
+        Ok(items)
     }
 
     pub async fn shutdown(&self) -> std::io::Result<()> {
@@ -291,6 +388,68 @@ impl RolloutRecorder {
                 )))
             }
         }
+    }
+
+    /// Create a new subagent rollout file and record a SubAgentFileRef in the main rollout.
+    /// Returns the path to the created subagent file.
+    pub async fn create_subagent_file(
+        &self,
+        session_id: &str,
+        parent_session_id: Option<&str>,
+        agent_type: &str,
+        description: &str,
+    ) -> std::io::Result<PathBuf> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(RolloutCmd::CreateSubagentFile {
+                session_id: session_id.to_string(),
+                parent_session_id: parent_session_id.map(|s| s.to_string()),
+                agent_type: agent_type.to_string(),
+                description: description.to_string(),
+                ack: tx,
+            })
+            .await
+            .map_err(|e| IoError::other(format!("failed to send create subagent file cmd: {e}")))?;
+        rx.await
+            .map_err(|e| IoError::other(format!("failed waiting for subagent file creation: {e}")))?
+    }
+
+    /// Record items to a subagent's rollout file.
+    pub async fn record_subagent_items(
+        &self,
+        session_id: &str,
+        items: &[RolloutItem],
+    ) -> std::io::Result<()> {
+        let filtered: Vec<RolloutItem> = items
+            .iter()
+            .filter(|item| is_persisted_response_item(item))
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            return Ok(());
+        }
+        self.tx
+            .send(RolloutCmd::AddSubagentItems {
+                session_id: session_id.to_string(),
+                items: filtered,
+            })
+            .await
+            .map_err(|e| IoError::other(format!("failed to send subagent items: {e}")))
+    }
+
+    /// Close a subagent's rollout file.
+    pub async fn close_subagent_file(&self, session_id: &str) -> std::io::Result<()> {
+        self.tx
+            .send(RolloutCmd::CloseSubagentFile {
+                session_id: session_id.to_string(),
+            })
+            .await
+            .map_err(|e| IoError::other(format!("failed to send close subagent file cmd: {e}")))
+    }
+
+    /// Get the session directory path.
+    pub fn session_dir(&self) -> &Path {
+        &self.session_dir
     }
 }
 
@@ -351,8 +510,11 @@ async fn rollout_writer(
     mut rx: mpsc::Receiver<RolloutCmd>,
     mut meta: Option<SessionMeta>,
     cwd: std::path::PathBuf,
+    session_dir: PathBuf,
 ) -> std::io::Result<()> {
     let mut writer = JsonlWriter { file };
+    // Track subagent writers by session_id
+    let mut subagent_writers: HashMap<String, JsonlWriter> = HashMap::new();
 
     // If we have a meta, collect git info asynchronously and write meta first
     if let Some(session_meta) = meta.take() {
@@ -387,7 +549,68 @@ async fn rollout_writer(
                 let _ = ack.send(());
             }
             RolloutCmd::Shutdown { ack } => {
+                // Flush all subagent files before shutdown
+                for (_, mut sw) in subagent_writers.drain() {
+                    let _ = sw.file.flush().await;
+                }
                 let _ = ack.send(());
+            }
+            RolloutCmd::CreateSubagentFile {
+                session_id,
+                parent_session_id,
+                agent_type,
+                description,
+                ack,
+            } => {
+                let filename = format!("{session_id}.jsonl");
+                let path = session_dir.join(&filename);
+
+                // Create the subagent file
+                let result = async {
+                    let file = tokio::fs::OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open(&path)
+                        .await?;
+                    subagent_writers.insert(session_id.clone(), JsonlWriter { file });
+
+                    // Write SubAgentFileRef to main rollout
+                    let file_ref = SubAgentFileRef {
+                        session_id: session_id.clone(),
+                        filename,
+                        parent_session_id,
+                        agent_type,
+                        description,
+                    };
+                    writer
+                        .write_rollout_item(RolloutItem::SubAgentFileRef(file_ref))
+                        .await?;
+
+                    Ok::<PathBuf, IoError>(path)
+                }
+                .await;
+
+                let _ = ack.send(result);
+            }
+            RolloutCmd::AddSubagentItems { session_id, items } => {
+                if let Some(sw) = subagent_writers.get_mut(&session_id) {
+                    for item in items {
+                        if is_persisted_response_item(&item) {
+                            if let Err(e) = sw.write_rollout_item(item).await {
+                                warn!("failed to write subagent item: {e}");
+                            }
+                        }
+                    }
+                } else {
+                    warn!("subagent writer not found for session_id: {session_id}");
+                }
+            }
+            RolloutCmd::CloseSubagentFile { session_id } => {
+                if let Some(mut sw) = subagent_writers.remove(&session_id) {
+                    if let Err(e) = sw.file.flush().await {
+                        warn!("failed to flush subagent file: {e}");
+                    }
+                }
             }
         }
     }

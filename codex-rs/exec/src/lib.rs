@@ -297,6 +297,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         conversation_id: _,
         conversation,
         session_configured,
+        ..
     } = if let Some(ExecCommand::Resume(args)) = command.as_ref() {
         let resume_path = resolve_resume_path(&config, args).await?;
 

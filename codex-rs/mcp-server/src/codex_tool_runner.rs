@@ -48,6 +48,7 @@ pub async fn run_codex_tool_session(
         conversation_id,
         conversation,
         session_configured,
+        ..
     } = match conversation_manager.new_conversation(config).await {
         Ok(res) => res,
         Err(e) => {

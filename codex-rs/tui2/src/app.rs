@@ -479,6 +479,7 @@ impl App {
                     init,
                     resumed.conversation,
                     resumed.session_configured,
+                    resumed.subagent_histories,
                 )
             }
         };
@@ -1611,6 +1612,7 @@ impl App {
                                     init,
                                     resumed.conversation,
                                     resumed.session_configured,
+                                    resumed.subagent_histories,
                                 );
                                 self.current_model = model_family.get_model_slug().to_string();
                                 if let Some(summary) = summary {

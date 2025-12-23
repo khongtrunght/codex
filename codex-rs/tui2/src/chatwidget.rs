@@ -68,6 +68,7 @@ use codex_protocol::ConversationId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::protocol::SubagentHistory;
 use codex_protocol::user_input::UserInput;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -1351,11 +1352,12 @@ impl ChatWidget {
         widget
     }
 
-    /// Create a ChatWidget attached to an existing conversation (e.g., a fork).
+    /// Create a ChatWidget attached to an existing conversation (e.g., a fork or resume).
     pub(crate) fn new_from_existing(
         common: ChatWidgetInit,
         conversation: std::sync::Arc<codex_core::CodexConversation>,
         session_configured: codex_core::protocol::SessionConfiguredEvent,
+        subagent_histories: HashMap<String, SubagentHistory>,
     ) -> Self {
         let ChatWidgetInit {
             config,
@@ -1376,6 +1378,16 @@ impl ChatWidget {
 
         let codex_op_tx =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
+
+        // Reconstruct SubAgentCells from subagent histories
+        let animations_enabled = config.animations;
+        let reconstructed_cells: Vec<Box<dyn history_cell::HistoryCell>> = subagent_histories
+            .into_values()
+            .map(|history| {
+                let cell = history_cell::subagent_cell_from_history(history, animations_enabled);
+                Box::new(cell) as Box<dyn history_cell::HistoryCell>
+            })
+            .collect();
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -1433,6 +1445,11 @@ impl ChatWidget {
         };
 
         widget.prefetch_rate_limits();
+
+        // Add reconstructed subagent cells to history
+        for cell in reconstructed_cells {
+            widget.add_boxed_history(cell);
+        }
 
         widget
     }

@@ -36,6 +36,7 @@ use codex_core::protocol::SubAgentTokenUsage;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
 use codex_protocol::plan_tool::PlanItemArg;
+use codex_protocol::protocol::SubagentHistory;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use image::DynamicImage;
@@ -1749,6 +1750,78 @@ pub(crate) fn new_subagent_cell(
         tool_uses_count: 0,
         token_usage: None,
         duration_ms: None,
+        forwarded_events: Vec::new(),
+        expanded: false,
+        animations_enabled,
+    }
+}
+
+/// Create a SubAgentCell from SubagentHistory (for session resume).
+/// The cell is marked as completed and reconstructs statistics from the history.
+pub(crate) fn subagent_cell_from_history(
+    history: SubagentHistory,
+    animations_enabled: bool,
+) -> SubAgentCell {
+    use codex_core::protocol::EventMsg;
+    use codex_protocol::protocol::RolloutItem;
+
+    // Extract SubAgentBegin and SubAgentEnd events from history
+    let mut begin_event: Option<SubAgentBeginEvent> = None;
+    let mut end_event: Option<SubAgentEndEvent> = None;
+
+    for item in &history.history {
+        if let RolloutItem::EventMsg(ev) = item {
+            match ev {
+                EventMsg::SubAgentBegin(ev) => {
+                    begin_event = Some(ev.clone());
+                }
+                EventMsg::SubAgentEnd(ev) => {
+                    end_event = Some(ev.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Build the cell from the events we found
+    let (call_id, agent_type, description, resumed) = begin_event
+        .map(|ev| (ev.call_id, ev.agent_type, ev.description, ev.resumed))
+        .unwrap_or_else(|| {
+            // Fallback to history metadata if no begin event found
+            (
+                format!("call-{}", history.session_id),
+                history.agent_type.clone(),
+                history.description.clone(),
+                true,
+            )
+        });
+
+    // Extract final statistics from end event if available
+    let (status, tool_uses_count, token_usage, duration_ms) = end_event
+        .map(|ev| {
+            let status = if ev.success {
+                SubAgentStatus::Completed
+            } else {
+                SubAgentStatus::Error
+            };
+            (status, ev.tool_summary.len(), ev.token_usage, Some(ev.duration_ms))
+        })
+        .unwrap_or_else(|| {
+            // If no end event, assume completed successfully
+            (SubAgentStatus::Completed, 0, None, None)
+        });
+
+    SubAgentCell {
+        call_id,
+        session_id: history.session_id,
+        agent_type,
+        description,
+        status,
+        start_time: None,
+        resumed,
+        tool_uses_count,
+        token_usage,
+        duration_ms,
         forwarded_events: Vec::new(),
         expanded: false,
         animations_enabled,

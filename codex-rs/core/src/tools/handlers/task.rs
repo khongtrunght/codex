@@ -105,6 +105,38 @@ impl ToolHandler for TaskHandler {
             "Starting sub-agent task"
         );
 
+        // Create subagent rollout file and register for event routing
+        {
+            let recorder = session.services.rollout.lock().await;
+            if let Some(rec) = recorder.as_ref() {
+                match rec
+                    .create_subagent_file(
+                        &task_session_id,
+                        session.source_session_id().map(|s| s.as_str()),
+                        &params.subagent_type,
+                        &params.description,
+                    )
+                    .await
+                {
+                    Ok(_path) => {
+                        info!(
+                            session_id = %task_session_id,
+                            "Created subagent rollout file"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            session_id = %task_session_id,
+                            error = %e,
+                            "Failed to create subagent rollout file"
+                        );
+                    }
+                }
+            }
+        }
+        // Register subagent for event routing
+        session.register_subagent(&task_session_id).await;
+
         // Emit SubAgentBegin event
         session
             .send_event(
@@ -175,6 +207,20 @@ impl ToolHandler for TaskHandler {
                 }),
             )
             .await;
+
+        // Close subagent rollout file
+        {
+            let recorder = session.services.rollout.lock().await;
+            if let Some(rec) = recorder.as_ref() {
+                if let Err(e) = rec.close_subagent_file(&task_session_id).await {
+                    warn!(
+                        session_id = %task_session_id,
+                        error = %e,
+                        "Failed to close subagent rollout file"
+                    );
+                }
+            }
+        }
 
         info!(
             agent_type = %params.subagent_type,

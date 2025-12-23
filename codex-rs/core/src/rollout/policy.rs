@@ -12,6 +12,8 @@ pub(crate) fn is_persisted_response_item(item: &RolloutItem) -> bool {
         RolloutItem::Compacted(_) | RolloutItem::TurnContext(_) | RolloutItem::SessionMeta(_) => {
             true
         }
+        // Persist subagent file references for session resume
+        RolloutItem::SubAgentFileRef(_) => true,
     }
 }
 
@@ -90,8 +92,9 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
         | EventMsg::SkillsUpdateAvailable
-        | EventMsg::SubAgentBegin(_)
-        | EventMsg::SubAgentProgress(_)
-        | EventMsg::SubAgentEnd(_) => false,
+        // SubAgentProgress is streaming-only, not persisted
+        | EventMsg::SubAgentProgress(_) => false,
+        // SubAgentBegin/End are persisted to enable resume with subagent history
+        EventMsg::SubAgentBegin(_) | EventMsg::SubAgentEnd(_) => true,
     }
 }

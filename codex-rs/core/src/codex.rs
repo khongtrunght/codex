@@ -359,6 +359,9 @@ pub(crate) struct Session {
     /// Used for session tree tracking - when a sub-agent spawns another sub-agent,
     /// this value becomes the child's parent_session_id.
     source_session_id: Option<String>,
+    /// Set of registered subagent session IDs.
+    /// Used for routing forwarded events to the correct subagent rollout file.
+    registered_subagents: Mutex<std::collections::HashSet<String>>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -741,6 +744,7 @@ impl Session {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id,
+            registered_subagents: Mutex::new(std::collections::HashSet::new()),
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -1075,11 +1079,45 @@ impl Session {
     }
 
     pub(crate) async fn send_event_raw(&self, event: Event) {
-        // Persist the event into rollout (recorder filters as needed)
-        let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
-        self.persist_rollout_items(&rollout_items).await;
+        // Route event to appropriate rollout file based on source_session_id
+        if let Some(ref source_id) = event.source_session_id {
+            // Forwarded event from a sub-agent - persist to subagent's file
+            self.persist_to_subagent_rollout(source_id, &event.msg)
+                .await;
+        } else {
+            // Main session event - persist to main rollout
+            let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
+            self.persist_rollout_items(&rollout_items).await;
+        }
         if let Err(e) = self.tx_event.send(event).await {
             error!("failed to send tool call event: {e}");
+        }
+    }
+
+    /// Register a subagent session ID for event routing.
+    pub(crate) async fn register_subagent(&self, session_id: &str) {
+        self.registered_subagents
+            .lock()
+            .await
+            .insert(session_id.to_string());
+    }
+
+    /// Persist an event to a subagent's rollout file.
+    async fn persist_to_subagent_rollout(&self, session_id: &str, msg: &EventMsg) {
+        // Check if this subagent is registered
+        let is_registered = self.registered_subagents.lock().await.contains(session_id);
+        if !is_registered {
+            // Subagent not registered - this is likely a forwarded event before registration
+            // Just skip persistence (will be captured in SubAgentEnd summary)
+            return;
+        }
+
+        let recorder = self.services.rollout.lock().await;
+        if let Some(rec) = recorder.as_ref() {
+            let items = vec![RolloutItem::EventMsg(msg.clone())];
+            if let Err(e) = rec.record_subagent_items(session_id, &items).await {
+                warn!("failed to record subagent event: {e}");
+            }
         }
     }
 
@@ -2915,6 +2953,7 @@ mod tests {
                 conversation_id: ConversationId::default(),
                 history: rollout_items,
                 rollout_path: PathBuf::from("/tmp/resume.jsonl"),
+                subagent_histories: std::collections::HashMap::new(),
             }))
             .await;
 
@@ -3285,6 +3324,7 @@ mod tests {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id: None,
+            registered_subagents: Mutex::new(std::collections::HashSet::new()),
         };
 
         (session, turn_context)
@@ -3376,6 +3416,7 @@ mod tests {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id: None,
+            registered_subagents: Mutex::new(std::collections::HashSet::new()),
         });
 
         (session, turn_context, rx_event)

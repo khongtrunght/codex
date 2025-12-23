@@ -28,6 +28,7 @@ pub(crate) fn spawn_agent(
             conversation_id: _,
             conversation,
             session_configured,
+            ..
         } = match server.new_conversation(config).await {
             Ok(v) => v,
             #[allow(clippy::print_stderr)]

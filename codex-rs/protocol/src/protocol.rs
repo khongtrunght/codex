@@ -1289,11 +1289,51 @@ pub struct ConversationPathResponseEvent {
     pub path: PathBuf,
 }
 
+/// Reference to a subagent's rollout file stored in the parent's rollout.
+/// Used to discover and load subagent histories during session resume.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubAgentFileRef {
+    /// Subagent session ID (e.g., "task-abc123")
+    pub session_id: String,
+    /// Filename of the subagent's rollout file (e.g., "task-abc123.jsonl")
+    pub filename: String,
+    /// Parent session ID (None = spawned by root session)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// Agent type (e.g., "explore", "plan", "general")
+    pub agent_type: String,
+    /// Task description
+    pub description: String,
+}
+
+/// History loaded from a subagent's rollout file during session resume.
+#[derive(Debug, Clone)]
+pub struct SubagentHistory {
+    /// Subagent session ID
+    pub session_id: String,
+    /// Parent session ID (None = spawned by root)
+    pub parent_session_id: Option<String>,
+    /// Agent type (e.g., "explore", "plan")
+    pub agent_type: String,
+    /// Task description
+    pub description: String,
+    /// Path to the subagent's rollout file
+    pub rollout_path: PathBuf,
+    /// Rollout items from the subagent's file
+    pub history: Vec<RolloutItem>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct ResumedHistory {
     pub conversation_id: ConversationId,
     pub history: Vec<RolloutItem>,
     pub rollout_path: PathBuf,
+    /// Subagent histories loaded from separate rollout files.
+    /// Key is the subagent's session_id.
+    #[serde(default, skip)]
+    #[ts(skip)]
+    #[schemars(skip)]
+    pub subagent_histories: HashMap<String, SubagentHistory>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
@@ -1334,6 +1374,15 @@ impl InitialHistory {
                     })
                     .collect(),
             ),
+        }
+    }
+
+    /// Get subagent histories from resumed session.
+    /// Returns empty HashMap for New or Forked histories.
+    pub fn get_subagent_histories(&self) -> HashMap<String, SubagentHistory> {
+        match self {
+            InitialHistory::Resumed(resumed) => resumed.subagent_histories.clone(),
+            InitialHistory::New | InitialHistory::Forked(_) => HashMap::new(),
         }
     }
 }
@@ -1438,6 +1487,8 @@ pub enum RolloutItem {
     Compacted(CompactedItem),
     TurnContext(TurnContextItem),
     EventMsg(EventMsg),
+    /// Reference to a subagent's separate rollout file
+    SubAgentFileRef(SubAgentFileRef),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, TS)]
