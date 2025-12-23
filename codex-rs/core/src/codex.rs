@@ -252,7 +252,7 @@ impl Codex {
         )
         .await;
 
-        let exec_policy = ExecPolicyManager::load(&config.features, &config.codex_home)
+        let exec_policy = ExecPolicyManager::load(&config.features, &config.config_layer_stack)
             .await
             .map_err(|err| CodexErr::Fatal(format!("failed to load execpolicy: {err}")))?;
 
@@ -360,7 +360,7 @@ impl Codex {
         )
         .await;
 
-        let exec_policy = ExecPolicyManager::load(&config.features, &config.codex_home)
+        let exec_policy = ExecPolicyManager::load(&config.features, &config.config_layer_stack)
             .await
             .map_err(|err| CodexErr::Fatal(format!("failed to load execpolicy: {err}")))?;
 
