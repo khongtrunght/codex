@@ -13,6 +13,8 @@ use crate::truncate::TruncationPolicy;
 /// with this content.
 const BASE_INSTRUCTIONS: &str = include_str!("../../prompt.md");
 
+const NON_OPENAI_INSTRUCTIONS: &str = include_str!("../../non_openai_prompt.md");
+
 const GPT_5_CODEX_INSTRUCTIONS: &str = include_str!("../../gpt_5_codex_prompt.md");
 const GPT_5_1_INSTRUCTIONS: &str = include_str!("../../gpt_5_1_prompt.md");
 const GPT_5_2_INSTRUCTIONS: &str = include_str!("../../gpt_5_2_prompt.md");
@@ -427,9 +429,9 @@ fn derive_default_model_family(model: &str) -> ModelFamily {
         auto_compact_token_limit: None,
         supports_reasoning_summaries: false,
         reasoning_summary_format: ReasoningSummaryFormat::None,
-        supports_parallel_tool_calls: false,
+        supports_parallel_tool_calls: true,
         edit_tool_type: Some(EditToolType::FileEdit),
-        base_instructions: BASE_INSTRUCTIONS.to_string(),
+        base_instructions: NON_OPENAI_INSTRUCTIONS.to_string(),
         experimental_supported_tools: Vec::new(),
         effective_context_window_percent: 95,
         support_verbosity: false,
