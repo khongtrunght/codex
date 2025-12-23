@@ -3,6 +3,7 @@ use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::OutputLinesParams;
 use crate::exec_cell::TOOL_CALL_MAX_LINES;
+use crate::exec_cell::TOOL_CALL_VERBOSE_MAX_LINES;
 use crate::exec_cell::output_lines;
 use crate::exec_cell::spinner;
 use crate::exec_command::relativize_to_home;
@@ -234,11 +235,28 @@ impl HistoryCell for ReasoningSummaryCell {
         }
     }
 
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        // When verbose, show reasoning even if transcript_only
+        if verbose || !self.transcript_only {
+            self.lines(width)
+        } else {
+            Vec::new()
+        }
+    }
+
     fn desired_height(&self, width: u16) -> u16 {
         if self.transcript_only {
             0
         } else {
             self.lines(width).len() as u16
+        }
+    }
+
+    fn desired_height_verbose(&self, width: u16, verbose: bool) -> u16 {
+        if verbose || !self.transcript_only {
+            self.lines(width).len() as u16
+        } else {
+            0
         }
     }
 
@@ -921,10 +939,10 @@ impl McpToolCallCell {
         self.result = Some(Err("interrupted".to_string()));
     }
 
-    fn render_content_block(block: &mcp_types::ContentBlock, width: usize) -> String {
+    fn render_content_block(block: &mcp_types::ContentBlock, width: usize, max_lines: usize) -> String {
         match block {
             mcp_types::ContentBlock::TextContent(text) => {
-                format_and_truncate_tool_result(&text.text, TOOL_CALL_MAX_LINES, width)
+                format_and_truncate_tool_result(&text.text, max_lines, width)
             }
             mcp_types::ContentBlock::ImageContent(_) => "<image content>".to_string(),
             mcp_types::ContentBlock::AudioContent(_) => "<audio content>".to_string(),
@@ -942,8 +960,9 @@ impl McpToolCallCell {
     }
 }
 
-impl HistoryCell for McpToolCallCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+impl McpToolCallCell {
+    /// Internal rendering with explicit max_lines limit for tool result truncation.
+    fn render_with_max_lines(&self, width: u16, max_lines: usize) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let status = self.success();
         let bullet = match status {
@@ -989,7 +1008,7 @@ impl HistoryCell for McpToolCallCell {
                 Ok(mcp_types::CallToolResult { content, .. }) => {
                     if !content.is_empty() {
                         for block in content {
-                            let text = Self::render_content_block(block, detail_wrap_width);
+                            let text = Self::render_content_block(block, detail_wrap_width, max_lines);
                             for segment in text.split('\n') {
                                 let line = Line::from(segment.to_string().dim());
                                 let wrapped = word_wrap_line(
@@ -1006,7 +1025,7 @@ impl HistoryCell for McpToolCallCell {
                 Err(err) => {
                     let err_text = format_and_truncate_tool_result(
                         &format!("Error: {err}"),
-                        TOOL_CALL_MAX_LINES,
+                        max_lines,
                         width as usize,
                     );
                     let err_line = Line::from(err_text.dim());
@@ -1031,6 +1050,21 @@ impl HistoryCell for McpToolCallCell {
         }
 
         lines
+    }
+}
+
+impl HistoryCell for McpToolCallCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_with_max_lines(width, TOOL_CALL_MAX_LINES)
+    }
+
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        let max_lines = if verbose {
+            TOOL_CALL_VERBOSE_MAX_LINES
+        } else {
+            TOOL_CALL_MAX_LINES
+        };
+        self.render_with_max_lines(width, max_lines)
     }
 }
 
