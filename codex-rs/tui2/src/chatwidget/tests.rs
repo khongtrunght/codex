@@ -127,6 +127,7 @@ async fn resumed_initial_messages_render_history() {
         id: "initial".into(),
         msg: EventMsg::SessionConfigured(configured),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -165,6 +166,7 @@ async fn entered_review_mode_uses_request_hint() {
             user_facing_hint: Some("feature branch".to_string()),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -185,6 +187,7 @@ async fn entered_review_mode_defaults_to_current_changes_banner() {
             user_facing_hint: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -209,6 +212,7 @@ async fn review_restores_context_window_indicator() {
             rate_limits: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), Some(30));
 
@@ -221,6 +225,7 @@ async fn review_restores_context_window_indicator() {
             user_facing_hint: Some("feature branch".to_string()),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     chat.handle_codex_event(Event {
@@ -230,6 +235,7 @@ async fn review_restores_context_window_indicator() {
             rate_limits: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), Some(97));
 
@@ -239,6 +245,7 @@ async fn review_restores_context_window_indicator() {
             review_output: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     let _ = drain_insert_history(&mut rx);
 
@@ -261,6 +268,7 @@ async fn token_count_none_resets_context_indicator() {
             rate_limits: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), Some(30));
 
@@ -271,6 +279,7 @@ async fn token_count_none_resets_context_indicator() {
             rate_limits: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     assert_eq!(chat.bottom_pane.context_window_percent(), None);
 }
@@ -302,6 +311,7 @@ async fn context_indicator_shows_used_tokens_when_window_unknown() {
             rate_limits: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     assert_eq!(chat.bottom_pane.context_window_percent(), None);
@@ -393,6 +403,7 @@ async fn make_chatwidget_manual(
         rate_limit_poller: None,
         stream_controller: None,
         running_commands: HashMap::new(),
+        running_subagents: HashMap::new(),
         suppressed_exec_calls: HashSet::new(),
         last_unified_wait: None,
         task_complete_pending: false,
@@ -735,6 +746,7 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
         id: "sub-short".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let proposed_cells = drain_insert_history(&mut rx);
@@ -780,6 +792,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         id: "sub-multi".into(),
         msg: EventMsg::ExecApprovalRequest(ev_multi),
         source_session_id: None,
+        parent_session_id: None,
     });
     let proposed_multi = drain_insert_history(&mut rx);
     assert!(
@@ -831,6 +844,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         id: "sub-long".into(),
         msg: EventMsg::ExecApprovalRequest(ev_long),
         source_session_id: None,
+        parent_session_id: None,
     });
     let proposed_long = drain_insert_history(&mut rx);
     assert!(
@@ -874,6 +888,7 @@ fn begin_exec_with_source(
         id: call_id.to_string(),
         msg: EventMsg::ExecCommandBegin(event.clone()),
         source_session_id: None,
+        parent_session_id: None,
     });
     event
 }
@@ -923,6 +938,7 @@ fn end_exec(
             formatted_output: aggregated,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 }
 
@@ -1179,6 +1195,7 @@ async fn exec_end_without_begin_uses_event_command() {
             formatted_output: "done".to_string(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1364,6 +1381,7 @@ async fn undo_success_events_render_info_messages() {
             message: Some("Undo requested for the last turn...".to_string()),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     assert!(
         chat.bottom_pane.status_indicator_visible(),
@@ -1377,6 +1395,7 @@ async fn undo_success_events_render_info_messages() {
             message: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1401,6 +1420,7 @@ async fn undo_failure_events_render_error_message() {
         id: "turn-2".to_string(),
         msg: EventMsg::UndoStarted(UndoStartedEvent { message: None }),
         source_session_id: None,
+        parent_session_id: None,
     });
     assert!(
         chat.bottom_pane.status_indicator_visible(),
@@ -1414,6 +1434,7 @@ async fn undo_failure_events_render_error_message() {
             message: Some("Failed to restore workspace state.".to_string()),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1438,6 +1459,7 @@ async fn undo_started_hides_interrupt_hint() {
         id: "turn-hint".to_string(),
         msg: EventMsg::UndoStarted(UndoStartedEvent { message: None }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let status = chat
@@ -1565,6 +1587,7 @@ async fn view_image_tool_call_adds_history_cell() {
             path: image_path,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1590,6 +1613,7 @@ async fn interrupt_exec_marks_failed_snapshot() {
             reason: TurnAbortReason::Interrupted,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -1616,6 +1640,7 @@ async fn interrupted_turn_error_message_snapshot() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Abort the turn (like pressing Esc) and drain inserted history.
@@ -1625,6 +1650,7 @@ async fn interrupted_turn_error_message_snapshot() {
             reason: TurnAbortReason::Interrupted,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2095,6 +2121,7 @@ async fn approval_modal_exec_snapshot() {
         id: "sub-approve".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
         source_session_id: None,
+        parent_session_id: None,
     });
     // Render to a fixed-size test terminal and snapshot.
     // Call desired_height first and use that exact height for rendering.
@@ -2147,6 +2174,7 @@ async fn approval_modal_exec_without_reason_snapshot() {
         id: "sub-approve-noreason".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let width = 100;
@@ -2188,6 +2216,7 @@ async fn approval_modal_patch_snapshot() {
         id: "sub-approve-patch".into(),
         msg: EventMsg::ApplyPatchApprovalRequest(ev),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Render at the widget's desired height and snapshot.
@@ -2225,6 +2254,7 @@ async fn interrupt_restores_queued_messages_into_composer() {
             reason: TurnAbortReason::Interrupted,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Composer should now contain the queued messages joined by newlines, in order.
@@ -2264,6 +2294,7 @@ async fn interrupt_prepends_queued_messages_before_existing_composer_text() {
             reason: TurnAbortReason::Interrupted,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     assert_eq!(
@@ -2310,6 +2341,7 @@ async fn ui_snapshots_small_heights_task_running() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "task-1".into(),
@@ -2317,6 +2349,7 @@ async fn ui_snapshots_small_heights_task_running() {
             delta: "**Thinking**".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     for h in [1u16, 2, 3] {
         let name = format!("chat_small_running_h{h}");
@@ -2343,6 +2376,7 @@ async fn status_widget_and_approval_modal_snapshot() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     // Provide a deterministic header for the status line.
     chat.handle_codex_event(Event {
@@ -2351,6 +2385,7 @@ async fn status_widget_and_approval_modal_snapshot() {
             delta: "**Analyzing**".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Now show an approval modal (e.g. exec approval).
@@ -2372,6 +2407,7 @@ async fn status_widget_and_approval_modal_snapshot() {
         id: "sub-approve-exec".into(),
         msg: EventMsg::ExecApprovalRequest(ev),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Render at the widget's desired height and snapshot.
@@ -2398,6 +2434,7 @@ async fn status_widget_active_snapshot() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     // Provide a deterministic header via a bold reasoning chunk.
     chat.handle_codex_event(Event {
@@ -2406,6 +2443,7 @@ async fn status_widget_active_snapshot() {
             delta: "**Analyzing**".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     // Render and snapshot.
     let height = chat.desired_height(80);
@@ -2429,6 +2467,7 @@ async fn mcp_startup_header_booting_snapshot() {
             status: McpStartupStatus::Starting,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let height = chat.desired_height(80);
@@ -2450,6 +2489,7 @@ async fn background_event_updates_status_header() {
             message: "Waiting for `vim`".to_string(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     assert!(chat.bottom_pane.status_indicator_visible());
@@ -2480,6 +2520,7 @@ async fn apply_patch_events_emit_history_cells() {
         id: "s1".into(),
         msg: EventMsg::ApplyPatchApprovalRequest(ev),
         source_session_id: None,
+        parent_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(
@@ -2521,6 +2562,7 @@ async fn apply_patch_events_emit_history_cells() {
         id: "s1".into(),
         msg: EventMsg::PatchApplyBegin(begin),
         source_session_id: None,
+        parent_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected apply block cell to be sent");
@@ -2550,6 +2592,7 @@ async fn apply_patch_events_emit_history_cells() {
         id: "s1".into(),
         msg: EventMsg::PatchApplyEnd(end),
         source_session_id: None,
+        parent_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(
@@ -2579,6 +2622,7 @@ async fn apply_patch_manual_approval_adjusts_header() {
             grant_root: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     drain_insert_history(&mut rx);
 
@@ -2598,6 +2642,7 @@ async fn apply_patch_manual_approval_adjusts_header() {
             changes: apply_changes,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2630,6 +2675,7 @@ async fn apply_patch_manual_flow_snapshot() {
             grant_root: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     let history_before_apply = drain_insert_history(&mut rx);
     assert!(
@@ -2653,6 +2699,7 @@ async fn apply_patch_manual_flow_snapshot() {
             changes: apply_changes,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     let approved_lines = drain_insert_history(&mut rx)
         .pop()
@@ -2686,6 +2733,7 @@ async fn apply_patch_approval_sends_op_with_submission_id() {
         id: "sub-123".into(),
         msg: EventMsg::ApplyPatchApprovalRequest(ev),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Approve via key press 'y'
@@ -2724,6 +2772,7 @@ async fn apply_patch_full_flow_integration_like() {
             grant_root: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // 2) User approves via 'y' and App receives a CodexOp
@@ -2765,6 +2814,7 @@ async fn apply_patch_full_flow_integration_like() {
             changes: changes2,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     let mut end_changes = HashMap::new();
     end_changes.insert(
@@ -2782,6 +2832,7 @@ async fn apply_patch_full_flow_integration_like() {
             changes: end_changes,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 }
 
@@ -2807,6 +2858,7 @@ async fn apply_patch_untrusted_shows_approval_modal() {
             grant_root: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Render and ensure the approval modal title is present
@@ -2857,6 +2909,7 @@ async fn apply_patch_request_shows_diff_summary() {
             grant_root: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // No history entries yet; the modal should contain the diff summary
@@ -2922,6 +2975,7 @@ async fn plan_update_renders_history_cell() {
         id: "sub-1".into(),
         msg: EventMsg::PlanUpdate(update),
         source_session_id: None,
+        parent_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected plan update cell to be sent");
@@ -2947,6 +3001,7 @@ async fn stream_error_updates_status_indicator() {
             codex_error_info: Some(CodexErrorInfo::Other),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2970,6 +3025,7 @@ async fn warning_event_adds_warning_history_cell() {
             message: "test warning message".to_string(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -2990,6 +3046,7 @@ async fn stream_recovery_restores_previous_status_header() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     drain_insert_history(&mut rx);
     chat.handle_codex_event(Event {
@@ -2999,6 +3056,7 @@ async fn stream_recovery_restores_previous_status_header() {
             codex_error_info: Some(CodexErrorInfo::Other),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     drain_insert_history(&mut rx);
     chat.handle_codex_event(Event {
@@ -3007,6 +3065,7 @@ async fn stream_recovery_restores_previous_status_header() {
             delta: "hello".to_string(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let status = chat
@@ -3028,6 +3087,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // First finalized assistant message
@@ -3037,6 +3097,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
             message: "First message".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Second finalized assistant message in the same turn
@@ -3046,6 +3107,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
             message: "Second message".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // End turn
@@ -3055,6 +3117,7 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
             last_agent_message: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let cells = drain_insert_history(&mut rx);
@@ -3086,6 +3149,7 @@ async fn final_reasoning_then_message_without_deltas_are_rendered() {
             text: "I will first analyze the request.".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
@@ -3093,6 +3157,7 @@ async fn final_reasoning_then_message_without_deltas_are_rendered() {
             message: "Here is the result.".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Drain history and snapshot the combined visible content.
@@ -3115,6 +3180,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
             delta: "I will ".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
@@ -3122,6 +3188,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
             delta: "first analyze the ".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
@@ -3129,6 +3196,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
             delta: "request.".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
@@ -3136,6 +3204,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
             text: "request.".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Then stream answer deltas, followed by the exact same final message.
@@ -3145,6 +3214,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
             delta: "Here is the ".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "s1".into(),
@@ -3152,6 +3222,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
             delta: "result.".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     chat.handle_codex_event(Event {
@@ -3160,6 +3231,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
             message: "Here is the result.".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     // Snapshot the combined visible content to ensure we render as expected
@@ -3182,6 +3254,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
         id: "t1".into(),
         msg: EventMsg::AgentMessage(AgentMessageEvent { message: "I’m going to search the repo for where “Change Approved” is rendered to update that view.".into() }),
         source_session_id: None,
+        parent_session_id: None,
     });
 
     let command = vec!["bash".into(), "-lc".into(), "rg \"Change Approved\"".into()];
@@ -3211,6 +3284,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             interaction_input: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "c1".into(),
@@ -3231,6 +3305,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             formatted_output: String::new(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "t1".into(),
@@ -3238,6 +3313,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.handle_codex_event(Event {
         id: "t1".into(),
@@ -3245,6 +3321,7 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             delta: "**Investigating rendering code**".into(),
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     chat.bottom_pane
         .set_composer_text("Summarize recent commits".to_string());
@@ -3284,6 +3361,7 @@ async fn chatwidget_markdown_code_blocks_vt100_snapshot() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     // Build a vt100 visual from the history insertions only (no UI overlay)
     let width: u16 = 80;
@@ -3331,6 +3409,7 @@ printf 'fenced within fenced\n'
             id: "t1".into(),
             msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }),
             source_session_id: None,
+            parent_session_id: None,
         });
         // Drive commit ticks and drain emitted history lines into the vt100 buffer.
         loop {
@@ -3357,6 +3436,7 @@ printf 'fenced within fenced\n'
             last_agent_message: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     for lines in drain_insert_history(&mut rx) {
         crate::insert_history::insert_history_lines(&mut term, lines)
@@ -3375,6 +3455,7 @@ async fn chatwidget_tall() {
             model_context_window: None,
         }),
         source_session_id: None,
+        parent_session_id: None,
     });
     for i in 0..30 {
         chat.queue_user_message(format!("Hello, world! {i}").into());
@@ -3390,4 +3471,332 @@ async fn chatwidget_tall() {
     })
     .unwrap();
     assert_snapshot!(term.backend().vt100().screen().contents());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SubAgent and Session Tree Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Test that SubAgentBegin creates a running subagent cell.
+#[tokio::test]
+async fn subagent_begin_creates_running_cell() {
+    use codex_core::protocol::SubAgentBeginEvent;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
+
+    // Simulate SubAgentBegin
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-123".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test task".to_string(),
+            session_id: "task-abc".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    assert_eq!(chat.running_subagents.len(), 1);
+    assert!(chat.running_subagents.contains_key("call-123"));
+}
+
+/// Test that SubAgentEnd completes and moves the cell to history.
+#[tokio::test]
+async fn subagent_end_completes_cell() {
+    use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent, SubAgentTokenUsage};
+
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual(None).await;
+
+    // Start a subagent
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-123".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test task".to_string(),
+            session_id: "task-abc".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    assert_eq!(chat.running_subagents.len(), 1);
+
+    // Complete the subagent
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentEnd(SubAgentEndEvent {
+            call_id: "call-123".to_string(),
+            session_id: "task-abc".to_string(),
+            success: true,
+            output: "Task completed successfully".to_string(),
+            duration_ms: 1500,
+            tool_summary: vec![],
+            token_usage: Some(SubAgentTokenUsage {
+                input_tokens: 500,
+                output_tokens: 200,
+                total_tokens: 700,
+            }),
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    // Should be removed from running_subagents
+    assert_eq!(chat.running_subagents.len(), 0);
+
+    // Cell should have been added to history
+    let cells = drain_insert_history(&mut rx);
+    assert!(!cells.is_empty(), "Completed subagent should be added to history");
+}
+
+/// Test that forwarded events from subagents are routed to the correct cell.
+#[tokio::test]
+async fn forwarded_events_update_subagent_cell() {
+    use codex_core::protocol::SubAgentBeginEvent;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
+
+    // Start a subagent
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-123".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test task".to_string(),
+            session_id: "task-abc".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    // Send a forwarded ExecCommandBegin event
+    chat.handle_codex_event(Event {
+        id: "sub-002".to_string(),
+        msg: EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+            call_id: "exec-1".to_string(),
+            process_id: None,
+            turn_id: "turn-1".to_string(),
+            command: vec!["ls".to_string(), "-la".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            parsed_cmd: vec![],
+            source: ExecCommandSource::Agent,
+            interaction_input: None,
+        }),
+        source_session_id: Some("task-abc".to_string()),
+        parent_session_id: None,
+    });
+
+    // The cell should have recorded the forwarded event
+    let cell = chat.running_subagents.get("call-123").expect("cell should exist");
+    assert!(cell.forwarded_events().len() >= 1, "Forwarded event should be recorded");
+}
+
+/// Test that events with source_session_id are not dispatched to main history.
+#[tokio::test]
+async fn forwarded_events_not_in_main_history() {
+    use codex_core::protocol::SubAgentBeginEvent;
+
+    let (mut chat, mut rx, _ops) = make_chatwidget_manual(None).await;
+
+    // Start a subagent
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-123".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test task".to_string(),
+            session_id: "task-abc".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    // Drain any events from begin
+    let _ = drain_insert_history(&mut rx);
+
+    // Send a forwarded event (this should NOT go to main history)
+    chat.handle_codex_event(Event {
+        id: "sub-002".to_string(),
+        msg: EventMsg::AgentMessage(AgentMessageEvent {
+            message: "Searching for files...".to_string(),
+        }),
+        source_session_id: Some("task-abc".to_string()),
+        parent_session_id: None,
+    });
+
+    // Main history should not have received the forwarded event
+    let cells = drain_insert_history(&mut rx);
+    let has_forwarded_message = cells.iter().any(|lines| {
+        lines_to_single_string(lines).contains("Searching for files")
+    });
+    assert!(
+        !has_forwarded_message,
+        "Forwarded events should not appear in main history"
+    );
+}
+
+/// Test that events with parent_session_id are correctly routed.
+#[tokio::test]
+async fn events_with_parent_session_id_are_forwarded() {
+    use codex_core::protocol::SubAgentBeginEvent;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
+
+    // Start a subagent
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-123".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test task".to_string(),
+            session_id: "task-abc".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    // Send an event with both source_session_id and parent_session_id
+    // This simulates a nested subagent scenario
+    chat.handle_codex_event(Event {
+        id: "sub-002".to_string(),
+        msg: EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+            call_id: "exec-1".to_string(),
+            process_id: None,
+            turn_id: "turn-1".to_string(),
+            command: vec!["grep".to_string(), "test".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            parsed_cmd: vec![],
+            source: ExecCommandSource::Agent,
+            interaction_input: None,
+        }),
+        source_session_id: Some("task-abc".to_string()),
+        parent_session_id: Some("task-parent".to_string()),
+    });
+
+    // The event should still be routed to the subagent cell by source_session_id
+    let cell = chat.running_subagents.get("call-123").expect("cell should exist");
+    assert!(!cell.forwarded_events().is_empty(), "Event with parent_session_id should be forwarded");
+}
+
+/// Test that multiple subagents can run concurrently.
+#[tokio::test]
+async fn multiple_concurrent_subagents() {
+    use codex_core::protocol::SubAgentBeginEvent;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
+
+    // Start first subagent
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "First task".to_string(),
+            session_id: "task-1".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    // Start second subagent
+    chat.handle_codex_event(Event {
+        id: "sub-002".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-2".to_string(),
+            agent_type: "plan".to_string(),
+            description: "Second task".to_string(),
+            session_id: "task-2".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    assert_eq!(chat.running_subagents.len(), 2);
+    assert!(chat.running_subagents.contains_key("call-1"));
+    assert!(chat.running_subagents.contains_key("call-2"));
+}
+
+/// Test that events are routed to correct subagent when multiple are running.
+#[tokio::test]
+async fn events_routed_to_correct_subagent() {
+    use codex_core::protocol::SubAgentBeginEvent;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
+
+    // Start two subagents
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "First task".to_string(),
+            session_id: "task-1".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    chat.handle_codex_event(Event {
+        id: "sub-002".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-2".to_string(),
+            agent_type: "plan".to_string(),
+            description: "Second task".to_string(),
+            session_id: "task-2".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    // Send event to first subagent
+    chat.handle_codex_event(Event {
+        id: "sub-003".to_string(),
+        msg: EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+            call_id: "exec-1".to_string(),
+            process_id: None,
+            turn_id: "turn-1".to_string(),
+            command: vec!["ls".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            parsed_cmd: vec![],
+            source: ExecCommandSource::Agent,
+            interaction_input: None,
+        }),
+        source_session_id: Some("task-1".to_string()),
+        parent_session_id: None,
+    });
+
+    // Send event to second subagent
+    chat.handle_codex_event(Event {
+        id: "sub-004".to_string(),
+        msg: EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
+            call_id: "exec-2".to_string(),
+            process_id: None,
+            turn_id: "turn-2".to_string(),
+            command: vec!["grep".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            parsed_cmd: vec![],
+            source: ExecCommandSource::Agent,
+            interaction_input: None,
+        }),
+        source_session_id: Some("task-2".to_string()),
+        parent_session_id: None,
+    });
+
+    // Each subagent should have one forwarded event
+    let cell1 = chat.running_subagents.get("call-1").expect("cell 1 should exist");
+    let cell2 = chat.running_subagents.get("call-2").expect("cell 2 should exist");
+
+    assert!(!cell1.forwarded_events().is_empty(), "Cell 1 should have forwarded events");
+    assert!(!cell2.forwarded_events().is_empty(), "Cell 2 should have forwarded events");
 }

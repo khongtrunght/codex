@@ -48,6 +48,8 @@ use codex_core::protocol::ReviewRequest;
 use codex_core::protocol::ReviewTarget;
 use codex_core::protocol::SkillsListEntry;
 use codex_core::protocol::StreamErrorEvent;
+use codex_core::protocol::SubAgentBeginEvent;
+use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TerminalInteractionEvent;
 use codex_core::protocol::TokenUsage;
@@ -103,9 +105,11 @@ use crate::exec_cell::new_active_exec_command;
 use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
 use crate::history_cell::AgentMessageCell;
+use crate::history_cell::ForwardedToolEvent;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::McpToolCallCell;
 use crate::history_cell::PlainHistoryCell;
+use crate::history_cell::SubAgentCell;
 use crate::markdown::append_markdown;
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
@@ -298,6 +302,8 @@ pub(crate) struct ChatWidget {
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
     running_commands: HashMap<String, RunningCommand>,
+    /// Active sub-agent cells, keyed by call_id
+    running_subagents: HashMap<String, SubAgentCell>,
     suppressed_exec_calls: HashSet<String>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     task_complete_pending: bool,
@@ -1317,6 +1323,7 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            running_subagents: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -1402,6 +1409,7 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            running_subagents: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -1464,6 +1472,19 @@ impl ChatWidget {
                         )));
                     }
                 }
+                return;
+            }
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'o') => {
+                // Toggle expand/collapse on all running subagent cells
+                for cell in self.running_subagents.values_mut() {
+                    cell.toggle_expanded();
+                }
+                self.request_redraw();
                 return;
             }
             other if other.kind == KeyEventKind::Press => {
@@ -1660,6 +1681,7 @@ impl ChatWidget {
                         grant_root: Some(PathBuf::from("/tmp")),
                     }),
                     source_session_id: None,
+                    parent_session_id: None,
                 }));
             }
         }
@@ -1798,7 +1820,22 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
-        let Event { id, msg, .. } = event;
+        let Event {
+            id,
+            msg,
+            source_session_id,
+            parent_session_id: _,
+        } = event;
+
+        // Route forwarded events to the appropriate subagent cell
+        // Events with source_session_id are from sub-agents and should NOT
+        // be dispatched to the main history - only to the SubAgentCell
+        if let Some(ref source_id) = source_session_id {
+            self.handle_forwarded_event(source_id, &msg);
+            // Don't dispatch to main history - sub-agent events only go to SubAgentCell
+            return;
+        }
+
         self.dispatch_event_msg(Some(id), msg, false);
     }
 
@@ -1921,9 +1958,9 @@ impl ChatWidget {
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::SubAgentBegin(_)
-            | EventMsg::SubAgentProgress(_)
-            | EventMsg::SubAgentEnd(_) => {}
+            | EventMsg::SubAgentProgress(_) => {}
+            EventMsg::SubAgentBegin(ev) => self.on_subagent_begin(ev),
+            EventMsg::SubAgentEnd(ev) => self.on_subagent_end(ev),
         }
     }
 
@@ -1980,6 +2017,103 @@ impl ChatWidget {
         let message = event.message.trim();
         if !message.is_empty() {
             self.add_to_history(history_cell::new_user_prompt(message.to_string()));
+        }
+    }
+
+    fn on_subagent_begin(&mut self, ev: SubAgentBeginEvent) {
+        self.flush_answer_stream_with_separator();
+
+        let cell = history_cell::new_subagent_cell(ev.clone(), self.config.animations);
+        self.running_subagents.insert(ev.call_id.clone(), cell);
+        self.request_redraw();
+    }
+
+    fn on_subagent_end(&mut self, ev: SubAgentEndEvent) {
+        if let Some(mut cell) = self.running_subagents.remove(&ev.call_id) {
+            cell.complete(&ev);
+            self.add_to_history(cell);
+            self.request_redraw();
+        }
+    }
+
+    /// Handle events forwarded from a subagent to update the subagent cell.
+    fn handle_forwarded_event(&mut self, source_session_id: &str, msg: &EventMsg) {
+        // Find the subagent cell by session_id
+        let cell = self
+            .running_subagents
+            .values_mut()
+            .find(|c| c.session_id() == source_session_id);
+
+        if let Some(cell) = cell {
+            match msg {
+                EventMsg::ExecCommandBegin(ev) => {
+                    cell.add_forwarded_event(ForwardedToolEvent {
+                        tool_name: "shell".to_string(),
+                        title: Some(ev.command.join(" ")),
+                        status: "running".to_string(),
+                    });
+                }
+                EventMsg::ExecCommandEnd(ev) => {
+                    let status = if ev.exit_code == 0 { "completed" } else { "error" };
+                    cell.update_last_event_status(status);
+                }
+                EventMsg::McpToolCallBegin(ev) => {
+                    cell.add_forwarded_event(ForwardedToolEvent {
+                        tool_name: ev.invocation.tool.clone(),
+                        title: Some(ev.invocation.server.clone()),
+                        status: "running".to_string(),
+                    });
+                }
+                EventMsg::McpToolCallEnd(_) => {
+                    cell.update_last_event_status("completed");
+                }
+                EventMsg::PatchApplyBegin(ev) => {
+                    // Extract file paths from the changes map
+                    let paths: Vec<String> = ev
+                        .changes
+                        .keys()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    let title = if paths.len() == 1 {
+                        Some(paths[0].clone())
+                    } else {
+                        Some(format!("{} files", paths.len()))
+                    };
+                    cell.add_forwarded_event(ForwardedToolEvent {
+                        tool_name: "patch".to_string(),
+                        title,
+                        status: "running".to_string(),
+                    });
+                }
+                EventMsg::PatchApplyEnd(ev) => {
+                    let status = if ev.success { "completed" } else { "error" };
+                    cell.update_last_event_status(status);
+                }
+                EventMsg::WebSearchBegin(_) => {
+                    cell.add_forwarded_event(ForwardedToolEvent {
+                        tool_name: "web_search".to_string(),
+                        title: None,
+                        status: "running".to_string(),
+                    });
+                }
+                EventMsg::WebSearchEnd(_) => {
+                    cell.update_last_event_status("completed");
+                }
+                EventMsg::TokenCount(tc) => {
+                    // Accumulate token usage from forwarded TokenCount events
+                    if let Some(info) = &tc.info {
+                        let last = &info.last_token_usage;
+                        // Use absolute values since tokens are i64 in protocol
+                        let input_delta = last.input_tokens.max(0) as u64;
+                        let output_delta = last.output_tokens.max(0) as u64;
+                        cell.accumulate_tokens(input_delta, output_delta);
+                    }
+                }
+                _ => {
+                    // Other events are not displayed in the subagent cell
+                }
+            }
+            self.request_redraw();
         }
     }
 
@@ -3324,8 +3458,26 @@ impl ChatWidget {
             Some(cell) => RenderableItem::Borrowed(cell).inset(Insets::tlbr(1, 0, 0, 0)),
             None => RenderableItem::Owned(Box::new(())),
         };
+
+        // Render running subagent cells
+        let subagent_renderables: Vec<_> = self
+            .running_subagents
+            .values()
+            .map(|cell| {
+                RenderableItem::Owned(Box::new(SubAgentCellRenderable(cell))
+                    as Box<dyn Renderable>)
+                    .inset(Insets::tlbr(1, 0, 0, 0))
+            })
+            .collect();
+
         let mut flex = FlexRenderable::new();
         flex.push(1, active_cell_renderable);
+
+        // Add each running subagent cell
+        for renderable in subagent_renderables {
+            flex.push(0, renderable);
+        }
+
         flex.push(
             0,
             RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(1, 0, 0, 0)),
@@ -3352,6 +3504,21 @@ impl Renderable for ChatWidget {
 
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.as_renderable().cursor_pos(area)
+    }
+}
+
+/// Wrapper to render a SubAgentCell reference as a Renderable.
+struct SubAgentCellRenderable<'a>(&'a SubAgentCell);
+
+impl Renderable for SubAgentCellRenderable<'_> {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let lines = self.0.display_lines(area.width);
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        self.0.desired_height(width)
     }
 }
 

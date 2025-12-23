@@ -1799,6 +1799,7 @@ impl ChatWidget {
                         grant_root: Some(PathBuf::from("/tmp")),
                     }),
                     source_session_id: None,
+                    parent_session_id: None,
                 }));
             }
         }

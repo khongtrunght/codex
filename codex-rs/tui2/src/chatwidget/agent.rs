@@ -38,6 +38,7 @@ pub(crate) fn spawn_agent(
                     id: "".to_string(),
                     msg: EventMsg::Error(err.to_error_event(None)),
                     source_session_id: None,
+                    parent_session_id: None,
                 }));
                 app_event_tx_clone.send(AppEvent::ExitRequest);
                 tracing::error!("failed to initialize codex: {err}");
@@ -51,6 +52,7 @@ pub(crate) fn spawn_agent(
             id: "".to_string(),
             msg: codex_core::protocol::EventMsg::SessionConfigured(session_configured),
             source_session_id: None,
+            parent_session_id: None,
         };
         app_event_tx_clone.send(AppEvent::CodexEvent(ev));
 
@@ -89,6 +91,7 @@ pub(crate) fn spawn_agent_from_existing(
             id: "".to_string(),
             msg: codex_core::protocol::EventMsg::SessionConfigured(session_configured),
             source_session_id: None,
+            parent_session_id: None,
         };
         app_event_tx_clone.send(AppEvent::CodexEvent(ev));
 

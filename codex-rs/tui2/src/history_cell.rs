@@ -1518,6 +1518,8 @@ pub(crate) struct SubAgentCell {
     description: String,
     status: SubAgentStatus,
     start_time: Option<Instant>,
+    /// Whether this is a resumed session.
+    resumed: bool,
 
     // Statistics
     tool_uses_count: usize,
@@ -1596,6 +1598,39 @@ impl SubAgentCell {
     pub fn update_tool_count(&mut self, count: usize) {
         self.tool_uses_count = count;
     }
+
+    /// Replace all forwarded events with a new list.
+    pub fn set_forwarded_events(&mut self, events: Vec<ForwardedToolEvent>) {
+        self.tool_uses_count = events.len();
+        self.forwarded_events = events;
+    }
+
+    /// Get the list of forwarded events.
+    pub fn forwarded_events(&self) -> &[ForwardedToolEvent] {
+        &self.forwarded_events
+    }
+
+    /// Update the status of the last forwarded event.
+    pub fn update_last_event_status(&mut self, status: &str) {
+        if let Some(last) = self.forwarded_events.last_mut() {
+            last.status = status.to_string();
+        }
+    }
+
+    /// Accumulate token usage from a forwarded TokenCount event.
+    ///
+    /// This allows streaming token updates as the sub-agent runs,
+    /// rather than only showing tokens at completion.
+    pub fn accumulate_tokens(&mut self, input_delta: u64, output_delta: u64) {
+        let usage = self.token_usage.get_or_insert(SubAgentTokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+        });
+        usage.input_tokens = usage.input_tokens.saturating_add(input_delta);
+        usage.output_tokens = usage.output_tokens.saturating_add(output_delta);
+        usage.total_tokens = usage.input_tokens + usage.output_tokens;
+    }
 }
 
 impl HistoryCell for SubAgentCell {
@@ -1609,10 +1644,11 @@ impl HistoryCell for SubAgentCell {
             SubAgentStatus::Running => spinner(Some(self.start_time.unwrap_or(Instant::now())), self.animations_enabled),
         };
 
-        let status_text = match self.status {
-            SubAgentStatus::Running => "Running",
-            SubAgentStatus::Completed => "Done",
-            SubAgentStatus::Error => "Error",
+        let status_text = match (&self.status, self.resumed) {
+            (SubAgentStatus::Running, true) => "Resumed",
+            (SubAgentStatus::Running, false) => "Running",
+            (SubAgentStatus::Completed, _) => "Done",
+            (SubAgentStatus::Error, _) => "Error",
         };
 
         // Format: "● agent-type · Status · N tool uses · XXk tokens"
@@ -1709,6 +1745,7 @@ pub(crate) fn new_subagent_cell(
         description: begin_event.description,
         status: SubAgentStatus::Running,
         start_time: Some(Instant::now()),
+        resumed: begin_event.resumed,
         tool_uses_count: 0,
         token_usage: None,
         duration_ms: None,
@@ -2733,6 +2770,30 @@ mod tests {
         assert!(rendered[0].contains("Running"));
         assert!(rendered[0].contains("0 tool uses"));
         assert!(rendered[1].contains("Search for rust files"));
+    }
+
+    #[test]
+    fn subagent_cell_renders_resumed_state() {
+        use codex_core::protocol::SubAgentBeginEvent;
+
+        let begin_event = SubAgentBeginEvent {
+            call_id: "call-123".to_string(),
+            session_id: "task-456".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Resuming previous search".to_string(),
+            resumed: true,
+        };
+
+        let cell = new_subagent_cell(begin_event, false);
+        let lines = cell.display_lines(80);
+        let rendered = render_lines(&lines);
+
+        // Should show "Resumed" instead of "Running"
+        assert!(rendered.len() >= 2);
+        assert!(rendered[0].contains("explore"));
+        assert!(rendered[0].contains("Resumed"), "Expected 'Resumed' in: {}", rendered[0]);
+        assert!(!rendered[0].contains("Running"), "Should not contain 'Running' when resumed");
+        assert!(rendered[1].contains("Resuming previous search"));
     }
 
     #[test]
