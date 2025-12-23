@@ -46,7 +46,10 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::EnteredReviewMode(_)
         | EventMsg::ExitedReviewMode(_)
         | EventMsg::UndoCompleted(_)
-        | EventMsg::TurnAborted(_) => true,
+        | EventMsg::TurnAborted(_)
+        // Persist sub-agent events so they can be replayed when resuming sessions
+        | EventMsg::SubAgentBegin(_)
+        | EventMsg::SubAgentEnd(_) => true,
         EventMsg::Error(_)
         | EventMsg::Warning(_)
         | EventMsg::TaskStarted(_)
@@ -90,8 +93,7 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
         | EventMsg::SkillsUpdateAvailable
-        | EventMsg::SubAgentBegin(_)
-        | EventMsg::SubAgentProgress(_)
-        | EventMsg::SubAgentEnd(_) => false,
+        // SubAgentProgress is streaming/transient, don't persist
+        | EventMsg::SubAgentProgress(_) => false,
     }
 }
