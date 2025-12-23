@@ -11,7 +11,6 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::markdown::append_markdown;
 use crate::render::line_utils::line_to_static;
 use crate::render::line_utils::prefix_lines;
-use crate::render::line_utils::push_owned_lines;
 use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
 use crate::text_formatting::format_and_truncate_tool_result;
@@ -22,7 +21,6 @@ use crate::update_action::UpdateAction;
 use crate::version::CODEX_CLI_VERSION;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
-use crate::wrapping::word_wrap_lines;
 use base64::Engine;
 use codex_common::elapsed::format_duration;
 use codex_common::format_env_display::format_env_display;
@@ -59,6 +57,47 @@ use std::time::Instant;
 use tracing::error;
 use unicode_width::UnicodeWidthStr;
 
+/// Visual transcript lines plus soft-wrap joiners.
+///
+/// A history cell can produce multiple "visual lines" once prefixes/indents and wrapping are
+/// applied. Clipboard reconstruction needs more information than just those lines: users expect
+/// soft-wrapped prose to copy as a single logical line, while explicit newlines and spacer rows
+/// should remain hard breaks.
+///
+/// `joiner_before` records, for each output line, whether it is a continuation created by the
+/// wrapping algorithm and what string should be inserted at the wrap boundary when joining lines.
+/// This avoids heuristics like always inserting a space, and instead preserves the exact whitespace
+/// that was skipped at the boundary.
+///
+/// ## Note for `codex-tui` vs `codex-tui2`
+///
+/// In `codex-tui`, `HistoryCell` only exposes `transcript_lines(...)` and the UI generally doesn't
+/// need to reconstruct clipboard text across off-screen history or soft-wrap boundaries.
+///
+/// In `codex-tui2`, transcript selection and copy are app-driven (not terminal-driven) and may span
+/// content that isn't currently visible. That means we need additional metadata to distinguish hard
+/// breaks from soft wraps and to preserve the exact whitespace at wrap boundaries.
+///
+/// Invariants:
+/// - `joiner_before.len() == lines.len()`
+/// - `joiner_before[0]` is always `None`
+/// - `None` represents a hard break
+/// - `Some(joiner)` represents a soft wrap continuation
+///
+/// Consumers:
+/// - `transcript_render` threads joiners through transcript flattening/wrapping.
+/// - `transcript_copy` uses them to join wrapped prose while preserving hard breaks.
+#[derive(Debug, Clone)]
+pub(crate) struct TranscriptLinesWithJoiners {
+    /// Visual transcript lines for a history cell, including any indent/prefix spans.
+    ///
+    /// This is the same shape used for on-screen transcript rendering: a single cell may expand
+    /// to multiple `Line`s after wrapping and prefixing.
+    pub(crate) lines: Vec<Line<'static>>,
+    /// For each output line, whether and how to join it to the previous line when copying.
+    pub(crate) joiner_before: Vec<Option<String>>,
+}
+
 /// Represents an event to display in the conversation history. Returns its
 /// `Vec<Line<'static>>` representation to make it easier to display in a
 /// scrollable list.
@@ -83,6 +122,41 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
         self.display_lines(width)
+    }
+
+    /// Render transcript lines with explicit verbose flag.
+    /// When verbose is true, expandable cells should show their full content.
+    /// Default implementation delegates to display_lines_verbose for consistency.
+    fn transcript_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        self.display_lines_verbose(width, verbose)
+    }
+
+    /// Transcript lines plus soft-wrap joiners used for copy/paste fidelity.
+    ///
+    /// Most cells can use the default implementation (no joiners), but cells that apply wrapping
+    /// should override this and return joiners derived from the same wrapping operation so
+    /// clipboard reconstruction can distinguish hard breaks from soft wraps.
+    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
+        let lines = self.transcript_lines(width);
+        TranscriptLinesWithJoiners {
+            joiner_before: vec![None; lines.len()],
+            lines,
+        }
+    }
+
+    /// Transcript lines with joiners and verbose flag for copy/paste fidelity.
+    /// When verbose is true, expandable cells should show their full content.
+    /// Default implementation delegates to transcript_lines_verbose.
+    fn transcript_lines_with_joiners_verbose(
+        &self,
+        width: u16,
+        verbose: bool,
+    ) -> TranscriptLinesWithJoiners {
+        let lines = self.transcript_lines_verbose(width, verbose);
+        TranscriptLinesWithJoiners {
+            joiner_before: vec![None; lines.len()],
+            lines,
+        }
     }
 
     fn desired_transcript_height(&self, width: u16) -> u16 {
@@ -144,8 +218,10 @@ pub(crate) struct UserHistoryCell {
 
 impl HistoryCell for UserHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let mut lines: Vec<Line<'static>> = Vec::new();
+        self.transcript_lines_with_joiners(width).lines
+    }
 
+    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
         let wrap_width = width
             .saturating_sub(
                 LIVE_PREFIX_COLS + 1, /* keep a one-column right margin for wrapping */
@@ -154,17 +230,32 @@ impl HistoryCell for UserHistoryCell {
 
         let style = user_message_style();
 
-        let wrapped = word_wrap_lines(
+        let (wrapped, joiner_before) = crate::wrapping::word_wrap_lines_with_joiners(
             self.message.lines().map(|l| Line::from(l).style(style)),
             // Wrap algorithm matches textarea.rs.
             RtOptions::new(usize::from(wrap_width))
                 .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
         );
 
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut joins: Vec<Option<String>> = Vec::new();
+
         lines.push(Line::from("").style(style));
-        lines.extend(prefix_lines(wrapped, "› ".bold().dim(), "  ".into()));
+        joins.push(None);
+
+        let prefixed = prefix_lines(wrapped, "› ".bold().dim(), "  ".into());
+        for (line, joiner) in prefixed.into_iter().zip(joiner_before) {
+            lines.push(line);
+            joins.push(joiner);
+        }
+
         lines.push(Line::from("").style(style));
-        lines
+        joins.push(None);
+
+        TranscriptLinesWithJoiners {
+            lines,
+            joiner_before: joins,
+        }
     }
 }
 
@@ -185,6 +276,10 @@ impl ReasoningSummaryCell {
     }
 
     fn lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.lines_with_joiners(width).lines
+    }
+
+    fn lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
         let mut lines: Vec<Line<'static>> = Vec::new();
         append_markdown(
             &self.content,
@@ -204,12 +299,17 @@ impl ReasoningSummaryCell {
             })
             .collect::<Vec<_>>();
 
-        word_wrap_lines(
+        let (lines, joiner_before) = crate::wrapping::word_wrap_lines_with_joiners(
             &summary_lines,
             RtOptions::new(width as usize)
                 .initial_indent("• ".dim().into())
                 .subsequent_indent("  ".into()),
-        )
+        );
+
+        TranscriptLinesWithJoiners {
+            lines,
+            joiner_before,
+        }
     }
 }
 
@@ -243,6 +343,10 @@ impl HistoryCell for ReasoningSummaryCell {
         self.lines(width)
     }
 
+    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
+        self.lines_with_joiners(width)
+    }
+
     fn desired_transcript_height(&self, width: u16) -> u16 {
         self.lines(width).len() as u16
     }
@@ -265,16 +369,50 @@ impl AgentMessageCell {
 
 impl HistoryCell for AgentMessageCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        word_wrap_lines(
-            &self.lines,
-            RtOptions::new(width as usize)
-                .initial_indent(if self.is_first_line {
-                    "• ".dim().into()
-                } else {
-                    "  ".into()
-                })
-                .subsequent_indent("  ".into()),
-        )
+        self.transcript_lines_with_joiners(width).lines
+    }
+
+    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
+        use ratatui::style::Color;
+
+        let mut out_lines: Vec<Line<'static>> = Vec::new();
+        let mut joiner_before: Vec<Option<String>> = Vec::new();
+
+        let mut is_first_output_line = true;
+        for line in &self.lines {
+            let is_code_block_line = line.style.fg == Some(Color::Cyan);
+            let initial_indent: Line<'static> = if is_first_output_line && self.is_first_line {
+                "• ".dim().into()
+            } else {
+                "  ".into()
+            };
+            let subsequent_indent: Line<'static> = "  ".into();
+
+            if is_code_block_line {
+                let mut spans = initial_indent.spans;
+                spans.extend(line.spans.iter().cloned());
+                out_lines.push(Line::from(spans).style(line.style));
+                joiner_before.push(None);
+                is_first_output_line = false;
+                continue;
+            }
+
+            let opts = RtOptions::new(width as usize)
+                .initial_indent(initial_indent)
+                .subsequent_indent(subsequent_indent.clone());
+            let (wrapped, wrapped_joiners) =
+                crate::wrapping::word_wrap_line_with_joiners(line, opts);
+            for (l, j) in wrapped.into_iter().zip(wrapped_joiners) {
+                out_lines.push(line_to_static(&l));
+                joiner_before.push(j);
+                is_first_output_line = false;
+            }
+        }
+
+        TranscriptLinesWithJoiners {
+            lines: out_lines,
+            joiner_before,
+        }
     }
 
     fn is_stream_continuation(&self) -> bool {
@@ -376,20 +514,29 @@ impl PrefixedWrappedHistoryCell {
 
 impl HistoryCell for PrefixedWrappedHistoryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if width == 0 {
-            return Vec::new();
-        }
-        let opts = RtOptions::new(width.max(1) as usize)
-            .initial_indent(self.initial_prefix.clone())
-            .subsequent_indent(self.subsequent_prefix.clone());
-        let wrapped = word_wrap_lines(&self.text, opts);
-        let mut out = Vec::new();
-        push_owned_lines(&wrapped, &mut out);
-        out
+        self.transcript_lines_with_joiners(width).lines
     }
 
     fn desired_height(&self, width: u16) -> u16 {
         self.display_lines(width).len() as u16
+    }
+
+    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
+        if width == 0 {
+            return TranscriptLinesWithJoiners {
+                lines: Vec::new(),
+                joiner_before: Vec::new(),
+            };
+        }
+        let opts = RtOptions::new(width.max(1) as usize)
+            .initial_indent(self.initial_prefix.clone())
+            .subsequent_indent(self.subsequent_prefix.clone());
+        let (lines, joiner_before) =
+            crate::wrapping::word_wrap_lines_with_joiners(&self.text, opts);
+        TranscriptLinesWithJoiners {
+            lines,
+            joiner_before,
+        }
     }
 }
 
