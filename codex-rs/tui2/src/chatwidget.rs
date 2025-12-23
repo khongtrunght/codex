@@ -342,6 +342,8 @@ pub(crate) struct ChatWidget {
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)
     current_rollout_path: Option<PathBuf>,
+    /// Global verbose mode - when true, expandable cells show full content (ctrl+o toggle)
+    verbose_mode: bool,
 }
 
 struct UserMessage {
@@ -395,6 +397,16 @@ impl ChatWidget {
         {
             self.set_status_header(header);
         }
+    }
+
+    /// Toggle global verbose mode for expandable cells.
+    pub(crate) fn toggle_verbose_mode(&mut self) {
+        self.verbose_mode = !self.verbose_mode;
+    }
+
+    /// Check if global verbose mode is enabled.
+    pub(crate) fn is_verbose(&self) -> bool {
+        self.verbose_mode
     }
 
     // --- Small event handlers ---
@@ -1345,6 +1357,7 @@ impl ChatWidget {
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
+            verbose_mode: false,
         };
 
         widget.prefetch_rate_limits();
@@ -1442,6 +1455,7 @@ impl ChatWidget {
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
+            verbose_mode: false,
         };
 
         widget.prefetch_rate_limits();

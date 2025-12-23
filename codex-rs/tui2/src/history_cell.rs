@@ -68,8 +68,25 @@ use unicode_width::UnicodeWidthStr;
 pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>>;
 
+    /// Render display lines with explicit verbose flag.
+    /// When verbose is true, expandable cells should show their full content.
+    /// Default implementation ignores the verbose flag for backward compatibility.
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        let _ = verbose;
+        self.display_lines(width)
+    }
+
     fn desired_height(&self, width: u16) -> u16 {
         Paragraph::new(Text::from(self.display_lines(width)))
+            .wrap(Wrap { trim: false })
+            .line_count(width)
+            .try_into()
+            .unwrap_or(0)
+    }
+
+    /// Compute desired height when rendering with verbose mode.
+    fn desired_height_verbose(&self, width: u16, verbose: bool) -> u16 {
+        Paragraph::new(Text::from(self.display_lines_verbose(width, verbose)))
             .wrap(Wrap { trim: false })
             .line_count(width)
             .try_into()
