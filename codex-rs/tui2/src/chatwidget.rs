@@ -1511,7 +1511,10 @@ impl ChatWidget {
                 kind: KeyEventKind::Press,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'o') => {
-                // Toggle expand/collapse on all running subagent cells
+                // Toggle global verbose mode (affects history cells)
+                self.verbose_mode = !self.verbose_mode;
+
+                // Also toggle running subagents for immediate feedback on running tasks
                 for cell in self.running_subagents.values_mut() {
                     cell.toggle_expanded();
                 }

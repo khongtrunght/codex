@@ -585,7 +585,8 @@ impl App {
         let session_lines = if width == 0 {
             Vec::new()
         } else {
-            let (lines, line_meta) = Self::build_transcript_lines(&app.transcript_cells, width);
+            let verbose = app.chat_widget.is_verbose();
+            let (lines, line_meta) = Self::build_transcript_lines(&app.transcript_cells, width, verbose);
             let is_user_cell: Vec<bool> = app
                 .transcript_cells
                 .iter()
@@ -725,7 +726,8 @@ impl App {
             height: max_transcript_height,
         };
 
-        let (lines, line_meta) = Self::build_transcript_lines(cells, transcript_area.width);
+        let verbose = self.chat_widget.is_verbose();
+        let (lines, line_meta) = Self::build_transcript_lines(cells, transcript_area.width, verbose);
         if lines.is_empty() {
             Clear.render_ref(transcript_area, frame.buffer);
             self.transcript_scroll = TranscriptScroll::default();
@@ -1086,7 +1088,8 @@ impl App {
             return;
         }
 
-        let (_, line_meta) = Self::build_transcript_lines(&self.transcript_cells, width);
+        let verbose = self.chat_widget.is_verbose();
+        let (_, line_meta) = Self::build_transcript_lines(&self.transcript_cells, width, verbose);
         self.transcript_scroll =
             self.transcript_scroll
                 .scrolled_by(delta_lines, &line_meta, visible_lines);
@@ -1110,7 +1113,8 @@ impl App {
             return;
         }
 
-        let (lines, line_meta) = Self::build_transcript_lines(&self.transcript_cells, width);
+        let verbose = self.chat_widget.is_verbose();
+        let (lines, line_meta) = Self::build_transcript_lines(&self.transcript_cells, width, verbose);
         if lines.is_empty() || line_meta.is_empty() {
             return;
         }
@@ -1147,13 +1151,14 @@ impl App {
     fn build_transcript_lines(
         cells: &[Arc<dyn HistoryCell>],
         width: u16,
+        verbose: bool,
     ) -> (Vec<Line<'static>>, Vec<TranscriptLineMeta>) {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let mut line_meta: Vec<TranscriptLineMeta> = Vec::new();
         let mut has_emitted_lines = false;
 
         for (cell_index, cell) in cells.iter().enumerate() {
-            let cell_lines = cell.display_lines(width);
+            let cell_lines = cell.display_lines_verbose(width, verbose);
             if cell_lines.is_empty() {
                 continue;
             }
@@ -1378,7 +1383,8 @@ impl App {
         };
 
         let cells = self.transcript_cells.clone();
-        let (lines, _) = Self::build_transcript_lines(&cells, transcript_area.width);
+        let verbose = self.chat_widget.is_verbose();
+        let (lines, _) = Self::build_transcript_lines(&cells, transcript_area.width, verbose);
         if lines.is_empty() {
             return;
         }

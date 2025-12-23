@@ -1653,6 +1653,27 @@ impl SubAgentCell {
 
 impl HistoryCell for SubAgentCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        // Use per-cell expanded state for backward compatibility
+        self.render_with_expanded(width, self.expanded)
+    }
+
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        // Use global verbose mode OR per-cell expanded state
+        self.render_with_expanded(width, verbose || self.expanded)
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        self.calculate_height(self.expanded)
+    }
+
+    fn desired_height_verbose(&self, _width: u16, verbose: bool) -> u16 {
+        self.calculate_height(verbose || self.expanded)
+    }
+}
+
+impl SubAgentCell {
+    /// Internal rendering with explicit expanded flag.
+    fn render_with_expanded(&self, width: u16, show_expanded: bool) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // Status bullet
@@ -1697,7 +1718,7 @@ impl HistoryCell for SubAgentCell {
         ]));
 
         // If expanded, show forwarded events
-        if self.expanded && !self.forwarded_events.is_empty() {
+        if show_expanded && !self.forwarded_events.is_empty() {
             for (i, event) in self.forwarded_events.iter().enumerate() {
                 let prefix = if i == self.forwarded_events.len() - 1 {
                     "    └ "
@@ -1719,7 +1740,7 @@ impl HistoryCell for SubAgentCell {
                     title_text.dim(),
                 ]));
             }
-        } else if self.expanded {
+        } else if show_expanded {
             lines.push(Line::from(vec![
                 "    └ ".dim(),
                 "(no tool calls)".dim().italic(),
@@ -1727,8 +1748,8 @@ impl HistoryCell for SubAgentCell {
         }
 
         // Show expand/collapse hint
-        if !self.forwarded_events.is_empty() || self.expanded {
-            let hint = if self.expanded {
+        if !self.forwarded_events.is_empty() || show_expanded {
+            let hint = if show_expanded {
                 "(ctrl+o to collapse)"
             } else {
                 "(ctrl+o to expand)"
@@ -1739,10 +1760,11 @@ impl HistoryCell for SubAgentCell {
         lines
     }
 
-    fn desired_height(&self, _width: u16) -> u16 {
+    /// Calculate height with explicit expanded flag.
+    fn calculate_height(&self, show_expanded: bool) -> u16 {
         let base = 2; // Header + description
-        let hint = if !self.forwarded_events.is_empty() || self.expanded { 1 } else { 0 };
-        if self.expanded {
+        let hint = if !self.forwarded_events.is_empty() || show_expanded { 1 } else { 0 };
+        if show_expanded {
             let events = if self.forwarded_events.is_empty() { 1 } else { self.forwarded_events.len() };
             base + events as u16 + hint
         } else {
