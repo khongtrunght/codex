@@ -556,12 +556,12 @@ impl Session {
             features: &per_turn_config.features,
         });
 
-        // Only add agent descriptions (and thus the task tool) for main sessions,
+        // Only add agent configs (and thus the task tool) for main sessions,
         // not for sub-agents.
         let tools_config = if per_turn_config.subagent_tool_filter.is_none() {
-            let agent_descriptions = crate::agent_types::AgentTypeRegistry::with_defaults()
-                .generate_agent_descriptions();
-            tools_config.with_agent_descriptions(agent_descriptions)
+            let agent_configs = crate::agent_types::AgentTypeRegistry::with_defaults()
+                .agent_configs();
+            tools_config.with_agent_configs(agent_configs)
         } else {
             tools_config
         };

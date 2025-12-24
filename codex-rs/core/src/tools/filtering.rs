@@ -3,7 +3,6 @@
 //! Implements blocking sets and agent-specific tool restrictions to prevent
 //! infinite sub-agent nesting and enforce read-only agents.
 
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// Tools blocked from ALL sub-agents (prevents infinite nesting).
@@ -16,23 +15,22 @@ pub static BLOCKED_FROM_SUBAGENTS: &[&str] = &[
 /// Configuration for filtering tools in sub-agent sessions.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SubAgentToolFilter {
-    /// Agent-specific tool enable/disable map.
-    /// If a tool is mapped to `false`, it will be blocked.
-    /// If a tool is mapped to `true`, it will be explicitly allowed.
-    /// Tools not in this map follow default behavior.
-    pub agent_tools: Option<HashMap<String, bool>>,
+    /// List of allowed tools for this agent.
+    /// If None, all tools are allowed (except blocked ones).
+    /// If Some, only listed tools are allowed.
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 impl SubAgentToolFilter {
     /// Create a new filter with default settings (no agent-specific restrictions).
     pub fn new() -> Self {
-        Self { agent_tools: None }
+        Self { allowed_tools: None }
     }
 
-    /// Create a new filter with agent-specific tool restrictions.
-    pub fn with_agent_tools(tools: HashMap<String, bool>) -> Self {
+    /// Create a new filter with a list of allowed tools.
+    pub fn with_allowed_tools(tools: Vec<String>) -> Self {
         Self {
-            agent_tools: Some(tools),
+            allowed_tools: Some(tools),
         }
     }
 
@@ -40,7 +38,7 @@ impl SubAgentToolFilter {
     ///
     /// Returns `false` if:
     /// 1. The tool is in BLOCKED_FROM_SUBAGENTS (always blocked)
-    /// 2. The tool is explicitly disabled in agent_tools
+    /// 2. allowed_tools is Some and the tool is not in the list
     ///
     /// Returns `true` otherwise.
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
@@ -49,14 +47,12 @@ impl SubAgentToolFilter {
             return false;
         }
 
-        // 2. Apply agent-specific tool config if present
-        if let Some(config) = &self.agent_tools
-            && let Some(&enabled) = config.get(tool_name)
-        {
-            return enabled;
+        // 2. If allowed_tools is set, only allow tools in that list
+        if let Some(allowed) = &self.allowed_tools {
+            return allowed.iter().any(|t| t == tool_name);
         }
-        // If config exists but tool not listed, allow by default
 
+        // No restrictions - allow by default
         true
     }
 
@@ -111,36 +107,36 @@ mod tests {
     }
 
     #[test]
-    fn test_applies_agent_config_disable() {
-        let mut config = HashMap::new();
-        config.insert("shell".to_string(), false);
-        config.insert("read_file".to_string(), true);
+    fn test_allowed_tools_restricts() {
+        let filter = SubAgentToolFilter::with_allowed_tools(vec![
+            "read_file".to_string(),
+            "glob".to_string(),
+        ]);
 
-        let filter = SubAgentToolFilter::with_agent_tools(config);
-
-        assert!(!filter.is_tool_allowed("shell")); // Explicitly disabled
-        assert!(filter.is_tool_allowed("read_file")); // Explicitly enabled
-        assert!(filter.is_tool_allowed("apply_patch")); // Not in config, allowed
+        assert!(filter.is_tool_allowed("read_file")); // In allowed list
+        assert!(filter.is_tool_allowed("glob")); // In allowed list
+        assert!(!filter.is_tool_allowed("shell")); // Not in allowed list
+        assert!(!filter.is_tool_allowed("apply_patch")); // Not in allowed list
     }
 
     #[test]
-    fn test_agent_config_cannot_override_blocked() {
-        let mut config = HashMap::new();
-        config.insert("task".to_string(), true); // Try to enable blocked tool
+    fn test_allowed_tools_cannot_override_blocked() {
+        let filter = SubAgentToolFilter::with_allowed_tools(vec![
+            "task".to_string(), // Try to allow blocked tool
+            "read_file".to_string(),
+        ]);
 
-        let filter = SubAgentToolFilter::with_agent_tools(config);
-
-        // Task is still blocked despite being enabled in agent config
+        // Task is still blocked despite being in allowed list
         assert!(!filter.is_tool_allowed("task"));
+        assert!(filter.is_tool_allowed("read_file"));
     }
 
     #[test]
-    fn test_filter_tools_with_agent_config() {
-        let mut config = HashMap::new();
-        config.insert("shell".to_string(), false);
-        config.insert("apply_patch".to_string(), false);
-
-        let filter = SubAgentToolFilter::with_agent_tools(config);
+    fn test_filter_tools_with_allowed_list() {
+        let filter = SubAgentToolFilter::with_allowed_tools(vec![
+            "read_file".to_string(),
+            "grep_files".to_string(),
+        ]);
         let tools = vec![
             "shell".to_string(),
             "read_file".to_string(),
@@ -149,10 +145,10 @@ mod tests {
         ];
 
         let filtered = filter.filter_tools(&tools);
-        assert!(!filtered.contains(&"shell".to_string())); // Disabled
-        assert!(!filtered.contains(&"apply_patch".to_string())); // Disabled
-        assert!(filtered.contains(&"read_file".to_string())); // Not in config
-        assert!(filtered.contains(&"grep_files".to_string())); // Not in config
+        assert!(!filtered.contains(&"shell".to_string())); // Not allowed
+        assert!(!filtered.contains(&"apply_patch".to_string())); // Not allowed
+        assert!(filtered.contains(&"read_file".to_string())); // Allowed
+        assert!(filtered.contains(&"grep_files".to_string())); // Allowed
     }
 
     #[test]

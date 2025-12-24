@@ -238,7 +238,7 @@ mod tests {
             "custom".to_string(),
             AgentTypeConfig {
                 name: "custom".to_string(),
-                description: Some("Custom agent".to_string()),
+                description: "Custom agent".to_string(),
                 ..Default::default()
             },
         );
@@ -248,7 +248,7 @@ mod tests {
         assert!(registry.get("custom").is_some());
         assert_eq!(
             registry.get("custom").unwrap().description,
-            Some("Custom agent".to_string())
+            "Custom agent"
         );
     }
 
@@ -260,7 +260,7 @@ mod tests {
             "explore".to_string(),
             AgentTypeConfig {
                 name: "explore".to_string(),
-                description: Some("Overridden description".to_string()),
+                description: "Overridden description".to_string(),
                 max_steps: Some(100),
                 ..Default::default()
             },
@@ -269,10 +269,7 @@ mod tests {
         registry.merge_from_config(user_agents);
 
         let explore = registry.get("explore").unwrap();
-        assert_eq!(
-            explore.description,
-            Some("Overridden description".to_string())
-        );
+        assert_eq!(explore.description, "Overridden description");
         assert_eq!(explore.max_steps, Some(100));
     }
 
@@ -308,7 +305,7 @@ mod tests {
             "agent_a".to_string(),
             AgentTypeConfig {
                 name: "agent_a".to_string(),
-                description: Some("Description A".to_string()),
+                description: "Description A".to_string(),
                 hidden: false,
                 ..Default::default()
             },
@@ -317,7 +314,7 @@ mod tests {
             "agent_b".to_string(),
             AgentTypeConfig {
                 name: "agent_b".to_string(),
-                description: Some("Description B".to_string()),
+                description: "Description B".to_string(),
                 hidden: false,
                 ..Default::default()
             },
@@ -339,7 +336,7 @@ mod tests {
             "my_agent".to_string(),
             AgentTypeConfig {
                 name: String::new(), // Empty name
-                description: Some("Test".to_string()),
+                description: "Test".to_string(),
                 ..Default::default()
             },
         );

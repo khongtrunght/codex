@@ -34,6 +34,7 @@ fn resume_history(
         conversation_id: ConversationId::default(),
         history: vec![RolloutItem::TurnContext(turn_ctx)],
         rollout_path: rollout_path.to_path_buf(),
+        subagent_histories: std::collections::HashMap::new(),
     })
 }
 
