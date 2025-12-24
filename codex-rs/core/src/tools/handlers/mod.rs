@@ -1,7 +1,10 @@
 pub mod apply_patch;
+mod bash;
+mod bash_output;
 mod edit_file;
 mod glob;
 mod grep_files;
+mod kill_shell;
 mod list_dir;
 mod mcp;
 mod mcp_resource;
@@ -17,7 +20,10 @@ mod write_file;
 pub use plan::PLAN_TOOL;
 
 pub use apply_patch::ApplyPatchHandler;
+pub use bash::BashHandler;
+pub use bash_output::BashOutputHandler;
 pub use edit_file::EditFileHandler;
+pub use kill_shell::KillShellHandler;
 pub use glob::GlobHandler;
 pub use grep_files::GrepFilesHandler;
 pub use list_dir::ListDirHandler;

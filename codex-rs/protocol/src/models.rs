@@ -374,6 +374,30 @@ pub struct ShellCommandToolCallParams {
     pub justification: Option<String>,
 }
 
+/// If the `name` of a `ResponseItem::FunctionCall` is `bash`, the
+/// `arguments` field should deserialize to this struct.
+#[derive(Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+pub struct BashToolCallParams {
+    /// The bash command to execute
+    pub command: String,
+
+    /// Optional timeout in milliseconds (max 600000ms / 10 minutes)
+    #[serde(alias = "timeout")]
+    pub timeout_ms: Option<u64>,
+
+    /// Clear, concise description of what this command does (5-10 words)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Run the command in the background, returning a task ID immediately
+    #[serde(default)]
+    pub run_in_background: bool,
+
+    /// Bypass sandbox mode (dangerous)
+    #[serde(default, alias = "dangerouslyDisableSandbox")]
+    pub dangerously_disable_sandbox: bool,
+}
+
 /// Responses API compatible content items that can be returned by a tool call.
 /// This is a subset of ContentItem with the types we support as function call outputs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]

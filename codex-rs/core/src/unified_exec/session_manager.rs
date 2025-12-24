@@ -31,7 +31,10 @@ use super::CommandTranscript;
 use super::ExecCommandRequest;
 use super::MAX_UNIFIED_EXEC_SESSIONS;
 use super::SessionEntry;
+use super::SessionOutputSnapshot;
+use super::SessionStatusInfo;
 use super::SessionStore;
+use super::SessionTerminateResult;
 use super::UnifiedExecContext;
 use super::UnifiedExecError;
 use super::UnifiedExecResponse;
@@ -643,6 +646,65 @@ impl UnifiedExecSessionManager {
             entry.session.terminate();
         }
     }
+
+    /// Get output from a session by ID (read-and-drain pattern).
+    /// Returns accumulated output since last drain.
+    pub async fn get_session_output(
+        &self,
+        process_id: &str,
+    ) -> Result<SessionOutputSnapshot, UnifiedExecError> {
+        let store = self.session_store.lock().await;
+        let entry = store
+            .sessions
+            .get(process_id)
+            .ok_or(UnifiedExecError::UnknownSessionId {
+                process_id: process_id.to_string(),
+            })?;
+
+        let OutputHandles {
+            output_buffer,
+            ..
+        } = entry.session.output_handles();
+
+        // Drain current buffer contents
+        let chunks = output_buffer.lock().await.drain();
+        let output_bytes: Vec<u8> = chunks.into_iter().flatten().collect();
+        let output = String::from_utf8_lossy(&output_bytes).to_string();
+
+        Ok(SessionOutputSnapshot {
+            process_id: process_id.to_string(),
+            command: entry.command.clone(),
+            status: if entry.session.has_exited() {
+                SessionStatusInfo::Exited
+            } else {
+                SessionStatusInfo::Running
+            },
+            exit_code: entry.session.exit_code(),
+            output,
+            output_bytes,
+        })
+    }
+
+    /// Terminate a specific session by ID.
+    pub async fn terminate_session(
+        &self,
+        process_id: &str,
+    ) -> Result<SessionTerminateResult, UnifiedExecError> {
+        let mut store = self.session_store.lock().await;
+        let entry = store.remove(process_id).ok_or(UnifiedExecError::UnknownSessionId {
+            process_id: process_id.to_string(),
+        })?;
+
+        let command = entry.command.clone();
+        let was_running = !entry.session.has_exited();
+        entry.session.terminate();
+
+        Ok(SessionTerminateResult {
+            process_id: process_id.to_string(),
+            command,
+            was_running,
+        })
+    }
 }
 
 enum SessionStatus {
@@ -759,5 +821,25 @@ mod tests {
 
         // (10) is exited but among the last 8; we should drop the LRU outside that set.
         assert_eq!(candidate, Some(id(1)));
+    }
+
+    #[tokio::test]
+    async fn test_get_session_output_unknown_session() {
+        let manager = UnifiedExecSessionManager::default();
+        let result = manager.get_session_output("unknown_id").await;
+        assert!(matches!(
+            result,
+            Err(super::super::UnifiedExecError::UnknownSessionId { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_terminate_session_unknown() {
+        let manager = UnifiedExecSessionManager::default();
+        let result = manager.terminate_session("unknown_id").await;
+        assert!(matches!(
+            result,
+            Err(super::super::UnifiedExecError::UnknownSessionId { .. })
+        ));
     }
 }

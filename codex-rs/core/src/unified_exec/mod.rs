@@ -170,6 +170,32 @@ pub(crate) fn generate_chunk_id() -> String {
         .collect()
 }
 
+/// Status of a shell session
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionStatusInfo {
+    Running,
+    Exited,
+}
+
+/// Snapshot of session output state
+#[derive(Debug, Clone)]
+pub struct SessionOutputSnapshot {
+    pub process_id: String,
+    pub command: Vec<String>,
+    pub status: SessionStatusInfo,
+    pub exit_code: Option<i32>,
+    pub output: String,
+    pub output_bytes: Vec<u8>,
+}
+
+/// Result of terminating a session
+#[derive(Debug, Clone)]
+pub struct SessionTerminateResult {
+    pub process_id: String,
+    pub command: Vec<String>,
+    pub was_running: bool,
+}
+
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {

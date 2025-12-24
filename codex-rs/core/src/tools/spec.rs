@@ -38,6 +38,8 @@ pub const LIST_MCP_RESOURCES_TOOL_NAME: &str = "list_mcp_resources";
 pub const LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME: &str = "list_mcp_resource_templates";
 pub const READ_MCP_RESOURCE_TOOL_NAME: &str = "read_mcp_resource";
 pub const UPDATE_PLAN_TOOL_NAME: &str = "update_plan";
+pub const BASH_OUTPUT_TOOL_NAME: &str = "bash_output";
+pub const KILL_SHELL_TOOL_NAME: &str = "kill_shell";
 
 pub trait ApplyToolConfig {
     fn apply_tool_config(
@@ -1275,6 +1277,58 @@ fn create_bash_tool(edit_tool_type: &Option<EditToolType>) -> ToolSpec {
     })
 }
 
+fn create_bash_output_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "bash_id".to_string(),
+        JsonSchema::String {
+            description: Some("The ID of the background shell to retrieve output from".to_string()),
+        },
+    );
+    properties.insert(
+        "filter".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional regex to filter output lines. Only matching lines are returned."
+                    .to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: BASH_OUTPUT_TOOL_NAME.to_string(),
+        description: "Retrieves output from a running or completed background bash shell."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["bash_id".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_kill_shell_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "shell_id".to_string(),
+        JsonSchema::String {
+            description: Some("The ID of the background shell to kill".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: KILL_SHELL_TOOL_NAME.to_string(),
+        description: "Kills a running background bash shell by its ID.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["shell_id".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 /// TODO(dylan): deprecate once we get rid of json tool
 #[derive(Serialize, Deserialize)]
 pub(crate) struct ApplyPatchToolArgs {
@@ -1485,9 +1539,12 @@ pub(crate) fn build_specs(
     mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::BashHandler;
+    use crate::tools::handlers::BashOutputHandler;
     use crate::tools::handlers::EditFileHandler;
     use crate::tools::handlers::GlobHandler;
     use crate::tools::handlers::GrepFilesHandler;
+    use crate::tools::handlers::KillShellHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
@@ -1534,6 +1591,18 @@ pub(crate) fn build_specs(
         }
         ConfigShellToolType::Bash => {
             builder.push_spec(create_bash_tool(&config.edit_tool_type));
+            let bash_handler = Arc::new(BashHandler);
+            builder.register_handler(BASH_TOOL_NAME, bash_handler);
+
+            // Register BashOutput and KillShell tools for background shell management
+            let bash_output_handler = Arc::new(BashOutputHandler);
+            let kill_shell_handler = Arc::new(KillShellHandler);
+
+            builder.push_spec_with_parallel_support(create_bash_output_tool(), true);
+            builder.register_handler(BASH_OUTPUT_TOOL_NAME, bash_output_handler);
+
+            builder.push_spec(create_kill_shell_tool());
+            builder.register_handler(KILL_SHELL_TOOL_NAME, kill_shell_handler);
         }
     }
 
