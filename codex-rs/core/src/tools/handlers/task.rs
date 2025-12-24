@@ -10,19 +10,27 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 use crate::agent_types::AgentTypeConfig;
-use crate::codex::{Session, TurnContext};
+use crate::codex::Session;
+use crate::codex::TurnContext;
 use crate::codex_delegate::run_codex_conversation_one_shot;
 use crate::config::Config;
 use crate::function_tool::FunctionCallError;
-use crate::subagent_prompt::{augment_system_prompt, DEFAULT_SUBAGENT_PROMPT};
-use crate::protocol::{
-    EventMsg, SubAgentBeginEvent, SubAgentEndEvent, SubAgentTokenUsage, SubAgentToolSummary,
-};
-use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::protocol::EventMsg;
+use crate::protocol::SubAgentBeginEvent;
+use crate::protocol::SubAgentEndEvent;
+use crate::protocol::SubAgentTokenUsage;
+use crate::protocol::SubAgentToolSummary;
+use crate::subagent_prompt::DEFAULT_SUBAGENT_PROMPT;
+use crate::subagent_prompt::augment_system_prompt;
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 use codex_protocol::user_input::UserInput;
 
 /// Handler for the `task` tool that spawns sub-agents.
@@ -79,13 +87,11 @@ impl ToolHandler for TaskHandler {
             .get(&params.subagent_type)
             .cloned()
             .ok_or_else(|| {
-                let available = session
-                    .services
-                    .agent_type_registry
-                    .generate_agent_descriptions();
+                let available = session.services.agent_type_registry.agent_configs();
+                let available_text = crate::tools::spec::render_agent_descriptions(&available);
                 FunctionCallError::RespondToModel(format!(
                     "Unknown agent type: '{}'. Available types:\n{}",
-                    params.subagent_type, available
+                    params.subagent_type, available_text
                 ))
             })?;
 
@@ -112,7 +118,7 @@ impl ToolHandler for TaskHandler {
                 match rec
                     .create_subagent_file(
                         &task_session_id,
-                        session.source_session_id().map(|s| s.as_str()),
+                        session.source_session_id().map(std::string::String::as_str),
                         &params.subagent_type,
                         &params.description,
                     )
@@ -211,14 +217,14 @@ impl ToolHandler for TaskHandler {
         // Close subagent rollout file
         {
             let recorder = session.services.rollout.lock().await;
-            if let Some(rec) = recorder.as_ref() {
-                if let Err(e) = rec.close_subagent_file(&task_session_id).await {
-                    warn!(
-                        session_id = %task_session_id,
-                        error = %e,
-                        "Failed to close subagent rollout file"
-                    );
-                }
+            if let Some(rec) = recorder.as_ref()
+                && let Err(e) = rec.close_subagent_file(&task_session_id).await
+            {
+                warn!(
+                    session_id = %task_session_id,
+                    error = %e,
+                    "Failed to close subagent rollout file"
+                );
             }
         }
 
@@ -312,7 +318,7 @@ async fn run_task_subagent(
     config: Config,
     prompt: String,
     cancel_token: CancellationToken,
-    call_id: String,
+    _call_id: String,
     session_id: String,
     tool_summary: Arc<Mutex<Vec<SubAgentToolSummary>>>,
     token_usage: Arc<Mutex<SubAgentTokenUsage>>,

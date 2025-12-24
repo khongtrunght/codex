@@ -1,3 +1,4 @@
+use crate::agent_types::AgentTypeConfig;
 use crate::client_common::tools::ResponsesApiTool;
 use crate::client_common::tools::ToolSpec;
 use crate::features::Feature;
@@ -9,12 +10,105 @@ use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
 use crate::tools::registry::ToolRegistryBuilder;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::EditToolType;
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+
+// Tool name constants to avoid string repetition
+pub const TASK_TOOL_NAME: &str = "task";
+pub const READ_FILE_TOOL_NAME: &str = "read_file";
+pub const GLOB_TOOL_NAME: &str = "glob";
+pub const BASH_TOOL_NAME: &str = "bash";
+pub const GREP_FILES_TOOL_NAME: &str = "grep_files";
+pub const WRITE_FILE_TOOL_NAME: &str = "write_file";
+pub const EDIT_FILE_TOOL_NAME: &str = "edit_file";
+pub const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
+pub const SHELL_TOOL_NAME: &str = "shell";
+pub const SHELL_COMMAND_TOOL_NAME: &str = "shell_command";
+pub const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
+pub const WRITE_STDIN_TOOL_NAME: &str = "write_stdin";
+pub const VIEW_IMAGE_TOOL_NAME: &str = "view_image";
+pub const LIST_DIR_TOOL_NAME: &str = "list_dir";
+pub const TEST_SYNC_TOOL_NAME: &str = "test_sync_tool";
+pub const LIST_MCP_RESOURCES_TOOL_NAME: &str = "list_mcp_resources";
+pub const LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME: &str = "list_mcp_resource_templates";
+pub const READ_MCP_RESOURCE_TOOL_NAME: &str = "read_mcp_resource";
+pub const UPDATE_PLAN_TOOL_NAME: &str = "update_plan";
+
+pub trait ApplyToolConfig {
+    fn apply_tool_config(
+        &self,
+        edit_tool: Option<EditToolType>,
+        shell_tool: ConfigShellToolType,
+    ) -> String;
+}
+
+impl ApplyToolConfig for &str {
+    fn apply_tool_config(
+        &self,
+        edit_tool: Option<EditToolType>,
+        shell_tool: ConfigShellToolType,
+    ) -> String {
+        let edit_tool_str = match edit_tool {
+            Some(EditToolType::ApplyPatchFreeform) => APPLY_PATCH_TOOL_NAME,
+            Some(EditToolType::ApplyPatchFunction) => APPLY_PATCH_TOOL_NAME,
+            Some(EditToolType::FileEdit) => EDIT_FILE_TOOL_NAME,
+            None => "<no edit tool>",
+        };
+
+        let write_tool_str = match edit_tool {
+            Some(EditToolType::ApplyPatchFreeform) => APPLY_PATCH_TOOL_NAME,
+            Some(EditToolType::ApplyPatchFunction) => APPLY_PATCH_TOOL_NAME,
+            Some(EditToolType::FileEdit) => WRITE_FILE_TOOL_NAME,
+            _ => "<no write tool>",
+        };
+
+        let shell_tool_str = match shell_tool {
+            ConfigShellToolType::Disabled => "<no shell tool>".to_string(),
+            ConfigShellToolType::UnifiedExec => EXEC_COMMAND_TOOL_NAME.to_string(),
+            ConfigShellToolType::ShellCommand => SHELL_COMMAND_TOOL_NAME.to_string(),
+            ConfigShellToolType::Bash => BASH_TOOL_NAME.to_string(),
+            ConfigShellToolType::Local => SHELL_TOOL_NAME.to_string(),
+            ConfigShellToolType::Default => SHELL_TOOL_NAME.to_string(),
+        };
+
+        self.replace("{edit_tool}", edit_tool_str)
+            .replace("{write_tool}", write_tool_str)
+            .replace("{shell_tool}", &shell_tool_str)
+            .replace("{glob_tool}", GLOB_TOOL_NAME)
+            .replace("{grep_tool}", GREP_FILES_TOOL_NAME)
+            .replace("{read_tool}", READ_FILE_TOOL_NAME)
+    }
+}
+
+/// Renders agent descriptions into a formatted string for the task tool.
+pub fn render_agent_descriptions(agents: &[AgentTypeConfig]) -> String {
+    agents
+        .iter()
+        .map(|agent| {
+            let properties = if agent.fork_context {
+                "Properties: access to current context; "
+            } else {
+                ""
+            };
+
+            let tools = match &agent.tools {
+                Some(tools) => tools.join(", "),
+                None => "All tools".to_string(),
+            };
+
+            let name = &agent.name;
+            let description = &agent.description;
+
+            format!("- {name}: {description} ({properties}Tools: {tools})")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolsConfig {
@@ -25,7 +119,7 @@ pub(crate) struct ToolsConfig {
     pub experimental_supported_tools: Vec<String>,
     /// Descriptions of available agent types for the Task tool.
     /// If None, the task tool will not be registered.
-    pub agent_descriptions: Option<String>,
+    pub agent_configs: Option<Vec<AgentTypeConfig>>,
     /// Tool filter for sub-agent sessions.
     /// When set, applies agent-specific tool restrictions.
     pub subagent_filter: Option<crate::tools::filtering::SubAgentToolFilter>,
@@ -64,14 +158,14 @@ impl ToolsConfig {
             web_search_request: include_web_search_request,
             include_view_image_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
-            agent_descriptions: None,
+            agent_configs: None,
             subagent_filter: None,
         }
     }
 
     /// Set the agent descriptions for the Task tool.
-    pub fn with_agent_descriptions(mut self, descriptions: String) -> Self {
-        self.agent_descriptions = Some(descriptions);
+    pub fn with_agent_configs(mut self, configs: Vec<AgentTypeConfig>) -> Self {
+        self.agent_configs = Some(configs);
         self
     }
 
@@ -208,7 +302,7 @@ fn create_exec_command_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "exec_command".to_string(),
+        name: EXEC_COMMAND_TOOL_NAME.to_string(),
         description:
             "Runs a command in a PTY, returning output or a session ID for ongoing interaction."
                 .to_string(),
@@ -253,7 +347,7 @@ fn create_write_stdin_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "write_stdin".to_string(),
+        name: WRITE_STDIN_TOOL_NAME.to_string(),
         description:
             "Writes characters to an existing unified exec session and returns recent output."
                 .to_string(),
@@ -319,7 +413,7 @@ Examples of valid command strings:
     }.to_string();
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "shell".to_string(),
+        name: SHELL_TOOL_NAME.to_string(),
         description,
         strict: false,
         parameters: JsonSchema::Object {
@@ -391,7 +485,7 @@ Examples of valid command strings:
     }.to_string();
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "shell_command".to_string(),
+        name: SHELL_COMMAND_TOOL_NAME.to_string(),
         description,
         strict: false,
         parameters: JsonSchema::Object {
@@ -413,7 +507,7 @@ fn create_view_image_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "view_image".to_string(),
+        name: VIEW_IMAGE_TOOL_NAME.to_string(),
         description:
             "Attach a local image (by filesystem path) to the conversation context for this turn."
                 .to_string(),
@@ -477,7 +571,7 @@ fn create_test_sync_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "test_sync_tool".to_string(),
+        name: TEST_SYNC_TOOL_NAME.to_string(),
         description: "Internal synchronization helper used by Codex integration tests.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
@@ -525,7 +619,7 @@ fn create_grep_files_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "grep_files".to_string(),
+        name: GREP_FILES_TOOL_NAME.to_string(),
         description: "Finds files whose contents match the pattern and lists them by modification \
                       time."
             .to_string(),
@@ -559,7 +653,7 @@ fn create_glob_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "glob".to_string(),
+        name: GLOB_TOOL_NAME.to_string(),
         description: "Finds files matching a glob pattern and lists them by modification time."
             .to_string(),
         strict: false,
@@ -587,7 +681,7 @@ fn create_write_file_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "write_file".to_string(),
+        name: WRITE_FILE_TOOL_NAME.to_string(),
         description:
             "Writes content to a file. For existing files, you must read the file first using read_file."
                 .to_string(),
@@ -625,14 +719,12 @@ fn create_edit_file_tool() -> ToolSpec {
     properties.insert(
         "replace_all".to_string(),
         JsonSchema::Boolean {
-            description: Some(
-                "Replace all occurrences of old_string (default false).".to_string(),
-            ),
+            description: Some("Replace all occurrences of old_string (default false).".to_string()),
         },
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "edit_file".to_string(),
+        name: EDIT_FILE_TOOL_NAME.to_string(),
         description:
             "Performs exact string replacement in a file. You must read the file first using read_file. \
              Uses fallback matching strategies: exact match, then normalized whitespace, then line-trimmed."
@@ -735,7 +827,7 @@ fn create_read_file_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "read_file".to_string(),
+        name: READ_FILE_TOOL_NAME.to_string(),
         description:
             "Reads a local file with 1-indexed line numbers, supporting slice and indentation-aware block modes."
                 .to_string(),
@@ -780,7 +872,7 @@ fn create_list_dir_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "list_dir".to_string(),
+        name: LIST_DIR_TOOL_NAME.to_string(),
         description:
             "Lists entries in a local directory with 1-indexed entry numbers and simple type labels."
                 .to_string(),
@@ -815,7 +907,7 @@ fn create_list_mcp_resources_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "list_mcp_resources".to_string(),
+        name: LIST_MCP_RESOURCES_TOOL_NAME.to_string(),
         description: "Lists resources provided by MCP servers. Resources allow servers to share data that provides context to language models, such as files, database schemas, or application-specific information. Prefer resources over web search when possible.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
@@ -848,7 +940,7 @@ fn create_list_mcp_resource_templates_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "list_mcp_resource_templates".to_string(),
+        name: LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME.to_string(),
         description: "Lists resource templates provided by MCP servers. Parameterized resource templates allow servers to share data that takes parameters and provides context to language models, such as files, database schemas, or application-specific information. Prefer resource templates over web search when possible.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
@@ -881,7 +973,7 @@ fn create_read_mcp_resource_tool() -> ToolSpec {
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "read_mcp_resource".to_string(),
+        name: READ_MCP_RESOURCE_TOOL_NAME.to_string(),
         description:
             "Read a specific resource from an MCP server given the server name and resource URI."
                 .to_string(),
@@ -898,20 +990,75 @@ fn create_read_mcp_resource_tool() -> ToolSpec {
 ///
 /// The Task tool allows the main agent to spawn specialized sub-agents that
 /// autonomously handle complex, multi-step tasks.
-fn create_task_tool(agent_descriptions: &str) -> ToolSpec {
+fn create_task_tool(
+    agent_configs: &[AgentTypeConfig],
+    edit_tool_type: &Option<EditToolType>,
+) -> ToolSpec {
+    let write_tool_name = get_write_tool_name(edit_tool_type);
+
+    let agent_descriptions_text = render_agent_descriptions(agent_configs);
+
     let description = format!(
         r#"Launch a new agent to handle complex, multi-step tasks autonomously.
 
-The Task tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
+The {TASK_TOOL_NAME} tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
 
-Available agent types:
-{agent_descriptions}
+Available agent types and the tools they have access to:
+{agent_descriptions_text}
 
-When using the Task tool:
-- Launch multiple agents concurrently when possible
-- Agents are stateless - provide all context in the prompt
-- Results are returned when the agent completes
-- Use resume parameter to resume a previous task session"#
+When using the {TASK_TOOL_NAME} tool, you must specify a subagent_type parameter to select which agent type to use.
+When NOT to use the {TASK_TOOL_NAME} tool:
+- If you want to read a specific file path, use the {READ_FILE_TOOL_NAME} or {GLOB_TOOL_NAME} tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use the {GLOB_TOOL_NAME} tool instead, to find the match more quickly
+- If you are searching for code within a specific file or set of 2-3 files, use the {READ_FILE_TOOL_NAME} tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
+- Other tasks that are not related to the agent descriptions above
+
+
+Usage notes:
+- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
+- When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
+- Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
+- Agents with "access to current context" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. The agent will receive all prior messages and understand the context.
+- The agent's outputs should generally be trusted
+- Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
+- If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
+- If the user specifies that they want you to run agents "in parallel", you MUST send a single message with multiple {TASK_TOOL_NAME} tool use content blocks. For example, if you need to launch both a code-reviewer agent and a test-runner agent in parallel, send a single message with both tool calls.
+
+Example usage:
+
+<example_agent_descriptions>
+"code-reviewer": use this agent after you are done writing a signficant piece of code
+"greeting-responder": use this agent when to respond to user greetings with a friendly joke
+</example_agent_description>
+
+<example>
+user: "Please write a function that checks if a number is prime"
+assistant: Sure let me write a function that checks if a number is prime
+assistant: First let me use the {write_tool_name} tool to write a function that checks if a number is prime
+assistant: I'm going to use the {write_tool_name} tool to write the following code:
+<code>
+function isPrime(n) {{
+  if (n <= 1) return false
+  for (let i = 2; i * i <= n; i++) {{
+    if (n % i === 0) return false
+  }}
+  return true
+}}
+</code>
+<commentary>
+Since a signficant piece of code was written and the task was completed, now use the code-reviewer agent to review the code
+</commentary>
+assistant: Now let me use the code-reviewer agent to review the code
+assistant: Uses the {TASK_TOOL_NAME} tool to launch the code-reviewer agent
+</example>
+
+<example>
+user: "Hello"
+<commentary>
+Since the user is greeting, use the greeting-responder agent to respond with a friendly joke
+</commentary>
+assistant: "I'm going to use the {TASK_TOOL_NAME} tool to launch the greeting-responder agent"
+</example>"#
     );
 
     let mut properties = BTreeMap::new();
@@ -954,7 +1101,7 @@ When using the Task tool:
     );
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "task".to_string(),
+        name: TASK_TOOL_NAME.to_string(),
         description,
         strict: false,
         parameters: JsonSchema::Object {
@@ -964,6 +1111,165 @@ When using the Task tool:
                 "prompt".to_string(),
                 "subagent_type".to_string(),
             ]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn env_usize(name: &str, default: usize, max: usize) -> usize {
+    match std::env::var(name).ok().and_then(|v| v.parse().ok()) {
+        Some(v) if v > 0 && v <= max => v,
+        Some(v) if v > max => max,
+        _ => default,
+    }
+}
+
+pub static BASH_MAX_OUTPUT_LENGTH: Lazy<usize> =
+    Lazy::new(|| env_usize("BASH_MAX_OUTPUT_LENGTH", 30_000, 150_000));
+
+pub static BASH_MAX_TIMEOUT_MS: Lazy<usize> =
+    Lazy::new(|| env_usize("BASH_MAX_TIMEOUT_MS", 600_000, 3_600_000));
+
+pub static BASH_DEFAULT_TIMEOUT_MS: Lazy<usize> =
+    Lazy::new(|| env_usize("BASH_DEFAULT_TIMEOUT_MS", 120_000, *BASH_MAX_TIMEOUT_MS));
+
+fn get_write_tool_name(edit_tool_type: &Option<EditToolType>) -> &'static str {
+    match edit_tool_type {
+        Some(t) => match t {
+            EditToolType::FileEdit => "write_file",
+            _ => "apply_patch",
+        },
+        None => "write_file",
+    }
+}
+
+fn get_edit_tool_name(edit_tool_type: &Option<EditToolType>) -> &'static str {
+    match edit_tool_type {
+        Some(t) => match t {
+            EditToolType::FileEdit => "edit_file",
+            _ => "apply_patch",
+        },
+        None => "edit_file",
+    }
+}
+
+fn render_bash_description(edit_tool_type: &Option<EditToolType>) -> String {
+    let bash_tool_name = BASH_TOOL_NAME;
+    let glob_tool_name = GLOB_TOOL_NAME;
+    let grep_tool_name = GREP_FILES_TOOL_NAME;
+    let read_tool_name = READ_FILE_TOOL_NAME;
+    let edit_tool_name = get_edit_tool_name(edit_tool_type);
+    let write_tool_name = get_write_tool_name(edit_tool_type);
+
+    format!(
+        r#"Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.
+
+IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
+
+Before executing the command, please follow these steps:
+
+1. Directory Verification:
+   - If the command will create new directories or files, first use \`ls\` to verify the parent directory exists and is the correct location
+   - For example, before running "mkdir foo/bar", first use \`ls foo\` to check that "foo" exists and is the intended parent directory
+
+2. Command Execution:
+    - Always quote file paths that contain spaces with double quotes (e.g., cd "path with spaces/file.txt")
+    - Examples of proper quoting:
+    - cd "/Users/name/My Documents" (correct)
+    - cd /Users/name/My Documents (incorrect - will fail)
+    - python "/path/with spaces/script.py" (correct)
+    - python /path/with spaces/script.py (incorrect - will fail)
+    - After ensuring proper quoting, execute the command.
+    - Capture the output of the command.
+
+Usage notes:
+    - The command argument is required.
+    - You can specify an optional timeout in milliseconds (up to {}ms / {} minutes). If not specified, commands will timeout after {}ms ({} minutes).
+    - It is very helpful if you write a clear, concise description of what this command does in 5-10 words.
+    - If the output exceeds {} characters, output will be truncated before being returned to you.
+    - You can use the \`run_in_background\` parameter to run the command in the background, which allows you to continue working while the command runs. You can monitor the output using the {} tool as it becomes available. You do not need to use '&' at the end of the command when using this parameter.
+    - Avoid using Bash with the \`find\`, \`grep\`, \`cat\`, \`head\`, \`tail\`, \`sed\`, \`awk\`, or \`echo\` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
+      - File search: Use {} (NOT find or ls)
+      - Content search: Use {} (NOT grep or rg)
+      - Read files: Use {} (NOT cat/head/tail)
+      - Edit files: Use {} (NOT sed/awk)
+      - Write files: Use {} (NOT echo >/cat <<EOF)
+      - Communication: Output text directly (NOT echo/printf)
+    - When issuing multiple commands:
+        - If the commands are independent and can run in parallel, make multiple {} tool calls in a single message. For example, if you need to run "git status" and "git diff", send a single message with two {} tool calls in parallel.
+        - If the commands depend on each other and must run sequentially, use a single {} call with '&&' to chain them together (e.g., \`git add . && git commit -m "message" && git push\`). For instance, if one operation must complete before another starts (like mkdir before cp, Write before Bash for git operations, or git add before git commit), run these operations sequentially instead.
+        - Use ';' only when you need to run commands sequentially but don't care if earlier commands fail
+        - DO NOT use newlines to separate commands (newlines are ok in quoted strings)
+    - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of \`cd\`. You may use \`cd\` if the User explicitly requests it.
+      <good-example>
+      pytest /foo/bar/tests
+      </good-example>
+      <bad-example>
+      cd /foo/bar && pytest tests
+      </bad-example>
+  "#,
+        *BASH_MAX_TIMEOUT_MS,
+        *BASH_MAX_TIMEOUT_MS / 60000,
+        *BASH_DEFAULT_TIMEOUT_MS,
+        *BASH_DEFAULT_TIMEOUT_MS / 60000,
+        *BASH_MAX_OUTPUT_LENGTH,
+        bash_tool_name,
+        glob_tool_name,
+        grep_tool_name,
+        read_tool_name,
+        edit_tool_name,
+        write_tool_name,
+        bash_tool_name,
+        bash_tool_name,
+        bash_tool_name,
+    )
+}
+
+fn create_bash_tool(edit_tool_type: &Option<EditToolType>) -> ToolSpec {
+    let description = render_bash_description(edit_tool_type);
+
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "command".to_string(),
+        JsonSchema::String {
+            description: Some("The command to execute".to_string()),
+        },
+    );
+    properties.insert(
+        "timeout_ms".to_string(),
+        JsonSchema::Number {
+            description: Some(format!(
+                "Optional timeout in milliseconds (max {}ms)",
+                *BASH_MAX_TIMEOUT_MS
+            )),
+        },
+    );
+    properties.insert(
+        "description".to_string(),
+        JsonSchema::String {
+            description: Some("Clear, concise description of what this command does in 5-10 words, in active voice. Examples:\nInput: ls\nOutput: List files in current directory\n\nInput: git status\nOutput: Show working tree status\n\nInput: npm install\nOutput: Install package dependencies\n\nInput: mkdir foo\nOutput: Create directory 'foo'".to_string()),
+        },
+    );
+    properties.insert(
+        "run_in_background".to_string(),
+        JsonSchema::Boolean {
+            description: Some("Set to true to run this command in the background. Use BashOutput to read the output later.".to_string()),
+        },
+    );
+    properties.insert(
+        "dangerously_disable_sandbox".to_string(),
+        JsonSchema::Boolean {
+            description: Some("Set this to true to dangerously override sandbox mode and run commands without sandboxing.".to_string()),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: BASH_TOOL_NAME.to_string(),
+        description,
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["command".to_string()]),
             additional_properties: Some(false.into()),
         },
     })
@@ -1217,8 +1523,8 @@ pub(crate) fn build_specs(
         ConfigShellToolType::UnifiedExec => {
             builder.push_spec(create_exec_command_tool());
             builder.push_spec(create_write_stdin_tool());
-            builder.register_handler("exec_command", unified_exec_handler.clone());
-            builder.register_handler("write_stdin", unified_exec_handler);
+            builder.register_handler(EXEC_COMMAND_TOOL_NAME, unified_exec_handler.clone());
+            builder.register_handler(WRITE_STDIN_TOOL_NAME, unified_exec_handler);
         }
         ConfigShellToolType::Disabled => {
             // Do nothing.
@@ -1226,92 +1532,98 @@ pub(crate) fn build_specs(
         ConfigShellToolType::ShellCommand => {
             builder.push_spec(create_shell_command_tool());
         }
+        ConfigShellToolType::Bash => {
+            builder.push_spec(create_bash_tool(&config.edit_tool_type));
+        }
     }
 
     if config.shell_type != ConfigShellToolType::Disabled {
         // Always register shell aliases so older prompts remain compatible.
-        builder.register_handler("shell", shell_handler.clone());
+        builder.register_handler(SHELL_TOOL_NAME, shell_handler.clone());
         builder.register_handler("container.exec", shell_handler.clone());
         builder.register_handler("local_shell", shell_handler);
-        builder.register_handler("shell_command", shell_command_handler);
+        builder.register_handler(SHELL_COMMAND_TOOL_NAME, shell_command_handler);
     }
 
     builder.push_spec_with_parallel_support(create_list_mcp_resources_tool(), true);
     builder.push_spec_with_parallel_support(create_list_mcp_resource_templates_tool(), true);
     builder.push_spec_with_parallel_support(create_read_mcp_resource_tool(), true);
-    builder.register_handler("list_mcp_resources", mcp_resource_handler.clone());
-    builder.register_handler("list_mcp_resource_templates", mcp_resource_handler.clone());
-    builder.register_handler("read_mcp_resource", mcp_resource_handler);
+    builder.register_handler(LIST_MCP_RESOURCES_TOOL_NAME, mcp_resource_handler.clone());
+    builder.register_handler(
+        LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME,
+        mcp_resource_handler.clone(),
+    );
+    builder.register_handler(READ_MCP_RESOURCE_TOOL_NAME, mcp_resource_handler);
 
     // Glob tool - available for all models
     {
         let glob_handler = Arc::new(GlobHandler);
         builder.push_spec_with_parallel_support(create_glob_tool(), true);
-        builder.register_handler("glob", glob_handler);
+        builder.register_handler(GLOB_TOOL_NAME, glob_handler);
     }
 
     builder.push_spec(PLAN_TOOL.clone());
-    builder.register_handler("update_plan", plan_handler);
+    builder.register_handler(UPDATE_PLAN_TOOL_NAME, plan_handler);
 
     // Edit tools based on edit_tool_type
     if let Some(edit_tool_type) = &config.edit_tool_type {
         match edit_tool_type {
             EditToolType::ApplyPatchFreeform => {
                 builder.push_spec(create_apply_patch_freeform_tool());
-                builder.register_handler("apply_patch", apply_patch_handler);
+                builder.register_handler(APPLY_PATCH_TOOL_NAME, apply_patch_handler);
             }
             EditToolType::ApplyPatchFunction => {
                 builder.push_spec(create_apply_patch_json_tool());
-                builder.register_handler("apply_patch", apply_patch_handler);
+                builder.register_handler(APPLY_PATCH_TOOL_NAME, apply_patch_handler);
             }
             EditToolType::FileEdit => {
                 // write_file and edit_file tools for non-OpenAI models
                 let write_file_handler = Arc::new(WriteFileHandler);
                 builder.push_spec_with_parallel_support(create_write_file_tool(), true);
-                builder.register_handler("write_file", write_file_handler);
+                builder.register_handler(WRITE_FILE_TOOL_NAME, write_file_handler);
 
                 let edit_file_handler = Arc::new(EditFileHandler);
                 builder.push_spec_with_parallel_support(create_edit_file_tool(), true);
-                builder.register_handler("edit_file", edit_file_handler);
+                builder.register_handler(EDIT_FILE_TOOL_NAME, edit_file_handler);
             }
         }
     }
 
     if config
         .experimental_supported_tools
-        .contains(&"grep_files".to_string())
+        .contains(&GREP_FILES_TOOL_NAME.to_string())
     {
         let grep_files_handler = Arc::new(GrepFilesHandler);
         builder.push_spec_with_parallel_support(create_grep_files_tool(), true);
-        builder.register_handler("grep_files", grep_files_handler);
+        builder.register_handler(GREP_FILES_TOOL_NAME, grep_files_handler);
     }
 
     if config
         .experimental_supported_tools
-        .contains(&"read_file".to_string())
+        .contains(&READ_FILE_TOOL_NAME.to_string())
     {
         let read_file_handler = Arc::new(ReadFileHandler);
         builder.push_spec_with_parallel_support(create_read_file_tool(), true);
-        builder.register_handler("read_file", read_file_handler);
+        builder.register_handler(READ_FILE_TOOL_NAME, read_file_handler);
     }
 
     if config
         .experimental_supported_tools
         .iter()
-        .any(|tool| tool == "list_dir")
+        .any(|tool| tool == LIST_DIR_TOOL_NAME)
     {
         let list_dir_handler = Arc::new(ListDirHandler);
         builder.push_spec_with_parallel_support(create_list_dir_tool(), true);
-        builder.register_handler("list_dir", list_dir_handler);
+        builder.register_handler(LIST_DIR_TOOL_NAME, list_dir_handler);
     }
 
     if config
         .experimental_supported_tools
-        .contains(&"test_sync_tool".to_string())
+        .contains(&TEST_SYNC_TOOL_NAME.to_string())
     {
         let test_sync_handler = Arc::new(TestSyncHandler);
         builder.push_spec_with_parallel_support(create_test_sync_tool(), true);
-        builder.register_handler("test_sync_tool", test_sync_handler);
+        builder.register_handler(TEST_SYNC_TOOL_NAME, test_sync_handler);
     }
 
     if config.web_search_request {
@@ -1320,14 +1632,17 @@ pub(crate) fn build_specs(
 
     if config.include_view_image_tool {
         builder.push_spec_with_parallel_support(create_view_image_tool(), true);
-        builder.register_handler("view_image", view_image_handler);
+        builder.register_handler(VIEW_IMAGE_TOOL_NAME, view_image_handler);
     }
 
     // Task tool for spawning sub-agents
-    if let Some(agent_descriptions) = &config.agent_descriptions {
+    if let Some(agent_configs) = &config.agent_configs {
         let task_handler = Arc::new(TaskHandler);
-        builder.push_spec_with_parallel_support(create_task_tool(agent_descriptions), true);
-        builder.register_handler("task", task_handler);
+        builder.push_spec_with_parallel_support(
+            create_task_tool(agent_configs, &config.edit_tool_type),
+            true,
+        );
+        builder.register_handler(TASK_TOOL_NAME, task_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {
@@ -1406,6 +1721,7 @@ mod tests {
             ConfigShellToolType::UnifiedExec => None,
             ConfigShellToolType::Disabled => None,
             ConfigShellToolType::ShellCommand => Some("shell_command"),
+            ConfigShellToolType::Bash => Some("bash"),
         }
     }
 
@@ -1728,7 +2044,7 @@ mod tests {
             "claude-3-5-sonnet",
             &Features::with_defaults(),
             &[
-                "shell",
+                "bash",
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",

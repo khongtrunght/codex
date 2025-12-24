@@ -116,6 +116,7 @@ pub enum ConfigShellToolType {
     UnifiedExec,
     Disabled,
     ShellCommand,
+    Bash,
 }
 
 /// Deprecated: Use EditToolType instead.

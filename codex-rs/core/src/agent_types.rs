@@ -4,7 +4,18 @@
 //! that can be spawned by the Task tool. Each agent type can have its own model,
 //! tools, system prompt, and other settings.
 
-use serde::{Deserialize, Serialize};
+use crate::tools::spec::ApplyToolConfig;
+use crate::tools::spec::EXEC_COMMAND_TOOL_NAME;
+use crate::tools::spec::GLOB_TOOL_NAME;
+use crate::tools::spec::GREP_FILES_TOOL_NAME;
+use crate::tools::spec::LIST_DIR_TOOL_NAME;
+use crate::tools::spec::READ_FILE_TOOL_NAME;
+use crate::tools::spec::SHELL_COMMAND_TOOL_NAME;
+use crate::tools::spec::SHELL_TOOL_NAME;
+use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::EditToolType;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 
 /// Configuration for a sub-agent type.
@@ -20,7 +31,7 @@ pub struct AgentTypeConfig {
 
     /// Description shown to the LLM for agent selection.
     /// This helps the model understand when to use this agent type.
-    pub description: Option<String>,
+    pub description: String,
 
     /// Model override in "provider:model" format (e.g., "anthropic:claude-sonnet-4-20250514").
     /// If None, inherits from parent session.
@@ -32,8 +43,8 @@ pub struct AgentTypeConfig {
 
     /// Tools configuration for this agent type.
     /// Maps tool names to enabled/disabled state.
-    /// If None, inherits parent's tools minus task/todowrite/todoread.
-    pub tools: Option<HashMap<String, bool>>,
+    /// If None, inherits parent's tools minus task.
+    pub tools: Option<Vec<String>>,
 
     /// Maximum steps (model turns) before forcing completion.
     pub max_steps: Option<u32>,
@@ -45,6 +56,11 @@ pub struct AgentTypeConfig {
     /// Hidden agents can still be used explicitly but won't appear in descriptions.
     #[serde(default)]
     pub hidden: bool,
+
+    /// Whether fork context or not.
+    /// If true, the agent will inherit the context from the parent agent.
+    #[serde(default)]
+    pub fork_context: bool,
 }
 
 /// Registry of all available agent types.
@@ -76,16 +92,17 @@ impl AgentTypeRegistry {
             "general".to_string(),
             AgentTypeConfig {
                 name: "general".to_string(),
-                description: Some(
+                description: 
                     r#"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."#
                         .to_string()
-                ),
+                ,
                 model: None,
                 system_prompt: None,
                 tools: None,
                 max_steps: Some(50),
                 temperature: None,
                 hidden: false,
+                fork_context: false,
             },
         );
 
@@ -94,32 +111,30 @@ impl AgentTypeRegistry {
             "explore".to_string(),
             AgentTypeConfig {
                 name: "explore".to_string(),
-                description: Some(
+                description: 
                     r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
-                ),
+                ,
                 model: None,
                 system_prompt: Some(
                     EXPLORE_AGENT_PROMPT_TEMPLATE
-                        .replace("{GlobToolName}", "glob")
-                        .replace("{ReadToolName}", "read_file")
-                        .replace("{GrepToolName}", "grep_files")
-                        .replace("{BashToolName}", "shell"),
+                    .apply_tool_config(
+                    Some(EditToolType::FileEdit),
+                    ConfigShellToolType::Bash
+                    ) // TODO: make tool config customizable in the args
                 ),
-                tools: Some(HashMap::from([
-                    ("read_file".to_string(), true),
-                    ("grep_files".to_string(), true),
-                    ("list_dir".to_string(), true),
-                    ("glob".to_string(), true),
-                    ("shell".to_string(), true),
-                    ("apply_patch".to_string(), false),
-                    ("edit_file".to_string(), false),
-                    ("write_file".to_string(), false),
-                    ("exec_command".to_string(), true),
-                    ("shell_command".to_string(), true),
-                ])),
+                tools: Some(vec![
+                    READ_FILE_TOOL_NAME.to_string(),
+                    GREP_FILES_TOOL_NAME.to_string(),
+                    LIST_DIR_TOOL_NAME.to_string(),
+                    GLOB_TOOL_NAME.to_string(),
+                    SHELL_TOOL_NAME.to_string(),
+                    EXEC_COMMAND_TOOL_NAME.to_string(),
+                    SHELL_COMMAND_TOOL_NAME.to_string(),
+                ]),
                 max_steps: Some(30),
                 temperature: None,
                 hidden: false,
+                fork_context: false,
             },
         );
 
@@ -128,32 +143,27 @@ impl AgentTypeRegistry {
             "plan".to_string(),
             AgentTypeConfig {
                 name: "plan".to_string(),
-                description: Some(
+                description: 
                     r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
-                ),
+                ,
                 model: None,
                 system_prompt: Some(
                     PLAN_SUB_AGENT_PROMPT_TEMPLATE
-                        .replace("{GlobToolName}", "glob")
-                        .replace("{ReadToolName}", "read_file")
-                        .replace("{GrepToolName}", "grep_files")
-                        .replace("{BashToolName}", "shell"),
+                    .apply_tool_config(
+                        Some(EditToolType::FileEdit),
+                        ConfigShellToolType::Bash
+                    )
                 ),
-                tools: Some(HashMap::from([
-                    ("read_file".to_string(), true),
-                    ("grep_files".to_string(), true),
-                    ("list_dir".to_string(), true),
-                    ("glob".to_string(), true),
-                    ("shell".to_string(), false),
-                    ("apply_patch".to_string(), false),
-                    ("edit_file".to_string(), false),
-                    ("write_file".to_string(), false),
-                    ("exec_command".to_string(), false),
-                    ("shell_command".to_string(), false),
-                ])),
+                tools: Some(vec![
+                    READ_FILE_TOOL_NAME.to_string(),
+                    GREP_FILES_TOOL_NAME.to_string(),
+                    LIST_DIR_TOOL_NAME.to_string(),
+                    GLOB_TOOL_NAME.to_string(),
+                ]),
                 max_steps: Some(40),
                 temperature: None,
                 hidden: false,
+                fork_context: false,
             },
         );
 
@@ -186,31 +196,20 @@ impl AgentTypeRegistry {
             .collect()
     }
 
-    /// Generate description string for the task tool schema.
+    /// Generate agent configs for the task tool schema.
     ///
-    /// This produces a formatted list of available agent types and their descriptions
+    /// This produces a list of available agent types and their descriptions
     /// that can be embedded in the tool's description for LLM consumption.
-    pub fn generate_agent_descriptions(&self) -> String {
-        let mut agents: Vec<_> = self.visible_agents();
-        // Sort alphabetically for consistent output
+    pub fn agent_configs(&self) -> Vec<AgentTypeConfig> {
+        let mut agents = self.visible_agents();
+
         agents.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         agents
-            .iter()
-            .map(|(key, config)| {
-                format!(
-                    "- {}: {}",
-                    key,
-                    config
-                        .description
-                        .as_deref()
-                        .unwrap_or("No description available")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+            .into_iter()
+            .map(|(_, config)| config.clone())
+            .collect()
     }
-
     /// Get all agent type names (including hidden ones).
     pub fn all_names(&self) -> Vec<&str> {
         self.agents.keys().map(String::as_str).collect()
@@ -324,9 +323,12 @@ mod tests {
             },
         );
 
-        let descriptions = registry.generate_agent_descriptions();
-        assert!(descriptions.contains("- agent_a: Description A"));
-        assert!(descriptions.contains("- agent_b: Description B"));
+        let descriptions = registry.agent_configs();
+        assert_eq!(descriptions.len(), 2);
+        assert_eq!(descriptions[0].name, "agent_a");
+        assert_eq!(descriptions[0].description, "Description A");
+        assert_eq!(descriptions[1].name, "agent_b");
+        assert_eq!(descriptions[1].description, "Description B");
     }
 
     #[test]

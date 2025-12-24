@@ -435,7 +435,7 @@ fn derive_default_model_family(model: &str) -> ModelFamily {
         experimental_supported_tools: Vec::new(),
         effective_context_window_percent: 95,
         support_verbosity: false,
-        shell_type: ConfigShellToolType::Default,
+        shell_type: ConfigShellToolType::Bash,
         default_verbosity: None,
         default_reasoning_effort: None,
         truncation_policy: TruncationPolicy::Bytes(10_000),
