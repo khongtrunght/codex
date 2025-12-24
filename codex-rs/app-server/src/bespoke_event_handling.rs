@@ -341,6 +341,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             let turn_error = TurnError {
                 message: ev.message,
                 codex_error_info: ev.codex_error_info.map(V2CodexErrorInfo::from),
+                additional_details: None,
             };
             handle_error(conversation_id, turn_error.clone(), &turn_summary_store).await;
             outgoing
@@ -358,6 +359,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             let turn_error = TurnError {
                 message: ev.message,
                 codex_error_info: ev.codex_error_info.map(V2CodexErrorInfo::from),
+                additional_details: ev.additional_details,
             };
             outgoing
                 .send_server_notification(ServerNotification::Error(ErrorNotification {
@@ -1341,6 +1343,7 @@ mod tests {
             TurnError {
                 message: "boom".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::InternalServerError),
+                additional_details: None,
             },
             &turn_summary_store,
         )
@@ -1352,6 +1355,7 @@ mod tests {
             Some(TurnError {
                 message: "boom".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::InternalServerError),
+                additional_details: None,
             })
         );
         Ok(())
@@ -1399,6 +1403,7 @@ mod tests {
             TurnError {
                 message: "oops".to_string(),
                 codex_error_info: None,
+                additional_details: None,
             },
             &turn_summary_store,
         )
@@ -1440,6 +1445,7 @@ mod tests {
             TurnError {
                 message: "bad".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::Other),
+                additional_details: None,
             },
             &turn_summary_store,
         )
@@ -1468,6 +1474,7 @@ mod tests {
                     Some(TurnError {
                         message: "bad".to_string(),
                         codex_error_info: Some(V2CodexErrorInfo::Other),
+                        additional_details: None,
                     })
                 );
             }
@@ -1692,6 +1699,7 @@ mod tests {
             TurnError {
                 message: "a1".to_string(),
                 codex_error_info: Some(V2CodexErrorInfo::BadRequest),
+                additional_details: None,
             },
             &turn_summary_store,
         )
@@ -1711,6 +1719,7 @@ mod tests {
             TurnError {
                 message: "b1".to_string(),
                 codex_error_info: None,
+                additional_details: None,
             },
             &turn_summary_store,
         )
@@ -1747,6 +1756,7 @@ mod tests {
                     Some(TurnError {
                         message: "a1".to_string(),
                         codex_error_info: Some(V2CodexErrorInfo::BadRequest),
+                        additional_details: None,
                     })
                 );
             }
@@ -1767,6 +1777,7 @@ mod tests {
                     Some(TurnError {
                         message: "b1".to_string(),
                         codex_error_info: None,
+                        additional_details: None,
                     })
                 );
             }
