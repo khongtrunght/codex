@@ -52,6 +52,8 @@ use codex_protocol::ConversationId;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelUpgrade;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use codex_protocol::plan_tool::StepStatus;
+use codex_protocol::plan_tool::UpdatePlanArgs;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
 use crossterm::event::KeyCode;
@@ -62,6 +64,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
+use ratatui::text::Span;
 use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::WidgetRef;
@@ -357,6 +360,11 @@ pub(crate) struct App {
 
     // One-shot suppression of the next world-writable scan after user confirmation.
     skip_world_writable_scan_once: bool,
+
+    /// Current plan from the update_plan tool, used for Ctrl+U display.
+    pub(crate) current_plan: Option<UpdatePlanArgs>,
+    /// Whether to show the expanded plan view (toggled with Ctrl+U).
+    pub(crate) show_expanded_plan: bool,
 }
 
 /// Content-relative selection within the inline transcript viewport.
@@ -530,6 +538,8 @@ impl App {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
+            current_plan: None,
+            show_expanded_plan: false,
         };
 
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
@@ -642,16 +652,41 @@ impl App {
                     let cells = self.transcript_cells.clone();
                     tui.draw(tui.terminal.size()?.height, |frame| {
                         let chat_height = self.chat_widget.desired_height(frame.area().width);
-                        let chat_top = self.render_transcript_cells(frame, &cells, chat_height);
-                        let chat_area = Rect {
+
+                        // Calculate plan height if expanded (estimate based on current plan).
+                        let plan_height = if self.show_expanded_plan {
+                            match &self.current_plan {
+                                Some(p) => (p.plan.len() + 1).min(frame.area().height as usize) as u16,
+                                None => 1,
+                            }
+                        } else {
+                            0
+                        };
+
+                        // Account for plan in the total height needed below transcript.
+                        let bottom_height = chat_height.saturating_add(plan_height);
+                        let chat_top = self.render_transcript_cells(frame, &cells, bottom_height);
+
+                        // Render the expanded plan between transcript and chat widget.
+                        let plan_area = Rect {
                             x: frame.area().x,
                             y: chat_top,
+                            width: frame.area().width,
+                            height: plan_height,
+                        };
+                        let actual_plan_height = self.render_expanded_plan(frame, plan_area);
+
+                        // Render chat widget below the plan.
+                        let chat_y = chat_top.saturating_add(actual_plan_height);
+                        let chat_area = Rect {
+                            x: frame.area().x,
+                            y: chat_y,
                             width: frame.area().width,
                             height: chat_height.min(
                                 frame
                                     .area()
                                     .height
-                                    .saturating_sub(chat_top.saturating_sub(frame.area().y)),
+                                    .saturating_sub(chat_y.saturating_sub(frame.area().y)),
                             ),
                         };
                         self.chat_widget.render(chat_area, frame.buffer);
@@ -839,6 +874,73 @@ impl App {
 
         self.apply_transcript_selection(transcript_area, frame.buffer);
         chat_top
+    }
+
+    /// Render the expanded plan view when Ctrl+U is toggled on.
+    /// Returns the height consumed by the plan widget (0 if not shown).
+    fn render_expanded_plan(&self, frame: &mut Frame, area: Rect) -> u16 {
+        if !self.show_expanded_plan {
+            return 0;
+        }
+
+        let plan = match &self.current_plan {
+            Some(p) => p,
+            None => {
+                // Show "No plan" message when toggled on but no plan exists.
+                let line: Line<'static> = Line::from(vec![
+                    "  ".into(),
+                    "No plan available. ".dim().into(),
+                    "(ctrl+u to hide)".dim().into(),
+                ]);
+                Paragraph::new(vec![line]).render_ref(
+                    Rect {
+                        x: area.x,
+                        y: area.y,
+                        width: area.width,
+                        height: 1,
+                    },
+                    frame.buffer,
+                );
+                return 1;
+            }
+        };
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Header line
+        lines.push(Line::from(vec![
+            "  ".into(),
+            "Plan ".bold().cyan().into(),
+            "(ctrl+u to hide)".dim().into(),
+        ]));
+
+        // Plan steps
+        for item in &plan.plan {
+            let (checkbox, style) = match item.status {
+                StepStatus::Completed => ("✔ ", ratatui::style::Style::default().dim().crossed_out()),
+                StepStatus::InProgress => ("□ ", ratatui::style::Style::default().cyan().bold()),
+                StepStatus::Pending => ("□ ", ratatui::style::Style::default().dim()),
+            };
+            lines.push(Line::from(vec![
+                Span::from("    "),
+                Span::styled(checkbox, style),
+                Span::styled(item.step.clone(), style),
+            ]));
+        }
+
+        let height = lines.len().min(area.height as usize) as u16;
+        if height > 0 {
+            let plan_area = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height,
+            };
+            Clear.render_ref(plan_area, frame.buffer);
+            Paragraph::new(lines).render_ref(plan_area, frame.buffer);
+        }
+
+        height
     }
 
     /// Handle mouse interaction in the main transcript view.
@@ -1706,6 +1808,10 @@ impl App {
                     let errors = errors_for_cwd(&cwd, response);
                     emit_skill_load_warnings(&self.app_event_tx, &errors);
                 }
+                // Intercept PlanUpdate to store in App for Ctrl+U display.
+                if let EventMsg::PlanUpdate(ref update) = event.msg {
+                    self.current_plan = Some(update.clone());
+                }
                 self.chat_widget.handle_codex_event(event);
             }
             AppEvent::ConversationHistory(ev) => {
@@ -2114,6 +2220,16 @@ impl App {
                 self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
                 tui.frame_requester().schedule_frame();
             }
+            KeyEvent {
+                code: KeyCode::Char('u'),
+                modifiers: crossterm::event::KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                // Toggle expanded plan view (similar to Claude Code's Ctrl+T for todos).
+                self.show_expanded_plan = !self.show_expanded_plan;
+                tui.frame_requester().schedule_frame();
+            }
             // Esc primes/advances backtracking only in normal (not working) mode
             // with the composer focused and empty. In any other state, forward
             // Esc so the active UI (e.g. status indicator, modals, popups)
@@ -2333,6 +2449,8 @@ mod tests {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
+            current_plan: None,
+            show_expanded_plan: false,
         }
     }
 
@@ -2379,6 +2497,8 @@ mod tests {
                 pending_update_action: None,
                 suppress_shutdown_complete: false,
                 skip_world_writable_scan_once: false,
+                current_plan: None,
+                show_expanded_plan: false,
             },
             rx,
             op_rx,
