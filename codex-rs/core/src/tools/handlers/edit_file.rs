@@ -39,7 +39,7 @@ enum MatchStrategy {
 }
 
 impl MatchStrategy {
-    fn name(&self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             MatchStrategy::Exact => "exact",
             MatchStrategy::NormalizedWhitespace => "normalized whitespace",
@@ -71,7 +71,7 @@ fn normalize_whitespace(s: &str) -> String {
 /// Trim each line individually.
 fn line_trim(s: &str) -> String {
     s.lines()
-        .map(|line| line.trim())
+        .map(str::trim)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -110,10 +110,10 @@ fn try_replace(
     let trimmed_content = line_trim(content);
     let trimmed_old = line_trim(old_string);
 
-    if trimmed_content.contains(&trimmed_old) {
-        if let Some(result) = replace_with_line_trim(content, old_string, new_string, replace_all) {
-            return Some((result.0, MatchStrategy::LineTrimmed, result.1));
-        }
+    if trimmed_content.contains(&trimmed_old)
+        && let Some(result) = replace_with_line_trim(content, old_string, new_string, replace_all)
+    {
+        return Some((result.0, MatchStrategy::LineTrimmed, result.1));
     }
 
     None
@@ -126,7 +126,7 @@ fn replace_with_normalized(
     new_string: &str,
     replace_all: bool,
 ) -> Option<(String, usize)> {
-    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let lines: Vec<String> = content.lines().map(ToString::to_string).collect();
     let old_lines: Vec<&str> = old_string.lines().collect();
 
     let mut result_lines: Vec<String> = lines.clone();
@@ -145,7 +145,7 @@ fn replace_with_normalized(
 
         if matches {
             // Replace the matching lines with new_string lines
-            let new_lines: Vec<String> = new_string.lines().map(|s| s.to_string()).collect();
+            let new_lines: Vec<String> = new_string.lines().map(ToString::to_string).collect();
             let new_lines_len = new_lines.len();
 
             // Remove old lines and insert new ones
@@ -191,7 +191,7 @@ fn replace_with_line_trim(
     new_string: &str,
     replace_all: bool,
 ) -> Option<(String, usize)> {
-    let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let lines: Vec<String> = content.lines().map(ToString::to_string).collect();
     let old_lines: Vec<&str> = old_string.lines().collect();
 
     let mut result_lines: Vec<String> = lines.clone();
@@ -404,7 +404,7 @@ impl ToolHandler for EditFileHandler {
         };
 
         let count_note = if args.replace_all && count > 1 {
-            format!(" ({} occurrences)", count)
+            format!(" ({count} occurrences)")
         } else {
             String::new()
         };

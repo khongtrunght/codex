@@ -185,7 +185,6 @@ pub struct SessionOutputSnapshot {
     pub status: SessionStatusInfo,
     pub exit_code: Option<i32>,
     pub output: String,
-    pub output_bytes: Vec<u8>,
 }
 
 /// Result of terminating a session

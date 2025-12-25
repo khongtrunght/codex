@@ -179,11 +179,6 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    /// Whether expanded plan view is enabled.
-    pub(crate) fn is_expanded_plan(&self) -> bool {
-        self.show_expanded_plan
-    }
-
     fn active_view(&self) -> Option<&dyn BottomPaneView> {
         self.view_stack.last().map(std::convert::AsRef::as_ref)
     }

@@ -81,15 +81,15 @@ impl ToolHandler for WriteFileHandler {
         };
 
         // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).await.map_err(|e| {
-                    FunctionCallError::RespondToModel(format!(
-                        "failed to create parent directories for {}: {e}",
-                        path.display()
-                    ))
-                })?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent).await.map_err(|e| {
+                FunctionCallError::RespondToModel(format!(
+                    "failed to create parent directories for {}: {e}",
+                    path.display()
+                ))
+            })?;
         }
 
         // Write the content

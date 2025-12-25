@@ -403,11 +403,6 @@ impl ChatWidget {
         }
     }
 
-    /// Toggle global verbose mode for expandable cells.
-    pub(crate) fn toggle_verbose_mode(&mut self) {
-        self.verbose_mode = !self.verbose_mode;
-    }
-
     /// Check if global verbose mode is enabled.
     pub(crate) fn is_verbose(&self) -> bool {
         self.verbose_mode
@@ -458,11 +453,6 @@ impl ChatWidget {
     /// Toggle expanded plan view (Ctrl+U).
     pub(crate) fn toggle_expanded_plan(&mut self) {
         self.bottom_pane.toggle_expanded_plan();
-    }
-
-    /// Whether expanded plan view is enabled.
-    pub(crate) fn is_expanded_plan(&self) -> bool {
-        self.bottom_pane.is_expanded_plan()
     }
 
     fn set_skills_from_response(&mut self, response: &ListSkillsResponseEvent) {
@@ -2075,8 +2065,9 @@ impl ChatWidget {
     fn on_subagent_begin(&mut self, ev: SubAgentBeginEvent) {
         self.flush_answer_stream_with_separator();
 
-        let cell = history_cell::new_subagent_cell(ev.clone(), self.config.animations);
-        self.running_subagents.insert(ev.call_id.clone(), cell);
+        let call_id = ev.call_id.clone();
+        let cell = history_cell::new_subagent_cell(ev, self.config.animations);
+        self.running_subagents.insert(call_id, cell);
         self.request_redraw();
     }
 

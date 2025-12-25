@@ -189,7 +189,7 @@ impl RolloutRecorder {
         // Extract session directory from rollout path
         let session_dir = rollout_path
             .parent()
-            .map(|p| p.to_path_buf())
+            .map(Path::to_path_buf)
             .unwrap_or_else(|| rollout_path.clone());
 
         // A reasonably-sized bounded channel. If the buffer fills up the send
@@ -365,10 +365,10 @@ impl RolloutRecorder {
             if line.trim().is_empty() {
                 continue;
             }
-            if let Ok(v) = serde_json::from_str::<Value>(line) {
-                if let Ok(rollout_line) = serde_json::from_value::<RolloutLine>(v) {
-                    items.push(rollout_line.item);
-                }
+            if let Ok(v) = serde_json::from_str::<Value>(line)
+                && let Ok(rollout_line) = serde_json::from_value::<RolloutLine>(v)
+            {
+                items.push(rollout_line.item);
             }
         }
 
@@ -403,7 +403,7 @@ impl RolloutRecorder {
         self.tx
             .send(RolloutCmd::CreateSubagentFile {
                 session_id: session_id.to_string(),
-                parent_session_id: parent_session_id.map(|s| s.to_string()),
+                parent_session_id: parent_session_id.map(ToString::to_string),
                 agent_type: agent_type.to_string(),
                 description: description.to_string(),
                 ack: tx,
@@ -595,10 +595,10 @@ async fn rollout_writer(
             RolloutCmd::AddSubagentItems { session_id, items } => {
                 if let Some(sw) = subagent_writers.get_mut(&session_id) {
                     for item in items {
-                        if is_persisted_response_item(&item) {
-                            if let Err(e) = sw.write_rollout_item(item).await {
-                                warn!("failed to write subagent item: {e}");
-                            }
+                        if is_persisted_response_item(&item)
+                            && let Err(e) = sw.write_rollout_item(item).await
+                        {
+                            warn!("failed to write subagent item: {e}");
                         }
                     }
                 } else {
@@ -606,10 +606,10 @@ async fn rollout_writer(
                 }
             }
             RolloutCmd::CloseSubagentFile { session_id } => {
-                if let Some(mut sw) = subagent_writers.remove(&session_id) {
-                    if let Err(e) = sw.file.flush().await {
-                        warn!("failed to flush subagent file: {e}");
-                    }
+                if let Some(mut sw) = subagent_writers.remove(&session_id)
+                    && let Err(e) = sw.file.flush().await
+                {
+                    warn!("failed to flush subagent file: {e}");
                 }
             }
         }

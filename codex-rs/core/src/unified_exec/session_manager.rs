@@ -681,7 +681,6 @@ impl UnifiedExecSessionManager {
             },
             exit_code: entry.session.exit_code(),
             output,
-            output_bytes,
         })
     }
 

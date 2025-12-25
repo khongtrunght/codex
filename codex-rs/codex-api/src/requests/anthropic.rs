@@ -251,11 +251,10 @@ impl<'a> AnthropicRequestBuilder<'a> {
                     // Same role - merge content arrays
                     if let Some(last_content) = last.get_mut("content")
                         && let Some(arr) = last_content.as_array_mut()
+                        && let Some(new_content) = content.as_array()
                     {
-                        if let Some(new_content) = content.as_array() {
-                            for item in new_content {
-                                arr.push(item.clone());
-                            }
+                        for item in new_content {
+                            arr.push(item.clone());
                         }
                     }
                     continue;

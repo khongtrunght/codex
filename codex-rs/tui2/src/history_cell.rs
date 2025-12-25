@@ -36,10 +36,7 @@ use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::SubAgentTokenUsage;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
-use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::protocol::SubagentHistory;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
 use image::DynamicImage;
 use image::ImageReader;
 use mcp_types::EmbeddedResourceResource;
@@ -49,7 +46,6 @@ use mcp_types::ResourceTemplate;
 use ratatui::prelude::*;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
-use ratatui::style::Styled;
 use ratatui::style::Stylize;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
@@ -79,15 +75,6 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
     fn desired_height(&self, width: u16) -> u16 {
         Paragraph::new(Text::from(self.display_lines(width)))
-            .wrap(Wrap { trim: false })
-            .line_count(width)
-            .try_into()
-            .unwrap_or(0)
-    }
-
-    /// Compute desired height when rendering with verbose mode.
-    fn desired_height_verbose(&self, width: u16, verbose: bool) -> u16 {
-        Paragraph::new(Text::from(self.display_lines_verbose(width, verbose)))
             .wrap(Wrap { trim: false })
             .line_count(width)
             .try_into()
@@ -249,14 +236,6 @@ impl HistoryCell for ReasoningSummaryCell {
             0
         } else {
             self.lines(width).len() as u16
-        }
-    }
-
-    fn desired_height_verbose(&self, width: u16, verbose: bool) -> u16 {
-        if verbose || !self.transcript_only {
-            self.lines(width).len() as u16
-        } else {
-            0
         }
     }
 
@@ -1358,72 +1337,6 @@ pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
     PlainHistoryCell { lines }
 }
 
-/// Render a user‑friendly plan update styled like a checkbox todo list.
-pub(crate) fn new_plan_update(update: UpdatePlanArgs) -> PlanUpdateCell {
-    let UpdatePlanArgs { explanation, plan } = update;
-    PlanUpdateCell { explanation, plan }
-}
-
-#[derive(Debug)]
-pub(crate) struct PlanUpdateCell {
-    explanation: Option<String>,
-    plan: Vec<PlanItemArg>,
-}
-
-impl HistoryCell for PlanUpdateCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let render_note = |text: &str| -> Vec<Line<'static>> {
-            let wrap_width = width.saturating_sub(4).max(1) as usize;
-            textwrap::wrap(text, wrap_width)
-                .into_iter()
-                .map(|s| s.to_string().dim().italic().into())
-                .collect()
-        };
-
-        let render_step = |status: &StepStatus, text: &str| -> Vec<Line<'static>> {
-            let (box_str, step_style) = match status {
-                StepStatus::Completed => ("✔ ", Style::default().crossed_out().dim()),
-                StepStatus::InProgress => ("□ ", Style::default().cyan().bold()),
-                StepStatus::Pending => ("□ ", Style::default().dim()),
-            };
-            let wrap_width = (width as usize)
-                .saturating_sub(4)
-                .saturating_sub(box_str.width())
-                .max(1);
-            let parts = textwrap::wrap(text, wrap_width);
-            let step_text = parts
-                .into_iter()
-                .map(|s| s.to_string().set_style(step_style).into())
-                .collect();
-            prefix_lines(step_text, box_str.into(), "  ".into())
-        };
-
-        let mut lines: Vec<Line<'static>> = vec![];
-        lines.push(vec!["• ".dim(), "Updated Plan".bold()].into());
-
-        let mut indented_lines = vec![];
-        let note = self
-            .explanation
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|t| !t.is_empty());
-        if let Some(expl) = note {
-            indented_lines.extend(render_note(expl));
-        };
-
-        if self.plan.is_empty() {
-            indented_lines.push(Line::from("(no steps provided)".dim().italic()));
-        } else {
-            for PlanItemArg { step, status } in self.plan.iter() {
-                indented_lines.extend(render_step(status, step));
-            }
-        }
-        lines.extend(prefix_lines(indented_lines, "  └ ".dim(), "    ".into()));
-
-        lines
-    }
-}
-
 /// Create a new `PendingPatch` cell that lists the file‑level summary of
 /// a proposed patch. The summary lines should already be formatted (e.g.
 /// "A path/to/file.rs").
@@ -1564,7 +1477,6 @@ pub(crate) struct ForwardedToolEvent {
 /// Cell displaying a sub-agent task with compact view.
 #[derive(Debug)]
 pub(crate) struct SubAgentCell {
-    call_id: String,
     session_id: String,
     agent_type: String,
     description: String,
@@ -1593,18 +1505,14 @@ impl SubAgentCell {
             Some(usage) if usage.total_tokens > 0 => {
                 let k = usage.total_tokens as f64 / 1000.0;
                 if k >= 1.0 {
-                    format!("{:.1}k tokens", k)
+                    format!("{k:.1}k tokens")
                 } else {
-                    format!("{} tokens", usage.total_tokens)
+                    let tokens = usage.total_tokens;
+                    format!("{tokens} tokens")
                 }
             }
             _ => "-- tokens".to_string(),
         }
-    }
-
-    /// Toggle expanded/collapsed state.
-    pub fn toggle_expanded(&mut self) {
-        self.expanded = !self.expanded;
     }
 
     /// Add a forwarded tool event.
@@ -1626,11 +1534,6 @@ impl SubAgentCell {
         self.start_time = None;
     }
 
-    /// Get the call ID for this sub-agent.
-    pub fn call_id(&self) -> &str {
-        &self.call_id
-    }
-
     /// Get the session ID for this sub-agent.
     pub fn session_id(&self) -> &str {
         &self.session_id
@@ -1639,22 +1542,6 @@ impl SubAgentCell {
     /// Get the agent type.
     pub fn agent_type(&self) -> &str {
         &self.agent_type
-    }
-
-    /// Check if this sub-agent is still running.
-    pub fn is_running(&self) -> bool {
-        self.status == SubAgentStatus::Running
-    }
-
-    /// Update tool uses count from progress event.
-    pub fn update_tool_count(&mut self, count: usize) {
-        self.tool_uses_count = count;
-    }
-
-    /// Replace all forwarded events with a new list.
-    pub fn set_forwarded_events(&mut self, events: Vec<ForwardedToolEvent>) {
-        self.tool_uses_count = events.len();
-        self.forwarded_events = events;
     }
 
     /// Get the list of forwarded events.
@@ -1720,10 +1607,6 @@ impl SubAgentCell {
         }
     }
 
-    /// Check if animations are enabled.
-    pub fn animations_enabled(&self) -> bool {
-        self.animations_enabled
-    }
 }
 
 impl HistoryCell for SubAgentCell {
@@ -1739,10 +1622,6 @@ impl HistoryCell for SubAgentCell {
 
     fn desired_height(&self, _width: u16) -> u16 {
         self.calculate_height(self.expanded)
-    }
-
-    fn desired_height_verbose(&self, _width: u16, verbose: bool) -> u16 {
-        self.calculate_height(verbose || self.expanded)
     }
 }
 
@@ -1803,7 +1682,7 @@ impl SubAgentCell {
                 let status_icon = match event.status.as_str() {
                     "completed" => "✓".green(),
                     "error" => "✗".red(),
-                    _ => "○".yellow(),
+                    _ => "○".cyan(),
                 };
                 let title_text = event.title.clone().unwrap_or_default();
                 lines.push(Line::from(vec![
@@ -1854,7 +1733,6 @@ pub(crate) fn new_subagent_cell(
     animations_enabled: bool,
 ) -> SubAgentCell {
     SubAgentCell {
-        call_id: begin_event.call_id,
         session_id: begin_event.session_id,
         agent_type: begin_event.agent_type,
         description: begin_event.description,
@@ -1898,12 +1776,11 @@ pub(crate) fn subagent_cell_from_history(
     }
 
     // Build the cell from the events we found
-    let (call_id, agent_type, description, resumed) = begin_event
-        .map(|ev| (ev.call_id, ev.agent_type, ev.description, ev.resumed))
+    let (agent_type, description, resumed) = begin_event
+        .map(|ev| (ev.agent_type, ev.description, ev.resumed))
         .unwrap_or_else(|| {
             // Fallback to history metadata if no begin event found
             (
-                format!("call-{}", history.session_id),
                 history.agent_type.clone(),
                 history.description.clone(),
                 true,
@@ -1926,7 +1803,6 @@ pub(crate) fn subagent_cell_from_history(
         });
 
     SubAgentCell {
-        call_id,
         session_id: history.session_id,
         agent_type,
         description,
@@ -1969,11 +1845,6 @@ impl<'a> RunningAgentsGroup<'a> {
         self.agents.is_empty()
     }
 
-    /// Returns the number of running agents.
-    pub fn count(&self) -> usize {
-        self.agents.len()
-    }
-
     /// Render the group as a list of lines.
     pub fn render_lines(&self, width: u16) -> Vec<Line<'static>> {
         if self.agents.is_empty() {
@@ -2013,12 +1884,7 @@ impl<'a> RunningAgentsGroup<'a> {
             )
         } else {
             // Mixed: some running, some completed
-            format!(
-                "Running {} of {} agents... {}",
-                running_count,
-                total_count,
-                hint
-            )
+            format!("Running {running_count} of {total_count} agents... {hint}")
         };
 
         lines.push(Line::from(vec![bullet, " ".into(), header_text.into()]));
@@ -2053,7 +1919,7 @@ impl<'a> RunningAgentsGroup<'a> {
         };
 
         // Agent header: "agent-type (description) · N tool uses"
-        let desc = truncate_description(&agent.description(), (width as usize).saturating_sub(30));
+        let desc = truncate_description(agent.description(), (width as usize).saturating_sub(30));
         let header = format!(
             "{} ({}) · {} tool uses",
             agent.agent_type(),
@@ -2069,7 +1935,7 @@ impl<'a> RunningAgentsGroup<'a> {
         ]));
 
         // Status line under agent
-        let status_prefix = format!("{}└ ", continuation);
+        let status_prefix = format!("{continuation}└ ");
         let status_text = agent.current_status_text();
         lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
 
@@ -2091,7 +1957,7 @@ impl<'a> RunningAgentsGroup<'a> {
                     let status_icon = match event.status.as_str() {
                         "completed" => "✓".green(),
                         "error" => "✗".red(),
-                        _ => "○".yellow(),
+                        _ => "○".cyan(),
                     };
 
                     let title_text = event.title.clone().unwrap_or_default();
@@ -2163,7 +2029,7 @@ impl SubAgentGroupCell {
 
         // Group header: "● 4 agents completed (ctrl+o to expand)"
         let bullet = if error_count > 0 {
-            "●".yellow().bold()
+            "●".red().bold()
         } else {
             "●".green().bold()
         };
@@ -2175,7 +2041,7 @@ impl SubAgentGroupCell {
         };
 
         let status_text = if error_count > 0 {
-            format!("{} completed, {} failed", completed_count, error_count)
+            format!("{completed_count} completed, {error_count} failed")
         } else {
             "completed".to_string()
         };
@@ -2217,11 +2083,11 @@ impl SubAgentGroupCell {
         let agent_bullet = match agent.status() {
             SubAgentStatus::Completed => "●".green().bold(),
             SubAgentStatus::Error => "●".red().bold(),
-            SubAgentStatus::Running => "●".yellow().bold(),
+            SubAgentStatus::Running => "●".cyan().bold(),
         };
 
         // Agent header: "agent-type (description) · N tool uses · Xk tokens"
-        let desc = truncate_description(&agent.description(), (width as usize).saturating_sub(40));
+        let desc = truncate_description(agent.description(), (width as usize).saturating_sub(40));
         let tokens = agent.format_tokens();
         let header = format!(
             "{} ({}) · {} tool uses · {}",
@@ -2239,7 +2105,7 @@ impl SubAgentGroupCell {
         ]));
 
         // Status line under agent - show the last activity
-        let status_prefix = format!("{}└ ", continuation);
+        let status_prefix = format!("{continuation}└ ");
         let status_text = agent.current_status_text();
         lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
 
@@ -2250,15 +2116,14 @@ impl SubAgentGroupCell {
                 for (j, event) in events.iter().enumerate() {
                     let is_last_event = j == events.len() - 1;
                     let event_prefix = format!(
-                        "{}   {} ",
-                        continuation,
+                        "{continuation}   {} ",
                         if is_last_event { "└" } else { "├" }
                     );
 
                     let status_icon = match event.status.as_str() {
                         "completed" => "✓".green(),
                         "error" => "✗".red(),
-                        _ => "○".yellow(),
+                        _ => "○".cyan(),
                     };
 
                     let title_text = event.title.clone().unwrap_or_default();
@@ -2305,10 +2170,6 @@ impl HistoryCell for SubAgentGroupCell {
 
     fn desired_height(&self, _width: u16) -> u16 {
         self.calculate_height(self.expanded)
-    }
-
-    fn desired_height_verbose(&self, _width: u16, verbose: bool) -> u16 {
-        self.calculate_height(verbose || self.expanded)
     }
 }
 
@@ -3145,58 +3006,6 @@ mod tests {
         insta::assert_snapshot!(rendered);
     }
 
-    #[test]
-    fn plan_update_with_note_and_wrapping_snapshot() {
-        // Long explanation forces wrapping; include long step text to verify step wrapping and alignment.
-        let update = UpdatePlanArgs {
-            explanation: Some(
-                "I’ll update Grafana call error handling by adding retries and clearer messages when the backend is unreachable."
-                    .to_string(),
-            ),
-            plan: vec![
-                PlanItemArg {
-                    step: "Investigate existing error paths and logging around HTTP timeouts".into(),
-                    status: StepStatus::Completed,
-                },
-                PlanItemArg {
-                    step: "Harden Grafana client error handling with retry/backoff and user‑friendly messages".into(),
-                    status: StepStatus::InProgress,
-                },
-                PlanItemArg {
-                    step: "Add tests for transient failure scenarios and surfacing to the UI".into(),
-                    status: StepStatus::Pending,
-                },
-            ],
-        };
-
-        let cell = new_plan_update(update);
-        // Narrow width to force wrapping for both the note and steps
-        let lines = cell.display_lines(32);
-        let rendered = render_lines(&lines).join("\n");
-        insta::assert_snapshot!(rendered);
-    }
-
-    #[test]
-    fn plan_update_without_note_snapshot() {
-        let update = UpdatePlanArgs {
-            explanation: None,
-            plan: vec![
-                PlanItemArg {
-                    step: "Define error taxonomy".into(),
-                    status: StepStatus::InProgress,
-                },
-                PlanItemArg {
-                    step: "Implement mapping to user messages".into(),
-                    status: StepStatus::Pending,
-                },
-            ],
-        };
-
-        let cell = new_plan_update(update);
-        let lines = cell.display_lines(40);
-        let rendered = render_lines(&lines).join("\n");
-        insta::assert_snapshot!(rendered);
-    }
     #[test]
     fn reasoning_summary_block() {
         let reasoning_format = ReasoningSummaryFormat::Experimental;

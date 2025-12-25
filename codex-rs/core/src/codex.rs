@@ -407,19 +407,19 @@ impl TurnContext {
 
     /// Record that a file has been read during this turn.
     pub(crate) fn mark_file_read(&self, path: &Path) {
-        if let Ok(canonical) = dunce::canonicalize(path) {
-            if let Ok(mut files) = self.read_files.lock() {
-                files.insert(canonical);
-            }
+        if let Ok(canonical) = dunce::canonicalize(path)
+            && let Ok(mut files) = self.read_files.lock()
+        {
+            files.insert(canonical);
         }
     }
 
     /// Check if a file has been read during this turn.
     pub(crate) fn was_file_read(&self, path: &Path) -> bool {
-        if let Ok(canonical) = dunce::canonicalize(path) {
-            if let Ok(files) = self.read_files.lock() {
-                return files.contains(&canonical);
-            }
+        if let Ok(canonical) = dunce::canonicalize(path)
+            && let Ok(files) = self.read_files.lock()
+        {
+            return files.contains(&canonical);
         }
         false
     }
