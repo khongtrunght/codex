@@ -404,6 +404,7 @@ async fn make_chatwidget_manual(
         stream_controller: None,
         running_commands: HashMap::new(),
         running_subagents: HashMap::new(),
+        pending_completed_subagents: Vec::new(),
         suppressed_exec_calls: HashSet::new(),
         last_unified_wait: None,
         task_complete_pending: false,

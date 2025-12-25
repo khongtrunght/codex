@@ -1588,7 +1588,7 @@ pub(crate) struct SubAgentCell {
 
 impl SubAgentCell {
     /// Format token usage in a human-readable format.
-    fn format_tokens(&self) -> String {
+    pub fn format_tokens(&self) -> String {
         match &self.token_usage {
             Some(usage) if usage.total_tokens > 0 => {
                 let k = usage.total_tokens as f64 / 1000.0;
@@ -1682,6 +1682,47 @@ impl SubAgentCell {
         usage.input_tokens = usage.input_tokens.saturating_add(input_delta);
         usage.output_tokens = usage.output_tokens.saturating_add(output_delta);
         usage.total_tokens = usage.input_tokens + usage.output_tokens;
+    }
+
+    /// Get the current status.
+    pub fn status(&self) -> SubAgentStatus {
+        self.status
+    }
+
+    /// Get the start time.
+    pub fn start_time(&self) -> Option<Instant> {
+        self.start_time
+    }
+
+    /// Get the description.
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Get the tool uses count.
+    pub fn tool_uses_count(&self) -> usize {
+        self.tool_uses_count
+    }
+
+    /// Get a human-readable status text for the current state.
+    pub fn current_status_text(&self) -> String {
+        if self.forwarded_events.is_empty() {
+            "Initializing...".to_string()
+        } else if let Some(last) = self.forwarded_events.last() {
+            match last.status.as_str() {
+                "running" => format!("Running {}...", last.tool_name),
+                "completed" => format!("Completed {}", last.tool_name),
+                "error" => format!("Error in {}", last.tool_name),
+                _ => last.status.clone(),
+            }
+        } else {
+            "Working...".to_string()
+        }
+    }
+
+    /// Check if animations are enabled.
+    pub fn animations_enabled(&self) -> bool {
+        self.animations_enabled
     }
 }
 
@@ -1898,6 +1939,385 @@ pub(crate) fn subagent_cell_from_history(
         forwarded_events: Vec::new(),
         expanded: false,
         animations_enabled,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RunningAgentsGroup - Grouped view for parallel running agents
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Groups multiple running sub-agents under a single collapsible header.
+/// Used for displaying parallel running agents in a compact tree view.
+pub(crate) struct RunningAgentsGroup<'a> {
+    agents: Vec<&'a SubAgentCell>,
+    expanded: bool,
+    animations_enabled: bool,
+}
+
+impl<'a> RunningAgentsGroup<'a> {
+    /// Create a new group from a collection of sub-agent cells.
+    pub fn new(agents: Vec<&'a SubAgentCell>, expanded: bool, animations_enabled: bool) -> Self {
+        Self {
+            agents,
+            expanded,
+            animations_enabled,
+        }
+    }
+
+    /// Returns true if there are no agents to display.
+    pub fn is_empty(&self) -> bool {
+        self.agents.is_empty()
+    }
+
+    /// Returns the number of running agents.
+    pub fn count(&self) -> usize {
+        self.agents.len()
+    }
+
+    /// Render the group as a list of lines.
+    pub fn render_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if self.agents.is_empty() {
+            return Vec::new();
+        }
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Count running vs completed agents
+        let running_count = self.agents.iter().filter(|a| a.status() == SubAgentStatus::Running).count();
+        let total_count = self.agents.len();
+        let completed_count = total_count - running_count;
+
+        // Group header with running/total info
+        let bullet = spinner(None, self.animations_enabled);
+        let hint = if self.expanded {
+            "(ctrl+o to collapse)"
+        } else {
+            "(ctrl+o to expand)"
+        };
+
+        let header_text = if running_count == 0 {
+            // All completed, waiting to be moved to history
+            format!(
+                "{} {} completed {}",
+                total_count,
+                if total_count == 1 { "agent" } else { "agents" },
+                hint
+            )
+        } else if completed_count == 0 {
+            // All still running
+            format!(
+                "Running {} {}... {}",
+                total_count,
+                if total_count == 1 { "agent" } else { "agents" },
+                hint
+            )
+        } else {
+            // Mixed: some running, some completed
+            format!(
+                "Running {} of {} agents... {}",
+                running_count,
+                total_count,
+                hint
+            )
+        };
+
+        lines.push(Line::from(vec![bullet, " ".into(), header_text.into()]));
+
+        // Render each agent with tree prefixes
+        let agent_count = self.agents.len();
+        for (i, agent) in self.agents.iter().enumerate() {
+            let is_last = i == agent_count - 1;
+            self.render_agent_in_group(&mut lines, agent, is_last, width);
+        }
+
+        lines
+    }
+
+    /// Render a single agent within the group with tree prefixes.
+    fn render_agent_in_group(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        agent: &SubAgentCell,
+        is_last: bool,
+        width: u16,
+    ) {
+        // Tree prefix for agent header
+        let tree_prefix = if is_last { "└─ " } else { "├─ " };
+        let continuation = if is_last { "   " } else { "│  " };
+
+        // Agent bullet based on status
+        let agent_bullet = match agent.status() {
+            SubAgentStatus::Running => spinner(agent.start_time(), self.animations_enabled),
+            SubAgentStatus::Completed => "●".green().bold(),
+            SubAgentStatus::Error => "●".red().bold(),
+        };
+
+        // Agent header: "agent-type (description) · N tool uses"
+        let desc = truncate_description(&agent.description(), (width as usize).saturating_sub(30));
+        let header = format!(
+            "{} ({}) · {} tool uses",
+            agent.agent_type(),
+            desc,
+            agent.tool_uses_count(),
+        );
+
+        lines.push(Line::from(vec![
+            tree_prefix.dim(),
+            agent_bullet,
+            " ".into(),
+            header.into(),
+        ]));
+
+        // Status line under agent
+        let status_prefix = format!("{}└ ", continuation);
+        let status_text = agent.current_status_text();
+        lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
+
+        // If expanded, show forwarded events
+        if self.expanded {
+            let events = agent.forwarded_events();
+            if events.is_empty() {
+                // No events yet
+            } else {
+                let event_count = events.len();
+                for (j, event) in events.iter().enumerate() {
+                    let is_last_event = j == event_count - 1;
+                    let event_prefix = format!(
+                        "{}   {} ",
+                        continuation,
+                        if is_last_event { "└" } else { "├" }
+                    );
+
+                    let status_icon = match event.status.as_str() {
+                        "completed" => "✓".green(),
+                        "error" => "✗".red(),
+                        _ => "○".yellow(),
+                    };
+
+                    let title_text = event.title.clone().unwrap_or_default();
+                    lines.push(Line::from(vec![
+                        event_prefix.dim(),
+                        status_icon,
+                        " ".into(),
+                        event.tool_name.clone().into(),
+                        " ".into(),
+                        title_text.dim(),
+                    ]));
+                }
+            }
+        }
+    }
+
+    /// Calculate the height needed to render the group.
+    pub fn calculate_height(&self) -> u16 {
+        if self.agents.is_empty() {
+            return 0;
+        }
+
+        let mut height: u16 = 1; // Group header
+
+        for agent in &self.agents {
+            height += 2; // Agent header + status line
+            if self.expanded && !agent.forwarded_events().is_empty() {
+                height += agent.forwarded_events().len() as u16;
+            }
+        }
+
+        height
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SubAgentGroupCell - History cell for grouped completed agents
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A history cell that groups multiple completed sub-agents together.
+/// Used to display completed parallel agents in a grouped view.
+#[derive(Debug)]
+pub(crate) struct SubAgentGroupCell {
+    cells: Vec<SubAgentCell>,
+    expanded: bool,
+}
+
+impl SubAgentGroupCell {
+    /// Create a new group from a collection of completed sub-agent cells.
+    pub fn new(cells: Vec<SubAgentCell>) -> Self {
+        Self {
+            cells,
+            expanded: false,
+        }
+    }
+
+    /// Render the group with an explicit expanded flag.
+    fn render_with_expanded(&self, width: u16, show_expanded: bool) -> Vec<Line<'static>> {
+        if self.cells.is_empty() {
+            return Vec::new();
+        }
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Count completed vs error
+        let completed_count = self.cells.iter().filter(|c| c.status() == SubAgentStatus::Completed).count();
+        let error_count = self.cells.iter().filter(|c| c.status() == SubAgentStatus::Error).count();
+        let total_count = self.cells.len();
+
+        // Group header: "● 4 agents completed (ctrl+o to expand)"
+        let bullet = if error_count > 0 {
+            "●".yellow().bold()
+        } else {
+            "●".green().bold()
+        };
+
+        let hint = if show_expanded {
+            "(ctrl+o to collapse)"
+        } else {
+            "(ctrl+o to expand)"
+        };
+
+        let status_text = if error_count > 0 {
+            format!("{} completed, {} failed", completed_count, error_count)
+        } else {
+            "completed".to_string()
+        };
+
+        let header_text = format!(
+            "{} {} {} {}",
+            total_count,
+            if total_count == 1 { "agent" } else { "agents" },
+            status_text,
+            hint
+        );
+
+        lines.push(Line::from(vec![bullet, " ".into(), header_text.into()]));
+
+        // Render each agent with tree prefixes
+        let agent_count = self.cells.len();
+        for (i, agent) in self.cells.iter().enumerate() {
+            let is_last = i == agent_count - 1;
+            self.render_agent_in_group(&mut lines, agent, is_last, width, show_expanded);
+        }
+
+        lines
+    }
+
+    /// Render a single agent within the group with tree prefixes.
+    fn render_agent_in_group(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        agent: &SubAgentCell,
+        is_last: bool,
+        width: u16,
+        show_expanded: bool,
+    ) {
+        // Tree prefix for agent header
+        let tree_prefix = if is_last { "└─ " } else { "├─ " };
+        let continuation = if is_last { "   " } else { "│  " };
+
+        // Agent bullet based on status
+        let agent_bullet = match agent.status() {
+            SubAgentStatus::Completed => "●".green().bold(),
+            SubAgentStatus::Error => "●".red().bold(),
+            SubAgentStatus::Running => "●".yellow().bold(),
+        };
+
+        // Agent header: "agent-type (description) · N tool uses · Xk tokens"
+        let desc = truncate_description(&agent.description(), (width as usize).saturating_sub(40));
+        let tokens = agent.format_tokens();
+        let header = format!(
+            "{} ({}) · {} tool uses · {}",
+            agent.agent_type(),
+            desc,
+            agent.tool_uses_count(),
+            tokens,
+        );
+
+        lines.push(Line::from(vec![
+            tree_prefix.dim(),
+            agent_bullet,
+            " ".into(),
+            header.into(),
+        ]));
+
+        // Status line under agent - show the last activity
+        let status_prefix = format!("{}└ ", continuation);
+        let status_text = agent.current_status_text();
+        lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
+
+        // If expanded, show forwarded events
+        if show_expanded {
+            let events = agent.forwarded_events();
+            if !events.is_empty() {
+                for (j, event) in events.iter().enumerate() {
+                    let is_last_event = j == events.len() - 1;
+                    let event_prefix = format!(
+                        "{}   {} ",
+                        continuation,
+                        if is_last_event { "└" } else { "├" }
+                    );
+
+                    let status_icon = match event.status.as_str() {
+                        "completed" => "✓".green(),
+                        "error" => "✗".red(),
+                        _ => "○".yellow(),
+                    };
+
+                    let title_text = event.title.clone().unwrap_or_default();
+                    lines.push(Line::from(vec![
+                        event_prefix.dim(),
+                        status_icon,
+                        " ".into(),
+                        event.tool_name.clone().into(),
+                        " ".into(),
+                        title_text.dim(),
+                    ]));
+                }
+            }
+        }
+    }
+
+    /// Calculate height with explicit expanded flag.
+    fn calculate_height(&self, show_expanded: bool) -> u16 {
+        if self.cells.is_empty() {
+            return 0;
+        }
+
+        let mut height: u16 = 1; // Group header
+
+        for agent in &self.cells {
+            height += 2; // Agent header + status line
+            if show_expanded && !agent.forwarded_events().is_empty() {
+                height += agent.forwarded_events().len() as u16;
+            }
+        }
+
+        height
+    }
+}
+
+impl HistoryCell for SubAgentGroupCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_with_expanded(width, self.expanded)
+    }
+
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        self.render_with_expanded(width, verbose || self.expanded)
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        self.calculate_height(self.expanded)
+    }
+
+    fn desired_height_verbose(&self, _width: u16, verbose: bool) -> u16 {
+        self.calculate_height(verbose || self.expanded)
+    }
+}
+
+/// Truncate a description string to fit within the given width.
+fn truncate_description(desc: &str, max_len: usize) -> String {
+    if desc.len() > max_len && max_len > 3 {
+        format!("{}...", &desc[..max_len.saturating_sub(3)])
+    } else {
+        desc.to_string()
     }
 }
 
@@ -3078,5 +3498,362 @@ mod tests {
 
         assert!(rendered[0].contains("Error"));
         assert!(rendered[0].contains("-- tokens")); // No token usage
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RunningAgentsGroup Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn running_agents_group_renders_single_agent() {
+        use codex_core::protocol::SubAgentBeginEvent;
+
+        let begin_event = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Search for files".to_string(),
+            resumed: false,
+        };
+
+        let cell = new_subagent_cell(begin_event, false);
+        let group = RunningAgentsGroup::new(vec![&cell], false, false);
+
+        let lines = group.render_lines(80);
+        let rendered = render_lines(&lines);
+
+        // Should have: header, agent header, agent status
+        assert!(rendered.len() >= 3, "Expected at least 3 lines, got {}", rendered.len());
+        assert!(rendered[0].contains("Running 1 agent"), "Header should show '1 agent': {}", rendered[0]);
+        assert!(rendered[1].contains("explore"), "Should contain agent type: {}", rendered[1]);
+        assert!(rendered[2].contains("Initializing"), "Should show initializing status: {}", rendered[2]);
+    }
+
+    #[test]
+    fn running_agents_group_renders_multiple_agents_with_tree() {
+        use codex_core::protocol::SubAgentBeginEvent;
+
+        let begin1 = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "First task".to_string(),
+            resumed: false,
+        };
+        let begin2 = SubAgentBeginEvent {
+            call_id: "call-2".to_string(),
+            session_id: "sess-2".to_string(),
+            agent_type: "analyze".to_string(),
+            description: "Second task".to_string(),
+            resumed: false,
+        };
+
+        let cell1 = new_subagent_cell(begin1, false);
+        let cell2 = new_subagent_cell(begin2, false);
+        let group = RunningAgentsGroup::new(vec![&cell1, &cell2], false, false);
+
+        let lines = group.render_lines(80);
+        let rendered = render_lines(&lines);
+
+        // Should have: header, 2x(agent header + status)
+        assert!(rendered.len() >= 5, "Expected at least 5 lines, got {}", rendered.len());
+        assert!(rendered[0].contains("Running 2 agents"), "Header should show '2 agents': {}", rendered[0]);
+
+        // First agent uses ├─, last uses └─
+        assert!(rendered[1].contains("├"), "First agent should have ├ prefix: {}", rendered[1]);
+        assert!(rendered[3].contains("└"), "Last agent should have └ prefix: {}", rendered[3]);
+    }
+
+    #[test]
+    fn running_agents_group_expanded_shows_events() {
+        use codex_core::protocol::SubAgentBeginEvent;
+
+        let begin = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Task".to_string(),
+            resumed: false,
+        };
+
+        let mut cell = new_subagent_cell(begin, false);
+        cell.add_forwarded_event(ForwardedToolEvent {
+            tool_name: "shell".to_string(),
+            title: Some("ls -la".to_string()),
+            status: "completed".to_string(),
+        });
+
+        let group = RunningAgentsGroup::new(vec![&cell], true, false);
+        let lines = group.render_lines(80);
+        let rendered = render_lines(&lines);
+
+        // Should include the forwarded event line when expanded
+        assert!(
+            rendered.iter().any(|l| l.contains("shell")),
+            "Should contain tool name 'shell' when expanded: {:?}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn running_agents_group_collapsed_hides_event_details() {
+        use codex_core::protocol::SubAgentBeginEvent;
+
+        let begin = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Task".to_string(),
+            resumed: false,
+        };
+
+        let mut cell = new_subagent_cell(begin, false);
+        cell.add_forwarded_event(ForwardedToolEvent {
+            tool_name: "shell".to_string(),
+            title: Some("ls -la".to_string()),
+            status: "completed".to_string(),
+        });
+
+        let group = RunningAgentsGroup::new(vec![&cell], false, false);
+        let lines = group.render_lines(80);
+        let rendered = render_lines(&lines);
+
+        // When collapsed, should NOT include the full tool event with its title (ls -la)
+        // The status line "Completed shell" is still visible as the status text
+        assert!(
+            !rendered.iter().any(|l| l.contains("ls -la")),
+            "Should NOT contain event title 'ls -la' when collapsed: {:?}",
+            rendered
+        );
+        // Should only have header (1) + agent header (1) + status (1) = 3 lines
+        assert_eq!(rendered.len(), 3, "Collapsed should have 3 lines: {:?}", rendered);
+    }
+
+    #[test]
+    fn running_agents_group_height_calculation() {
+        use codex_core::protocol::SubAgentBeginEvent;
+
+        let begin1 = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Task 1".to_string(),
+            resumed: false,
+        };
+        let begin2 = SubAgentBeginEvent {
+            call_id: "call-2".to_string(),
+            session_id: "sess-2".to_string(),
+            agent_type: "analyze".to_string(),
+            description: "Task 2".to_string(),
+            resumed: false,
+        };
+
+        let cell1 = new_subagent_cell(begin1, false);
+        let cell2 = new_subagent_cell(begin2, false);
+
+        // Collapsed: 1 (header) + 2*2 (agent + status for each) = 5
+        let group_collapsed = RunningAgentsGroup::new(vec![&cell1, &cell2], false, false);
+        assert_eq!(group_collapsed.calculate_height(), 5);
+    }
+
+    #[test]
+    fn running_agents_group_empty() {
+        let group: RunningAgentsGroup = RunningAgentsGroup::new(vec![], false, false);
+
+        assert!(group.is_empty());
+        assert_eq!(group.calculate_height(), 0);
+
+        let lines = group.render_lines(80);
+        assert!(lines.is_empty());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SubAgentGroupCell Tests (for completed agents in history)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn subagent_group_cell_renders_single_completed_agent() {
+        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+
+        let begin = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Search files".to_string(),
+            resumed: false,
+        };
+
+        let mut cell = new_subagent_cell(begin, false);
+        cell.complete(&SubAgentEndEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            success: true,
+            output: "Done".to_string(),
+            duration_ms: 1000,
+            tool_summary: vec![],
+            token_usage: Some(SubAgentTokenUsage {
+                input_tokens: 5000,
+                output_tokens: 2000,
+                total_tokens: 7000,
+            }),
+        });
+
+        let group = SubAgentGroupCell::new(vec![cell]);
+        let lines = group.display_lines(80);
+        let rendered = render_lines(&lines);
+
+        assert!(rendered.len() >= 3, "Expected at least 3 lines: {:?}", rendered);
+        assert!(rendered[0].contains("1 agent"), "Header should show '1 agent': {}", rendered[0]);
+        assert!(rendered[0].contains("completed"), "Header should show 'completed': {}", rendered[0]);
+        assert!(rendered[1].contains("explore"), "Should contain agent type: {}", rendered[1]);
+        assert!(rendered[1].contains("7.0k tokens"), "Should show token count: {}", rendered[1]);
+    }
+
+    #[test]
+    fn subagent_group_cell_renders_multiple_completed_agents() {
+        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+
+        let begin1 = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "First task".to_string(),
+            resumed: false,
+        };
+        let begin2 = SubAgentBeginEvent {
+            call_id: "call-2".to_string(),
+            session_id: "sess-2".to_string(),
+            agent_type: "analyze".to_string(),
+            description: "Second task".to_string(),
+            resumed: false,
+        };
+
+        let mut cell1 = new_subagent_cell(begin1, false);
+        let mut cell2 = new_subagent_cell(begin2, false);
+
+        cell1.complete(&SubAgentEndEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            success: true,
+            output: "Done".to_string(),
+            duration_ms: 1000,
+            tool_summary: vec![],
+            token_usage: None,
+        });
+        cell2.complete(&SubAgentEndEvent {
+            call_id: "call-2".to_string(),
+            session_id: "sess-2".to_string(),
+            success: true,
+            output: "Done".to_string(),
+            duration_ms: 2000,
+            tool_summary: vec![],
+            token_usage: None,
+        });
+
+        let group = SubAgentGroupCell::new(vec![cell1, cell2]);
+        let lines = group.display_lines(80);
+        let rendered = render_lines(&lines);
+
+        assert!(rendered.len() >= 5, "Expected at least 5 lines: {:?}", rendered);
+        assert!(rendered[0].contains("2 agents"), "Header should show '2 agents': {}", rendered[0]);
+        // First agent uses ├─, last uses └─
+        assert!(rendered[1].contains("├"), "First agent should have ├ prefix: {}", rendered[1]);
+        assert!(rendered[3].contains("└"), "Last agent should have └ prefix: {}", rendered[3]);
+    }
+
+    #[test]
+    fn subagent_group_cell_shows_error_status() {
+        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+
+        let begin1 = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Success task".to_string(),
+            resumed: false,
+        };
+        let begin2 = SubAgentBeginEvent {
+            call_id: "call-2".to_string(),
+            session_id: "sess-2".to_string(),
+            agent_type: "analyze".to_string(),
+            description: "Failed task".to_string(),
+            resumed: false,
+        };
+
+        let mut cell1 = new_subagent_cell(begin1, false);
+        let mut cell2 = new_subagent_cell(begin2, false);
+
+        cell1.complete(&SubAgentEndEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            success: true,
+            output: "Done".to_string(),
+            duration_ms: 1000,
+            tool_summary: vec![],
+            token_usage: None,
+        });
+        cell2.complete(&SubAgentEndEvent {
+            call_id: "call-2".to_string(),
+            session_id: "sess-2".to_string(),
+            success: false, // FAILED
+            output: "Error".to_string(),
+            duration_ms: 500,
+            tool_summary: vec![],
+            token_usage: None,
+        });
+
+        let group = SubAgentGroupCell::new(vec![cell1, cell2]);
+        let lines = group.display_lines(80);
+        let rendered = render_lines(&lines);
+
+        // Header should show "1 completed, 1 failed"
+        assert!(rendered[0].contains("1 completed"), "Header should show completed count: {}", rendered[0]);
+        assert!(rendered[0].contains("1 failed"), "Header should show failed count: {}", rendered[0]);
+    }
+
+    #[test]
+    fn subagent_group_cell_verbose_shows_events() {
+        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+
+        let begin = SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Task".to_string(),
+            resumed: false,
+        };
+
+        let mut cell = new_subagent_cell(begin, false);
+        cell.add_forwarded_event(ForwardedToolEvent {
+            tool_name: "Read".to_string(),
+            title: Some("config.json".to_string()),
+            status: "completed".to_string(),
+        });
+        cell.complete(&SubAgentEndEvent {
+            call_id: "call-1".to_string(),
+            session_id: "sess-1".to_string(),
+            success: true,
+            output: "Done".to_string(),
+            duration_ms: 1000,
+            tool_summary: vec![],
+            token_usage: None,
+        });
+
+        let group = SubAgentGroupCell::new(vec![cell]);
+
+        // Verbose mode should show tool events
+        let lines_verbose = group.display_lines_verbose(80, true);
+        let rendered = render_lines(&lines_verbose);
+
+        assert!(
+            rendered.iter().any(|l| l.contains("Read")),
+            "Verbose mode should show tool name 'Read': {:?}",
+            rendered
+        );
+        assert!(
+            rendered.iter().any(|l| l.contains("config.json")),
+            "Verbose mode should show tool title 'config.json': {:?}",
+            rendered
+        );
     }
 }

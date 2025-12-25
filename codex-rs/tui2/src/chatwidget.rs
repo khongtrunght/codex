@@ -110,7 +110,9 @@ use crate::history_cell::ForwardedToolEvent;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::McpToolCallCell;
 use crate::history_cell::PlainHistoryCell;
+use crate::history_cell::RunningAgentsGroup;
 use crate::history_cell::SubAgentCell;
+use crate::history_cell::SubAgentGroupCell;
 use crate::markdown::append_markdown;
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
@@ -305,6 +307,8 @@ pub(crate) struct ChatWidget {
     running_commands: HashMap<String, RunningCommand>,
     /// Active sub-agent cells, keyed by call_id
     running_subagents: HashMap<String, SubAgentCell>,
+    /// Completed subagents pending to be added to history as a group
+    pending_completed_subagents: Vec<SubAgentCell>,
     suppressed_exec_calls: HashSet<String>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     task_complete_pending: bool,
@@ -1337,6 +1341,7 @@ impl ChatWidget {
             stream_controller: None,
             running_commands: HashMap::new(),
             running_subagents: HashMap::new(),
+            pending_completed_subagents: Vec::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -1435,6 +1440,7 @@ impl ChatWidget {
             stream_controller: None,
             running_commands: HashMap::new(),
             running_subagents: HashMap::new(),
+            pending_completed_subagents: Vec::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -1511,13 +1517,9 @@ impl ChatWidget {
                 kind: KeyEventKind::Press,
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'o') => {
-                // Toggle global verbose mode (affects history cells)
+                // Toggle global verbose mode (affects all expandable cells including
+                // history cells and running subagents group)
                 self.verbose_mode = !self.verbose_mode;
-
-                // Also toggle running subagents for immediate feedback on running tasks
-                for cell in self.running_subagents.values_mut() {
-                    cell.toggle_expanded();
-                }
                 self.request_redraw();
                 return;
             }
@@ -2065,7 +2067,15 @@ impl ChatWidget {
     fn on_subagent_end(&mut self, ev: SubAgentEndEvent) {
         if let Some(mut cell) = self.running_subagents.remove(&ev.call_id) {
             cell.complete(&ev);
-            self.add_to_history(cell);
+            // Add to pending list instead of history directly
+            self.pending_completed_subagents.push(cell);
+
+            // If all running subagents have completed, add them as a group to history
+            if self.running_subagents.is_empty() && !self.pending_completed_subagents.is_empty() {
+                let completed_cells = std::mem::take(&mut self.pending_completed_subagents);
+                let group_cell = SubAgentGroupCell::new(completed_cells);
+                self.add_to_history(group_cell);
+            }
             self.request_redraw();
         }
     }
@@ -3493,23 +3503,26 @@ impl ChatWidget {
             None => RenderableItem::Owned(Box::new(())),
         };
 
-        // Render running subagent cells
-        let subagent_renderables: Vec<_> = self
-            .running_subagents
-            .values()
-            .map(|cell| {
-                RenderableItem::Owned(Box::new(SubAgentCellRenderable(cell))
-                    as Box<dyn Renderable>)
-                    .inset(Insets::tlbr(1, 0, 0, 0))
-            })
-            .collect();
-
         let mut flex = FlexRenderable::new();
         flex.push(1, active_cell_renderable);
 
-        // Add each running subagent cell
-        for renderable in subagent_renderables {
-            flex.push(0, renderable);
+        // Render running and pending-completed subagent cells as a single grouped display.
+        // This shows completed agents alongside still-running ones for visibility.
+        let has_running = !self.running_subagents.is_empty();
+        let has_pending = !self.pending_completed_subagents.is_empty();
+        if has_running || has_pending {
+            let mut agents: Vec<&SubAgentCell> = self.running_subagents.values().collect();
+            agents.extend(self.pending_completed_subagents.iter());
+            let group_renderable = RunningAgentsGroupRenderable::new(
+                agents,
+                self.verbose_mode,
+                self.config.animations,
+            );
+            flex.push(
+                0,
+                RenderableItem::Owned(Box::new(group_renderable) as Box<dyn Renderable>)
+                    .inset(Insets::tlbr(1, 0, 0, 0)),
+            );
         }
 
         flex.push(
@@ -3541,18 +3554,31 @@ impl Renderable for ChatWidget {
     }
 }
 
-/// Wrapper to render a SubAgentCell reference as a Renderable.
-struct SubAgentCellRenderable<'a>(&'a SubAgentCell);
+/// Wrapper to render a group of running SubAgentCells as a single Renderable.
+struct RunningAgentsGroupRenderable<'a> {
+    group: RunningAgentsGroup<'a>,
+}
 
-impl Renderable for SubAgentCellRenderable<'_> {
+impl<'a> RunningAgentsGroupRenderable<'a> {
+    fn new(agents: Vec<&'a SubAgentCell>, expanded: bool, animations_enabled: bool) -> Self {
+        Self {
+            group: RunningAgentsGroup::new(agents, expanded, animations_enabled),
+        }
+    }
+}
+
+impl Renderable for RunningAgentsGroupRenderable<'_> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let lines = self.0.display_lines(area.width);
+        if self.group.is_empty() {
+            return;
+        }
+        let lines = self.group.render_lines(area.width);
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
         paragraph.render(area, buf);
     }
 
-    fn desired_height(&self, width: u16) -> u16 {
-        self.0.desired_height(width)
+    fn desired_height(&self, _width: u16) -> u16 {
+        self.group.calculate_height()
     }
 }
 
