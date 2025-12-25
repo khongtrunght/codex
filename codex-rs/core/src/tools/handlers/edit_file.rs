@@ -5,12 +5,20 @@
 //! 2. Normalized whitespace match
 //! 3. Line-trimmed match
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::fs;
 
+use std::time::Duration;
+
+use crate::exec::ExecToolCallOutput;
+use crate::exec::StreamOutput;
 use crate::function_tool::FunctionCallError;
+use crate::protocol::FileChange;
 use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
+use crate::tools::events::{ToolEmitter, ToolEventCtx};
 use crate::tools::registry::{ToolHandler, ToolKind};
 
 #[derive(Deserialize)]
@@ -263,7 +271,14 @@ impl ToolHandler for EditFileHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, turn, .. } = invocation;
+        let ToolInvocation {
+            session,
+            turn,
+            tracker,
+            call_id,
+            payload,
+            ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -352,6 +367,35 @@ impl ToolHandler for EditFileHandler {
                 path.display()
             ))
         })?;
+
+        // Emit diff events for TUI display using ToolEmitter pattern
+        let unified_diff = diffy::create_patch(&content, &new_content).to_string();
+        let changes: HashMap<std::path::PathBuf, FileChange> = [(
+            path.clone(),
+            FileChange::Update {
+                unified_diff,
+                move_path: None,
+            },
+        )]
+        .into_iter()
+        .collect();
+
+        let emitter = ToolEmitter::apply_patch(changes, true);
+        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        emitter.begin(event_ctx).await;
+
+        // Create success output and emit end event
+        let success_msg = format!("Successfully edited {}", path.display());
+        let exec_output = ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new(success_msg.clone()),
+            stderr: StreamOutput::new(String::new()),
+            aggregated_output: StreamOutput::new(success_msg),
+            duration: Duration::ZERO,
+            timed_out: false,
+        };
+        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
 
         let strategy_note = if strategy != MatchStrategy::Exact {
             format!(" (matched using {} strategy)", strategy.name())

@@ -1,11 +1,19 @@
 //! Write tool handler - writes content to files.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::fs;
 
+use std::time::Duration;
+
+use crate::exec::ExecToolCallOutput;
+use crate::exec::StreamOutput;
 use crate::function_tool::FunctionCallError;
+use crate::protocol::FileChange;
 use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
+use crate::tools::events::{ToolEmitter, ToolEventCtx};
 use crate::tools::registry::{ToolHandler, ToolKind};
 
 #[derive(Deserialize)]
@@ -23,7 +31,14 @@ impl ToolHandler for WriteFileHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, turn, .. } = invocation;
+        let ToolInvocation {
+            session,
+            turn,
+            tracker,
+            call_id,
+            payload,
+            ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -51,14 +66,19 @@ impl ToolHandler for WriteFileHandler {
         let path = turn.resolve_path(Some(file_path.to_string()));
 
         // Check if file exists - if it does, require it to have been read first
-        if path.exists() {
+        // Also capture original content for diff display
+        let original_content = if path.exists() {
             if !turn.was_file_read(&path) {
                 return Err(FunctionCallError::RespondToModel(format!(
                     "You must read the file before writing to it. Use read_file on '{}' first.",
                     path.display()
                 )));
             }
-        }
+            // Read original content for diff generation
+            fs::read_to_string(&path).await.ok()
+        } else {
+            None
+        };
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
@@ -80,11 +100,51 @@ impl ToolHandler for WriteFileHandler {
             ))
         })?;
 
-        // Track that this file was written (mark as read so subsequent writes are allowed)
-        turn.mark_file_read(&path);
+        // Emit diff events for TUI display using ToolEmitter pattern
+        let change = match original_content {
+            Some(old) => {
+                // File was overwritten - show diff
+                let unified_diff = diffy::create_patch(&old, &args.content).to_string();
+                FileChange::Update {
+                    unified_diff,
+                    move_path: None,
+                }
+            }
+            None => {
+                // New file was created - show as added
+                FileChange::Add {
+                    content: args.content.clone(),
+                }
+            }
+        };
 
+        let changes: HashMap<std::path::PathBuf, FileChange> =
+            [(path.clone(), change)].into_iter().collect();
+
+        let emitter = ToolEmitter::apply_patch(changes, true);
+        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        emitter.begin(event_ctx).await;
+
+        // Create success output and emit end event
         let lines = args.content.lines().count();
         let bytes = args.content.len();
+        let success_msg = format!(
+            "Successfully wrote {} lines ({} bytes) to {}",
+            lines, bytes, path.display()
+        );
+        let exec_output = ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new(success_msg.clone()),
+            stderr: StreamOutput::new(String::new()),
+            aggregated_output: StreamOutput::new(success_msg),
+            duration: Duration::ZERO,
+            timed_out: false,
+        };
+        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
+
+        // Track that this file was written (mark as read so subsequent writes are allowed)
+        turn.mark_file_read(&path);
 
         Ok(ToolOutput::Function {
             content: format!(
