@@ -2954,7 +2954,9 @@ async fn apply_patch_request_shows_diff_summary() {
 }
 
 #[tokio::test]
-async fn plan_update_renders_history_cell() {
+async fn plan_update_does_not_create_history_cell() {
+    // Plan updates should NOT create history cells - they are displayed in-place
+    // via the render_plan_status() method in App, not in the transcript history.
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
     let update = UpdatePlanArgs {
         explanation: Some("Adapting plan".to_string()),
@@ -2980,15 +2982,10 @@ async fn plan_update_renders_history_cell() {
         parent_session_id: None,
     });
     let cells = drain_insert_history(&mut rx);
-    assert!(!cells.is_empty(), "expected plan update cell to be sent");
-    let blob = lines_to_single_string(cells.last().unwrap());
     assert!(
-        blob.contains("Updated Plan"),
-        "missing plan header: {blob:?}"
+        cells.is_empty(),
+        "plan updates should not create history cells; display is handled by App"
     );
-    assert!(blob.contains("Explore codebase"));
-    assert!(blob.contains("Implement feature"));
-    assert!(blob.contains("Write tests"));
 }
 
 #[tokio::test]

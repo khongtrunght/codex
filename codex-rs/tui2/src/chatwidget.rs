@@ -450,6 +450,21 @@ impl ChatWidget {
         self.bottom_pane.set_skills(skills);
     }
 
+    /// Update the current plan for display in the bottom pane.
+    pub(crate) fn set_plan(&mut self, plan: Option<codex_protocol::plan_tool::UpdatePlanArgs>) {
+        self.bottom_pane.set_plan(plan);
+    }
+
+    /// Toggle expanded plan view (Ctrl+U).
+    pub(crate) fn toggle_expanded_plan(&mut self) {
+        self.bottom_pane.toggle_expanded_plan();
+    }
+
+    /// Whether expanded plan view is enabled.
+    pub(crate) fn is_expanded_plan(&self) -> bool {
+        self.bottom_pane.is_expanded_plan()
+    }
+
     fn set_skills_from_response(&mut self, response: &ListSkillsResponseEvent) {
         let skills = skills_for_cwd(&self.config.cwd, &response.skills);
         self.set_skills(Some(skills));
@@ -823,8 +838,9 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_plan_update(&mut self, update: UpdatePlanArgs) {
-        self.add_to_history(history_cell::new_plan_update(update));
+    fn on_plan_update(&mut self, _update: UpdatePlanArgs) {
+        // Plan is stored in App.current_plan via AppEvent handler.
+        // No history entry needed - display handled by render_plan_status().
     }
 
     fn on_exec_approval_request(&mut self, id: String, ev: ExecApprovalRequestEvent) {
