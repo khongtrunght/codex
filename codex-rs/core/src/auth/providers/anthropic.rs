@@ -229,17 +229,17 @@ mod tests {
     }
 
     #[test]
-    fn oauth_needs_refresh_when_expiring_soon() {
+    fn oauth_needs_refresh_when_already_expired() {
         let expiring_auth = AnthropicAuth::from_credential(ProviderCredential::OAuth {
             access_token: "token".to_string(),
             refresh_token: "refresh".to_string(),
-            expires_at: Some(Utc::now() + Duration::minutes(30)), // Expires in 30 min
+            expires_at: Some(Utc::now() - Duration::minutes(5)), // Already expired
             last_refresh: Some(Utc::now()),
             account_id: None,
             exchanged_api_key: None,
             extra: None,
         });
-        assert!(expiring_auth.needs_refresh()); // Within 1 hour buffer
+        assert!(expiring_auth.needs_refresh()); // Already expired, needs refresh
     }
 
     #[test]

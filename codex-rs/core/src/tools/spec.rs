@@ -2114,6 +2114,8 @@ mod tests {
             &Features::with_defaults(),
             &[
                 "bash",
+                "bash_output",
+                "kill_shell",
                 "list_mcp_resources",
                 "list_mcp_resource_templates",
                 "read_mcp_resource",

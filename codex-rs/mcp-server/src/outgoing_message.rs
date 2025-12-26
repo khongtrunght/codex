@@ -269,6 +269,7 @@ mod tests {
                 rollout_path: rollout_file.path().to_path_buf(),
             }),
             source_session_id: None,
+            parent_session_id: None,
         };
 
         outgoing_message_sender
@@ -312,6 +313,7 @@ mod tests {
             id: "1".to_string(),
             msg: EventMsg::SessionConfigured(session_configured_event.clone()),
             source_session_id: None,
+            parent_session_id: None,
         };
         let meta = OutgoingNotificationMeta {
             request_id: Some(RequestId::String("123".to_string())),

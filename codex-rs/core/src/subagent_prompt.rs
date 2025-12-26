@@ -56,7 +56,7 @@ mod tests {
     fn test_augment_with_default_prompt() {
         let result = augment_system_prompt(DEFAULT_SUBAGENT_PROMPT);
 
-        assert!(result.contains("Claude Code"));
+        assert!(result.contains("coding agent"));
         assert!(result.contains("Notes:"));
     }
 
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn test_default_prompt_is_actionable() {
         // Verify default prompt provides clear direction
-        assert!(DEFAULT_SUBAGENT_PROMPT.contains("Claude Code"));
+        assert!(DEFAULT_SUBAGENT_PROMPT.contains("coding agent"));
         assert!(DEFAULT_SUBAGENT_PROMPT.contains("tools available"));
         assert!(DEFAULT_SUBAGENT_PROMPT.contains("complete the task"));
     }

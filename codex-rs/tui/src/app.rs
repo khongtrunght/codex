@@ -1534,6 +1534,7 @@ mod tests {
             id: String::new(),
             msg: EventMsg::SessionConfigured(event),
             source_session_id: None,
+            parent_session_id: None,
         });
 
         while app_event_rx.try_recv().is_ok() {}

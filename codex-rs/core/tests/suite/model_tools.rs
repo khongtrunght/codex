@@ -57,8 +57,10 @@ async fn model_selects_expected_tools() {
             "list_mcp_resources".to_string(),
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
+            "glob".to_string(),
             "update_plan".to_string(),
-            "view_image".to_string()
+            "view_image".to_string(),
+            "task".to_string()
         ],
         "codex-mini-latest should expose the local shell tool",
     );
@@ -71,9 +73,11 @@ async fn model_selects_expected_tools() {
             "list_mcp_resources".to_string(),
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
+            "glob".to_string(),
             "update_plan".to_string(),
             "apply_patch".to_string(),
-            "view_image".to_string()
+            "view_image".to_string(),
+            "task".to_string()
         ],
         "gpt-5-codex should expose the apply_patch tool",
     );
@@ -86,9 +90,11 @@ async fn model_selects_expected_tools() {
             "list_mcp_resources".to_string(),
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
+            "glob".to_string(),
             "update_plan".to_string(),
             "apply_patch".to_string(),
-            "view_image".to_string()
+            "view_image".to_string(),
+            "task".to_string()
         ],
         "gpt-5.1-codex should expose the apply_patch tool",
     );
@@ -101,8 +107,10 @@ async fn model_selects_expected_tools() {
             "list_mcp_resources".to_string(),
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
+            "glob".to_string(),
             "update_plan".to_string(),
-            "view_image".to_string()
+            "view_image".to_string(),
+            "task".to_string()
         ],
         "gpt-5 should expose the apply_patch tool",
     );
@@ -115,9 +123,11 @@ async fn model_selects_expected_tools() {
             "list_mcp_resources".to_string(),
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
+            "glob".to_string(),
             "update_plan".to_string(),
             "apply_patch".to_string(),
-            "view_image".to_string()
+            "view_image".to_string(),
+            "task".to_string()
         ],
         "gpt-5.1 should expose the apply_patch tool",
     );
@@ -130,9 +140,11 @@ async fn model_selects_expected_tools() {
             "list_mcp_resources".to_string(),
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
+            "glob".to_string(),
             "update_plan".to_string(),
             "apply_patch".to_string(),
-            "view_image".to_string()
+            "view_image".to_string(),
+            "task".to_string()
         ],
         "exp-5.1 should expose the apply_patch tool",
     );

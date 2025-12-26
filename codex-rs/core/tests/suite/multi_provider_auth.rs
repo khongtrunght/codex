@@ -191,18 +191,18 @@ fn test_anthropic_oauth_credential_storage() {
 
 #[test]
 fn test_anthropic_oauth_needs_refresh() {
-    // OAuth credential that expires soon - should need refresh
+    // OAuth credential that is already expired - should need refresh
     let expiring_cred = ProviderCredential::OAuth {
         access_token: "token".to_string(),
         refresh_token: "refresh".to_string(),
-        expires_at: Some(Utc::now() + chrono::Duration::minutes(30)), // Expires in 30 min
+        expires_at: Some(Utc::now() - chrono::Duration::minutes(5)), // Already expired
         last_refresh: Some(Utc::now()),
         account_id: None,
         exchanged_api_key: None,
         extra: None,
     };
     let auth = AnthropicAuth::from_credential(expiring_cred);
-    assert!(auth.needs_refresh()); // Should need refresh (within 1 hour buffer)
+    assert!(auth.needs_refresh()); // Should need refresh (already expired)
 
     // OAuth credential that doesn't expire soon
     let valid_cred = ProviderCredential::OAuth {

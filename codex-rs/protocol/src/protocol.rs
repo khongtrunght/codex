@@ -952,6 +952,7 @@ pub struct SubAgentProgressEvent {
     pub tool_count: usize,
     /// Cumulative token usage so far.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub cumulative_tokens: Option<SubAgentTokenUsage>,
 }
 
