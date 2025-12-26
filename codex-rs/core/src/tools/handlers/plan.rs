@@ -105,8 +105,17 @@ pub(crate) async fn handle_update_plan(
 ) -> Result<String, FunctionCallError> {
     let args = parse_update_plan_arguments(&arguments)?;
     session
-        .send_event(turn_context, EventMsg::PlanUpdate(args))
+        .send_event(turn_context, EventMsg::PlanUpdate(args.clone()))
         .await;
+
+    // Persist plan to disk
+    let codex_home = &session.services.codex_home;
+    let session_id = session.conversation_id().to_string();
+    let agent_id = session.source_session_id().map(String::as_str);
+    if let Err(e) = crate::todos::save_plan(codex_home, &session_id, agent_id, &args) {
+        tracing::warn!("Failed to persist plan: {}", e);
+    }
+
     Ok("Plan updated".to_string())
 }
 

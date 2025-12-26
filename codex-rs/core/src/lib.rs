@@ -80,6 +80,7 @@ pub mod shell_snapshot;
 pub mod skills;
 pub mod spawn;
 pub mod terminal;
+pub mod todos;
 mod tools;
 pub mod turn_diff_tracker;
 pub use rollout::ARCHIVED_SESSIONS_SUBDIR;

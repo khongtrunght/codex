@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::AuthManager;
@@ -29,4 +30,7 @@ pub(crate) struct SessionServices {
     pub(crate) skills_manager: Arc<SkillsManager>,
     /// Registry of available agent types for the Task tool.
     pub(crate) agent_type_registry: AgentTypeRegistry,
+    /// Path to the codex home directory (e.g., ~/.codex).
+    /// Used for persisting plans/todos.
+    pub(crate) codex_home: PathBuf,
 }

@@ -733,6 +733,7 @@ impl Session {
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
             agent_type_registry,
+            codex_home: config.codex_home.clone(),
         };
 
         let sess = Arc::new(Session {
@@ -840,6 +841,11 @@ impl Session {
     /// Returns None for the main/root session.
     pub(crate) fn source_session_id(&self) -> Option<&String> {
         self.source_session_id.as_ref()
+    }
+
+    /// Get the conversation ID for this session.
+    pub(crate) fn conversation_id(&self) -> ConversationId {
+        self.conversation_id
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -3302,6 +3308,7 @@ mod tests {
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
             agent_type_registry,
+            codex_home: config.codex_home.clone(),
         };
 
         let turn_context = Session::make_turn_context(
@@ -3394,6 +3401,7 @@ mod tests {
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
             agent_type_registry,
+            codex_home: config.codex_home.clone(),
         };
 
         let turn_context = Arc::new(Session::make_turn_context(
