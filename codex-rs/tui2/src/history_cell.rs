@@ -1556,11 +1556,6 @@ impl SubAgentCell {
         &self.session_id
     }
 
-    /// Get the agent type.
-    pub fn agent_type(&self) -> &str {
-        &self.agent_type
-    }
-
     /// Get the list of forwarded events.
     pub fn forwarded_events(&self) -> &[ForwardedToolEvent] {
         &self.forwarded_events
@@ -1591,21 +1586,6 @@ impl SubAgentCell {
     /// Get the current status.
     pub fn status(&self) -> SubAgentStatus {
         self.status
-    }
-
-    /// Get the start time.
-    pub fn start_time(&self) -> Option<Instant> {
-        self.start_time
-    }
-
-    /// Get the description.
-    pub fn description(&self) -> &str {
-        &self.description
-    }
-
-    /// Get the tool uses count.
-    pub fn tool_uses_count(&self) -> usize {
-        self.tool_uses_count
     }
 
     /// Get a human-readable status text for the current state.
@@ -1660,10 +1640,17 @@ impl SubAgentCell {
         };
 
         let status_text = match (&self.status, self.resumed) {
-            (SubAgentStatus::Running, true) => "Resumed",
-            (SubAgentStatus::Running, false) => "Running",
-            (SubAgentStatus::Completed, _) => "Done",
-            (SubAgentStatus::Error, _) => "Error",
+            (SubAgentStatus::Running, true) => "Resumed".to_string(),
+            (SubAgentStatus::Running, false) => "Running".to_string(),
+            (SubAgentStatus::Completed, _) => {
+                if let Some(ms) = self.duration_ms {
+                    let duration = Duration::from_millis(ms);
+                    format!("Done ({})", format_duration(duration))
+                } else {
+                    "Done".to_string()
+                }
+            }
+            (SubAgentStatus::Error, _) => "Error".to_string(),
         };
 
         // Format: "● agent-type · Status · N tool uses · XXk tokens"
@@ -1734,6 +1721,85 @@ impl SubAgentCell {
         }
 
         lines
+    }
+
+    /// Render this agent as part of a group (RunningAgentsGroup or SubAgentGroupCell).
+    /// This consolidates the common rendering logic for grouped agent displays.
+    pub(crate) fn render_in_group(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        is_last: bool,
+        width: u16,
+        show_expanded: bool,
+        animations_enabled: bool,
+    ) {
+        // Tree prefix for agent header
+        let tree_prefix = if is_last { "└─ " } else { "├─ " };
+        let continuation = if is_last { "   " } else { "│  " };
+
+        // Agent bullet based on status
+        let agent_bullet = match self.status {
+            SubAgentStatus::Running => spinner(self.start_time, animations_enabled),
+            SubAgentStatus::Completed => "●".green().bold(),
+            SubAgentStatus::Error => "●".red().bold(),
+        };
+
+        // Agent header: "agent-type (description) · N tool uses · Xk tokens · duration"
+        let desc = truncate_description(&self.description, (width as usize).saturating_sub(50));
+        let tokens = self.format_tokens();
+        let duration_str = if let Some(ms) = self.duration_ms {
+            let duration = Duration::from_millis(ms);
+            format!(" · {}", format_duration(duration))
+        } else {
+            String::new()
+        };
+        let header = format!(
+            "{} ({}) · {} tool uses · {}{}",
+            self.agent_type,
+            desc,
+            self.tool_uses_count,
+            tokens,
+            duration_str,
+        );
+
+        lines.push(Line::from(vec![
+            tree_prefix.dim(),
+            agent_bullet,
+            " ".into(),
+            header.into(),
+        ]));
+
+        // Status line under agent - show the last activity
+        let status_prefix = format!("{continuation}└ ");
+        let status_text = self.current_status_text();
+        lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
+
+        // If expanded, show forwarded events
+        if show_expanded && !self.forwarded_events.is_empty() {
+            for (j, event) in self.forwarded_events.iter().enumerate() {
+                let is_last_event = j == self.forwarded_events.len() - 1;
+                let event_prefix = format!(
+                    "{continuation}   {} ",
+                    if is_last_event { "└" } else { "├" }
+                );
+
+                let status_icon = match event.status.as_str() {
+                    "completed" => "✓".green(),
+                    "error" => "✗".red(),
+                    _ => "○".cyan(),
+                };
+
+                let title_text = event.title.clone().unwrap_or_default();
+                lines.push(Line::from(vec![
+                    event_prefix.dim(),
+                    status_icon,
+                    " ".into(),
+                    event.tool_name.clone().into(),
+                    " ".into(),
+                    title_text.dim(),
+                ]));
+            }
+        }
     }
 
     /// Calculate height with explicit expanded flag.
@@ -1929,71 +1995,7 @@ impl<'a> RunningAgentsGroup<'a> {
         is_last: bool,
         width: u16,
     ) {
-        // Tree prefix for agent header
-        let tree_prefix = if is_last { "└─ " } else { "├─ " };
-        let continuation = if is_last { "   " } else { "│  " };
-
-        // Agent bullet based on status
-        let agent_bullet = match agent.status() {
-            SubAgentStatus::Running => spinner(agent.start_time(), self.animations_enabled),
-            SubAgentStatus::Completed => "●".green().bold(),
-            SubAgentStatus::Error => "●".red().bold(),
-        };
-
-        // Agent header: "agent-type (description) · N tool uses"
-        let desc = truncate_description(agent.description(), (width as usize).saturating_sub(30));
-        let header = format!(
-            "{} ({}) · {} tool uses",
-            agent.agent_type(),
-            desc,
-            agent.tool_uses_count(),
-        );
-
-        lines.push(Line::from(vec![
-            tree_prefix.dim(),
-            agent_bullet,
-            " ".into(),
-            header.into(),
-        ]));
-
-        // Status line under agent
-        let status_prefix = format!("{continuation}└ ");
-        let status_text = agent.current_status_text();
-        lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
-
-        // If expanded, show forwarded events
-        if self.expanded {
-            let events = agent.forwarded_events();
-            if events.is_empty() {
-                // No events yet
-            } else {
-                let event_count = events.len();
-                for (j, event) in events.iter().enumerate() {
-                    let is_last_event = j == event_count - 1;
-                    let event_prefix = format!(
-                        "{}   {} ",
-                        continuation,
-                        if is_last_event { "└" } else { "├" }
-                    );
-
-                    let status_icon = match event.status.as_str() {
-                        "completed" => "✓".green(),
-                        "error" => "✗".red(),
-                        _ => "○".cyan(),
-                    };
-
-                    let title_text = event.title.clone().unwrap_or_default();
-                    lines.push(Line::from(vec![
-                        event_prefix.dim(),
-                        status_icon,
-                        " ".into(),
-                        event.tool_name.clone().into(),
-                        " ".into(),
-                        title_text.dim(),
-                    ]));
-                }
-            }
-        }
+        agent.render_in_group(lines, is_last, width, self.expanded, self.animations_enabled);
     }
 
     /// Calculate the height needed to render the group.
@@ -2097,69 +2099,8 @@ impl SubAgentGroupCell {
         width: u16,
         show_expanded: bool,
     ) {
-        // Tree prefix for agent header
-        let tree_prefix = if is_last { "└─ " } else { "├─ " };
-        let continuation = if is_last { "   " } else { "│  " };
-
-        // Agent bullet based on status
-        let agent_bullet = match agent.status() {
-            SubAgentStatus::Completed => "●".green().bold(),
-            SubAgentStatus::Error => "●".red().bold(),
-            SubAgentStatus::Running => "●".cyan().bold(),
-        };
-
-        // Agent header: "agent-type (description) · N tool uses · Xk tokens"
-        let desc = truncate_description(agent.description(), (width as usize).saturating_sub(40));
-        let tokens = agent.format_tokens();
-        let header = format!(
-            "{} ({}) · {} tool uses · {}",
-            agent.agent_type(),
-            desc,
-            agent.tool_uses_count(),
-            tokens,
-        );
-
-        lines.push(Line::from(vec![
-            tree_prefix.dim(),
-            agent_bullet,
-            " ".into(),
-            header.into(),
-        ]));
-
-        // Status line under agent - show the last activity
-        let status_prefix = format!("{continuation}└ ");
-        let status_text = agent.current_status_text();
-        lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
-
-        // If expanded, show forwarded events
-        if show_expanded {
-            let events = agent.forwarded_events();
-            if !events.is_empty() {
-                for (j, event) in events.iter().enumerate() {
-                    let is_last_event = j == events.len() - 1;
-                    let event_prefix = format!(
-                        "{continuation}   {} ",
-                        if is_last_event { "└" } else { "├" }
-                    );
-
-                    let status_icon = match event.status.as_str() {
-                        "completed" => "✓".green(),
-                        "error" => "✗".red(),
-                        _ => "○".cyan(),
-                    };
-
-                    let title_text = event.title.clone().unwrap_or_default();
-                    lines.push(Line::from(vec![
-                        event_prefix.dim(),
-                        status_icon,
-                        " ".into(),
-                        event.tool_name.clone().into(),
-                        " ".into(),
-                        title_text.dim(),
-                    ]));
-                }
-            }
-        }
+        // SubAgentGroupCell contains only completed agents, so animations are not needed
+        agent.render_in_group(lines, is_last, width, show_expanded, false);
     }
 
     /// Calculate height with explicit expanded flag.
