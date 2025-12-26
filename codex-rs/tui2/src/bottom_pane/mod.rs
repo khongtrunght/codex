@@ -559,7 +559,7 @@ impl BottomPane {
                 if self.show_expanded_plan {
                     // When toggled on but no plan exists, show hint
                     return vec![Line::from(vec![
-                        "  ".into(),
+                        "  └ ".dim(),
                         "No plan available ".dim(),
                         "(ctrl+u to hide)".dim(),
                     ])];
@@ -572,15 +572,9 @@ impl BottomPane {
             // Expanded view: show full plan with all steps
             let mut lines: Vec<Line<'static>> = Vec::new();
 
-            // Header line with hint to hide
-            lines.push(Line::from(vec![
-                "  ".into(),
-                "Plan ".bold().cyan(),
-                "(ctrl+u to hide)".dim(),
-            ]));
-
-            // Plan steps
-            for item in &plan.plan {
+            // Plan steps with └ on first item
+            for (i, item) in plan.plan.iter().enumerate() {
+                let prefix = if i == 0 { "  └ " } else { "    " };
                 let (checkbox, style) = match item.status {
                     StepStatus::Completed => {
                         ("✔ ", ratatui::style::Style::default().dim().crossed_out())
@@ -591,7 +585,7 @@ impl BottomPane {
                     StepStatus::Pending => ("□ ", ratatui::style::Style::default().dim()),
                 };
                 lines.push(Line::from(vec![
-                    Span::from("    "),
+                    Span::from(prefix).dim(),
                     Span::styled(checkbox, style),
                     Span::styled(item.step.clone(), style),
                 ]));
@@ -599,17 +593,16 @@ impl BottomPane {
 
             lines
         } else {
-            // Collapsed view: show only "Next: [in-progress step]" with hint to expand
+            // Collapsed view: show only "└ Next: [in-progress step]"
             if let Some(in_progress) = plan
                 .plan
                 .iter()
                 .find(|s| matches!(s.status, StepStatus::InProgress))
             {
                 vec![Line::from(vec![
-                    "  ".into(),
+                    "  └ ".dim(),
                     "Next: ".dim(),
                     Span::from(in_progress.step.clone()),
-                    " (ctrl+u to show todos)".dim(),
                 ])]
             } else {
                 vec![]
