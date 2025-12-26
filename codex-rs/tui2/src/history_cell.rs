@@ -1607,6 +1607,11 @@ impl SubAgentCell {
         }
     }
 
+    /// Toggle the expanded state of the cell.
+    #[allow(dead_code)] // Used in tests
+    pub fn toggle_expanded(&mut self) {
+        self.expanded = !self.expanded;
+    }
 }
 
 impl HistoryCell for SubAgentCell {

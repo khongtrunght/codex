@@ -196,11 +196,16 @@ pub(crate) fn spinner(start_time: Option<Instant>, animations_enabled: bool) -> 
 
 impl HistoryCell for ExecCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if self.is_exploring_cell() {
-            self.exploring_display_lines(width)
+        self.render_with_max_lines(width, TOOL_CALL_MAX_LINES)
+    }
+
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        let max_lines = if verbose {
+            TOOL_CALL_VERBOSE_MAX_LINES
         } else {
-            self.command_display_lines(width)
-        }
+            TOOL_CALL_MAX_LINES
+        };
+        self.render_with_max_lines(width, max_lines)
     }
 
     fn desired_transcript_height(&self, width: u16) -> u16 {
@@ -253,6 +258,14 @@ impl HistoryCell for ExecCell {
 }
 
 impl ExecCell {
+    fn render_with_max_lines(&self, width: u16, max_lines: usize) -> Vec<Line<'static>> {
+        if self.is_exploring_cell() {
+            self.exploring_display_lines(width)
+        } else {
+            self.command_display_lines_with_limit(width, max_lines)
+        }
+    }
+
     fn exploring_display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut out: Vec<Line<'static>> = Vec::new();
         out.push(Line::from(vec![
@@ -356,7 +369,7 @@ impl ExecCell {
         out
     }
 
-    fn command_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn command_display_lines_with_limit(&self, width: u16, max_lines: usize) -> Vec<Line<'static>> {
         let [call] = &self.calls.as_slice() else {
             panic!("Expected exactly one call in a command display cell");
         };
@@ -420,9 +433,17 @@ impl ExecCell {
 
         let mut lines: Vec<Line<'static>> = vec![header_line];
 
-        let continuation_lines = Self::limit_lines_from_start(
+        // In verbose mode (max_lines > default), also expand command continuation
+        // Use limit_lines_no_ellipsis to avoid duplicate truncation indicators
+        // (the output section shows its own truncation)
+        let continuation_max = if max_lines > TOOL_CALL_MAX_LINES {
+            max_lines
+        } else {
+            layout.command_continuation_max_lines
+        };
+        let continuation_lines = Self::limit_lines_no_ellipsis(
             &continuation_lines,
-            layout.command_continuation_max_lines,
+            continuation_max,
         );
         if !continuation_lines.is_empty() {
             lines.extend(prefix_lines(
@@ -433,10 +454,11 @@ impl ExecCell {
         }
 
         if let Some(output) = call.output.as_ref() {
+            // User shell commands keep their dedicated limit; others use max_lines
             let line_limit = if call.is_user_shell_command() {
                 USER_SHELL_TOOL_CALL_MAX_LINES
             } else {
-                TOOL_CALL_MAX_LINES
+                max_lines
             };
             let raw_output = output_lines(
                 Some(output),
@@ -450,7 +472,7 @@ impl ExecCell {
             let display_limit = if call.is_user_shell_command() {
                 USER_SHELL_TOOL_CALL_MAX_LINES
             } else {
-                layout.output_max_lines
+                max_lines
             };
 
             if raw_output.lines.is_empty() {
@@ -492,6 +514,7 @@ impl ExecCell {
         lines
     }
 
+    #[allow(dead_code)] // May be useful for other truncation needs
     fn limit_lines_from_start(lines: &[Line<'static>], keep: usize) -> Vec<Line<'static>> {
         if lines.len() <= keep {
             return lines.to_vec();
@@ -503,6 +526,18 @@ impl ExecCell {
         let mut out: Vec<Line<'static>> = lines[..keep].to_vec();
         out.push(Self::ellipsis_line(lines.len() - keep));
         out
+    }
+
+    /// Like limit_lines_from_start but without adding an ellipsis.
+    /// Used for command continuation where output section handles truncation display.
+    fn limit_lines_no_ellipsis(lines: &[Line<'static>], keep: usize) -> Vec<Line<'static>> {
+        if lines.len() <= keep {
+            lines.to_vec()
+        } else if keep == 0 {
+            Vec::new()
+        } else {
+            lines[..keep].to_vec()
+        }
     }
 
     fn truncate_lines_middle(
@@ -583,7 +618,6 @@ struct ExecDisplayLayout {
     command_continuation: PrefixedBlock,
     command_continuation_max_lines: usize,
     output_block: PrefixedBlock,
-    output_max_lines: usize,
 }
 
 impl ExecDisplayLayout {
@@ -591,13 +625,11 @@ impl ExecDisplayLayout {
         command_continuation: PrefixedBlock,
         command_continuation_max_lines: usize,
         output_block: PrefixedBlock,
-        output_max_lines: usize,
     ) -> Self {
         Self {
             command_continuation,
             command_continuation_max_lines,
             output_block,
-            output_max_lines,
         }
     }
 }
@@ -606,7 +638,6 @@ const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
     PrefixedBlock::new("  │ ", "  │ "),
     2,
     PrefixedBlock::new("  └ ", "    "),
-    5,
 );
 
 #[cfg(test)]
@@ -685,7 +716,7 @@ mod tests {
         let cell = ExecCell::new(call, false);
 
         // Use a narrow width so each logical line wraps into many on-screen lines.
-        let lines = cell.command_display_lines(width);
+        let lines = cell.display_lines(width);
 
         // Count how many rendered lines contain our marker text. This approximates
         // the number of visible output "screen lines" for this command.
