@@ -24,6 +24,7 @@ use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
 use crate::wrapping::word_wrap_lines;
 use base64::Engine;
+use codex_common::elapsed::format_duration;
 use codex_common::format_env_display::format_env_display;
 use codex_core::config::Config;
 use codex_core::config::types::McpServerTransportConfig;
@@ -960,14 +961,30 @@ impl McpToolCallCell {
         let mut compact_header = Line::from(compact_spans.clone());
         let reserved = compact_header.width();
 
+        // Calculate duration span for elapsed time display
+        let duration_span: Option<Span<'static>> = if status.is_some() {
+            // Completed: show final duration
+            self.duration.map(|d| format!(" ({})", format_duration(d)).dim())
+        } else {
+            // Running: show elapsed time from start_time
+            let elapsed = self.start_time.elapsed();
+            Some(format!(" ({})", format_duration(elapsed)).dim())
+        };
+
         let inline_invocation =
             invocation_line.width() <= (width as usize).saturating_sub(reserved);
 
         if inline_invocation {
             compact_header.extend(invocation_line.spans.clone());
+            if let Some(span) = duration_span {
+                compact_header.push_span(span);
+            }
             lines.push(compact_header);
         } else {
             compact_spans.pop(); // drop trailing space for standalone header
+            if let Some(span) = duration_span {
+                compact_spans.push(span);
+            }
             lines.push(Line::from(compact_spans));
 
             let opts = RtOptions::new((width as usize).saturating_sub(4))

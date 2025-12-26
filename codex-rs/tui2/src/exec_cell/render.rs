@@ -431,6 +431,21 @@ impl ExecCell {
             }
         }
 
+        // Add elapsed time display
+        let duration_span: Option<Span<'static>> = if self.is_active() {
+            // Running: show elapsed time from start_time
+            call.start_time.map(|st| {
+                let elapsed = st.elapsed();
+                format!(" ({})", format_duration(elapsed)).dim()
+            })
+        } else {
+            // Completed: show final duration
+            call.duration.map(|d| format!(" ({})", format_duration(d)).dim())
+        };
+        if let Some(span) = duration_span {
+            header_line.push_span(span);
+        }
+
         let mut lines: Vec<Line<'static>> = vec![header_line];
 
         // In verbose mode (max_lines > default), also expand command continuation

@@ -2,6 +2,6 @@
 source: tui2/src/history_cell.rs
 expression: rendered
 ---
-• Ran echo one
+• Ran echo one (1ms)
   │ echo two
   └ (no output)

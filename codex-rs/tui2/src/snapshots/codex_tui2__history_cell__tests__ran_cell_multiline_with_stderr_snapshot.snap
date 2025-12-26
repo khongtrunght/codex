@@ -2,7 +2,7 @@
 source: tui2/src/history_cell.rs
 expression: rendered
 ---
-• Ran echo
+• Ran echo (5ms)
   │ this_is_a_very_long_si
   │ ngle_token_that_will_w
   └ error: first line on

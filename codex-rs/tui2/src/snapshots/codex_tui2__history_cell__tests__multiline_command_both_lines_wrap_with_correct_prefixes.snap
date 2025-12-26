@@ -2,7 +2,7 @@
 source: tui2/src/history_cell.rs
 expression: rendered
 ---
-• Ran first_token_is_long_en
+• Ran first_token_is_long_en (1ms)
   │ ough_to_wrap
   │ second_token_is_also_lon
   └ (no output)
