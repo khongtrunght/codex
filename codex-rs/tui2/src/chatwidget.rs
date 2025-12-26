@@ -106,7 +106,7 @@ use crate::exec_cell::new_active_exec_command;
 use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
 use crate::history_cell::AgentMessageCell;
-use crate::history_cell::ForwardedToolEvent;
+use codex_protocol::protocol::RolloutItem;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::McpToolCallCell;
 use crate::history_cell::PlainHistoryCell;
@@ -2104,73 +2104,17 @@ impl ChatWidget {
             .find(|c| c.session_id() == source_session_id);
 
         if let Some(cell) = cell {
-            match msg {
-                EventMsg::ExecCommandBegin(ev) => {
-                    cell.add_forwarded_event(ForwardedToolEvent {
-                        tool_name: "shell".to_string(),
-                        title: Some(ev.command.join(" ")),
-                        status: "running".to_string(),
-                    });
-                }
-                EventMsg::ExecCommandEnd(ev) => {
-                    let status = if ev.exit_code == 0 { "completed" } else { "error" };
-                    cell.update_last_event_status(status);
-                }
-                EventMsg::McpToolCallBegin(ev) => {
-                    cell.add_forwarded_event(ForwardedToolEvent {
-                        tool_name: ev.invocation.tool.clone(),
-                        title: Some(ev.invocation.server.clone()),
-                        status: "running".to_string(),
-                    });
-                }
-                EventMsg::McpToolCallEnd(_) => {
-                    cell.update_last_event_status("completed");
-                }
-                EventMsg::PatchApplyBegin(ev) => {
-                    // Extract file paths from the changes map
-                    let paths: Vec<String> = ev
-                        .changes
-                        .keys()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .collect();
-                    let title = if paths.len() == 1 {
-                        Some(paths[0].clone())
-                    } else {
-                        Some(format!("{} files", paths.len()))
-                    };
-                    cell.add_forwarded_event(ForwardedToolEvent {
-                        tool_name: "patch".to_string(),
-                        title,
-                        status: "running".to_string(),
-                    });
-                }
-                EventMsg::PatchApplyEnd(ev) => {
-                    let status = if ev.success { "completed" } else { "error" };
-                    cell.update_last_event_status(status);
-                }
-                EventMsg::WebSearchBegin(_) => {
-                    cell.add_forwarded_event(ForwardedToolEvent {
-                        tool_name: "web_search".to_string(),
-                        title: None,
-                        status: "running".to_string(),
-                    });
-                }
-                EventMsg::WebSearchEnd(_) => {
-                    cell.update_last_event_status("completed");
-                }
-                EventMsg::TokenCount(tc) => {
-                    // Accumulate token usage from forwarded TokenCount events
-                    if let Some(info) = &tc.info {
-                        let last = &info.last_token_usage;
-                        // Use absolute values since tokens are i64 in protocol
-                        let input_delta = last.input_tokens.max(0) as u64;
-                        let output_delta = last.output_tokens.max(0) as u64;
-                        cell.accumulate_tokens(input_delta, output_delta);
-                    }
-                }
-                _ => {
-                    // Other events are not displayed in the subagent cell
-                }
+            // Store raw event for later processing
+            cell.add_raw_event(RolloutItem::EventMsg(msg.clone()));
+
+            // Handle token accumulation specially
+            if let EventMsg::TokenCount(tc) = msg
+                && let Some(info) = &tc.info
+            {
+                let last = &info.last_token_usage;
+                let input_delta = last.input_tokens.max(0) as u64;
+                let output_delta = last.output_tokens.max(0) as u64;
+                cell.accumulate_tokens(input_delta, output_delta);
             }
             self.request_redraw();
         }

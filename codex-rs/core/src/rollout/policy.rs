@@ -48,7 +48,19 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::EnteredReviewMode(_)
         | EventMsg::ExitedReviewMode(_)
         | EventMsg::UndoCompleted(_)
-        | EventMsg::TurnAborted(_) => true,
+        | EventMsg::TurnAborted(_)
+        // SubAgentBegin/End are persisted to enable resume with subagent history
+        | EventMsg::SubAgentBegin(_)
+        | EventMsg::SubAgentEnd(_)
+        // Tool execution events are persisted for subagent history display
+        | EventMsg::ExecCommandBegin(_)
+        | EventMsg::ExecCommandEnd(_)
+        | EventMsg::McpToolCallBegin(_)
+        | EventMsg::McpToolCallEnd(_)
+        | EventMsg::PatchApplyBegin(_)
+        | EventMsg::PatchApplyEnd(_)
+        | EventMsg::WebSearchBegin(_)
+        | EventMsg::WebSearchEnd(_) => true,
         EventMsg::Error(_)
         | EventMsg::Warning(_)
         | EventMsg::TaskStarted(_)
@@ -59,21 +71,13 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::AgentReasoningSectionBreak(_)
         | EventMsg::RawResponseItem(_)
         | EventMsg::SessionConfigured(_)
-        | EventMsg::McpToolCallBegin(_)
-        | EventMsg::McpToolCallEnd(_)
-        | EventMsg::WebSearchBegin(_)
-        | EventMsg::WebSearchEnd(_)
-        | EventMsg::ExecCommandBegin(_)
         | EventMsg::TerminalInteraction(_)
         | EventMsg::ExecCommandOutputDelta(_)
-        | EventMsg::ExecCommandEnd(_)
         | EventMsg::ExecApprovalRequest(_)
         | EventMsg::ElicitationRequest(_)
         | EventMsg::ApplyPatchApprovalRequest(_)
         | EventMsg::BackgroundEvent(_)
         | EventMsg::StreamError(_)
-        | EventMsg::PatchApplyBegin(_)
-        | EventMsg::PatchApplyEnd(_)
         | EventMsg::TurnDiff(_)
         | EventMsg::GetHistoryEntryResponse(_)
         | EventMsg::UndoStarted(_)
@@ -94,7 +98,5 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::SkillsUpdateAvailable
         // SubAgentProgress is streaming-only, not persisted
         | EventMsg::SubAgentProgress(_) => false,
-        // SubAgentBegin/End are persisted to enable resume with subagent history
-        EventMsg::SubAgentBegin(_) | EventMsg::SubAgentEnd(_) => true,
     }
 }

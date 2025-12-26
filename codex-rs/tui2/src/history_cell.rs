@@ -1483,15 +1483,8 @@ pub(crate) enum SubAgentStatus {
     Error,
 }
 
-/// A forwarded tool event from a sub-agent for expanded view.
-#[derive(Debug, Clone)]
-pub(crate) struct ForwardedToolEvent {
-    pub tool_name: String,
-    pub title: Option<String>,
-    pub status: String,
-}
-
 /// Cell displaying a sub-agent task with compact view.
+/// Stores raw events and computes display information at render time.
 #[derive(Debug)]
 pub(crate) struct SubAgentCell {
     session_id: String,
@@ -1511,12 +1504,22 @@ pub(crate) struct SubAgentCell {
     token_usage: Option<SubAgentTokenUsage>,
     duration_ms: Option<u64>,
 
-    // Forwarded events for expanded view (transient)
-    forwarded_events: Vec<ForwardedToolEvent>,
+    /// Raw events from the sub-agent (stored as-is, processed at render time).
+    /// This includes ResponseItems (FunctionCall, FunctionCallOutput, etc.)
+    raw_events: Vec<codex_protocol::protocol::RolloutItem>,
 
     // UI state
     expanded: bool,
     animations_enabled: bool,
+}
+
+/// Extracted tool call info for rendering (computed from raw events)
+#[derive(Debug, Clone)]
+pub(crate) struct ToolCallInfo {
+    pub tool_name: String,
+    pub arguments: String,
+    pub title: Option<String>,
+    pub output: Option<String>,
 }
 
 impl SubAgentCell {
@@ -1536,10 +1539,19 @@ impl SubAgentCell {
         }
     }
 
-    /// Add a forwarded tool event.
-    pub fn add_forwarded_event(&mut self, event: ForwardedToolEvent) {
-        self.forwarded_events.push(event);
-        self.tool_uses_count = self.forwarded_events.len();
+    /// Add a raw event from the sub-agent.
+    pub fn add_raw_event(&mut self, event: codex_protocol::protocol::RolloutItem) {
+        use codex_protocol::models::ResponseItem;
+        use codex_protocol::protocol::RolloutItem;
+
+        // Update tool count for function calls
+        if let RolloutItem::ResponseItem(ResponseItem::FunctionCall { .. })
+        | RolloutItem::ResponseItem(ResponseItem::LocalShellCall { .. }) = &event
+        {
+            self.tool_uses_count += 1;
+        }
+
+        self.raw_events.push(event);
     }
 
     /// Mark the sub-agent as complete with final statistics.
@@ -1561,22 +1573,120 @@ impl SubAgentCell {
         &self.session_id
     }
 
-    /// Get the list of forwarded events.
-    pub fn forwarded_events(&self) -> &[ForwardedToolEvent] {
-        &self.forwarded_events
+    /// Get the raw events (for testing).
+    #[cfg(test)]
+    pub fn raw_events(&self) -> &[codex_protocol::protocol::RolloutItem] {
+        &self.raw_events
     }
 
-    /// Update the status of the last forwarded event.
-    pub fn update_last_event_status(&mut self, status: &str) {
-        if let Some(last) = self.forwarded_events.last_mut() {
-            last.status = status.to_string();
+    /// Extract tool calls with their outputs from raw events (computed at render time).
+    /// Handles both ResponseItem (from model/history) and EventMsg (from live sessions).
+    pub fn extract_tool_calls(&self) -> Vec<ToolCallInfo> {
+        use codex_core::protocol::EventMsg;
+        use codex_protocol::models::{LocalShellAction, ResponseItem};
+        use codex_protocol::protocol::RolloutItem;
+        use std::collections::HashMap;
+
+        // First pass: collect all outputs by call_id
+        let mut outputs: HashMap<String, String> = HashMap::new();
+        for event in &self.raw_events {
+            if let RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput { call_id, output }) =
+                event
+            {
+                outputs.insert(call_id.clone(), output.content.clone());
+            }
         }
+
+        // Extract tool calls
+        let mut tool_calls = Vec::new();
+        for event in &self.raw_events {
+            match event {
+                // ResponseItem::FunctionCall (from model/history)
+                RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+                    name,
+                    arguments,
+                    call_id,
+                    ..
+                }) => {
+                    let title = extract_title_from_arguments(name, arguments);
+                    let output = outputs.get(call_id).cloned();
+                    tool_calls.push(ToolCallInfo {
+                        tool_name: name.clone(),
+                        arguments: arguments.clone(),
+                        title,
+                        output,
+                    });
+                }
+                // ResponseItem::LocalShellCall (from model/history)
+                RolloutItem::ResponseItem(ResponseItem::LocalShellCall { action, call_id, .. }) => {
+                    let (title, args) = match action {
+                        LocalShellAction::Exec(exec) => {
+                            let cmd = exec.command.join(" ");
+                            (Some(cmd.clone()), cmd)
+                        }
+                    };
+                    let output = call_id.as_ref().and_then(|id| outputs.get(id).cloned());
+                    tool_calls.push(ToolCallInfo {
+                        tool_name: "Bash".to_string(),
+                        arguments: args,
+                        title,
+                        output,
+                    });
+                }
+                // EventMsg (from live sessions and persisted history)
+                RolloutItem::EventMsg(ev) => match ev {
+                    EventMsg::ExecCommandBegin(begin) => {
+                        let cmd = begin.command.join(" ");
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: "shell".to_string(),
+                            arguments: cmd.clone(),
+                            title: Some(cmd),
+                            output: None,
+                        });
+                    }
+                    EventMsg::McpToolCallBegin(begin) => {
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: begin.invocation.tool.clone(),
+                            arguments: begin.invocation.server.clone(),
+                            title: Some(begin.invocation.server.clone()),
+                            output: None,
+                        });
+                    }
+                    EventMsg::PatchApplyBegin(begin) => {
+                        let paths: Vec<String> = begin
+                            .changes
+                            .keys()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        let title = if paths.len() == 1 {
+                            paths[0].clone()
+                        } else {
+                            format!("{} files", paths.len())
+                        };
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: "patch".to_string(),
+                            arguments: title.clone(),
+                            title: Some(title),
+                            output: None,
+                        });
+                    }
+                    EventMsg::WebSearchBegin(_begin) => {
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: "web_search".to_string(),
+                            arguments: String::new(),
+                            title: None,
+                            output: None,
+                        });
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        tool_calls
     }
 
     /// Accumulate token usage from a forwarded TokenCount event.
-    ///
-    /// This allows streaming token updates as the sub-agent runs,
-    /// rather than only showing tokens at completion.
     pub fn accumulate_tokens(&mut self, input_delta: u64, output_delta: u64) {
         let usage = self.token_usage.get_or_insert(SubAgentTokenUsage {
             input_tokens: 0,
@@ -1595,7 +1705,7 @@ impl SubAgentCell {
 
     /// Get a human-readable status text for the current state.
     pub fn current_status_text(&self) -> String {
-        // For completed agents, show "Done" regardless of forwarded_events
+        // For completed agents, show "Done" regardless of raw_events
         if self.status == SubAgentStatus::Completed {
             return "Done".to_string();
         }
@@ -1604,15 +1714,11 @@ impl SubAgentCell {
         }
 
         // For running agents, show last tool activity
-        if self.forwarded_events.is_empty() {
+        let tool_calls = self.extract_tool_calls();
+        if tool_calls.is_empty() {
             "Initializing...".to_string()
-        } else if let Some(last) = self.forwarded_events.last() {
-            match last.status.as_str() {
-                "running" => format!("Running {}...", last.tool_name),
-                "completed" => format!("Completed {}", last.tool_name),
-                "error" => format!("Error in {}", last.tool_name),
-                _ => last.status.clone(),
-            }
+        } else if let Some(last) = tool_calls.last() {
+            format!("{}: {}", last.tool_name, last.title.as_deref().unwrap_or(""))
         } else {
             "Working...".to_string()
         }
@@ -1694,28 +1800,35 @@ impl SubAgentCell {
             truncated_desc.dim(),
         ]));
 
-        // If expanded, show forwarded events
-        if show_expanded && !self.forwarded_events.is_empty() {
-            for (i, event) in self.forwarded_events.iter().enumerate() {
-                let prefix = if i == self.forwarded_events.len() - 1 {
+        // If expanded, show tool calls with outputs
+        let tool_calls = self.extract_tool_calls();
+        if show_expanded && !tool_calls.is_empty() {
+            for (i, call) in tool_calls.iter().enumerate() {
+                let prefix = if i == tool_calls.len() - 1 {
                     "    └ "
                 } else {
                     "    ├ "
                 };
-                let status_icon = match event.status.as_str() {
-                    "completed" => "✓".green(),
-                    "error" => "✗".red(),
-                    _ => "○".cyan(),
-                };
-                let title_text = event.title.clone().unwrap_or_default();
+                // Format: ToolName(title) or ToolName(args)
+                let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
+                let call_text = format!("{}({})", call.tool_name, truncate_to_n_chars(display_arg, 60));
                 lines.push(Line::from(vec![
                     prefix.dim(),
-                    status_icon,
-                    " ".into(),
-                    event.tool_name.clone().into(),
-                    " ".into(),
-                    title_text.dim(),
+                    call_text.into(),
                 ]));
+                // Show output if available (truncated)
+                if let Some(output) = &call.output {
+                    let output_prefix = if i == tool_calls.len() - 1 {
+                        "      "
+                    } else {
+                        "    │ "
+                    };
+                    let truncated_output = truncate_to_n_chars(output, 80);
+                    lines.push(Line::from(vec![
+                        output_prefix.dim(),
+                        truncated_output.dim(),
+                    ]));
+                }
             }
         } else if show_expanded {
             lines.push(Line::from(vec![
@@ -1725,7 +1838,7 @@ impl SubAgentCell {
         }
 
         // Show expand/collapse hint
-        if !self.forwarded_events.is_empty() || show_expanded {
+        if !tool_calls.is_empty() || show_expanded {
             let hint = if show_expanded {
                 "(ctrl+o to collapse)"
             } else {
@@ -1758,17 +1871,17 @@ impl SubAgentCell {
             SubAgentStatus::Error => "●".red().bold(),
         };
 
-        // Agent header: "agent-type (description) · N tool uses · Xk tokens"
-        // Note: Duration is now only shown in the expanded "Done" line
-        let desc = truncate_description(&self.description, (width as usize).saturating_sub(50));
-        let tokens = self.format_tokens();
-        let header = format!(
-            "{} ({}) · {} tool uses · {}",
-            self.agent_type,
-            desc,
-            self.tool_uses_count,
-            tokens,
-        );
+        // Agent header: "AgentType(Description)" format like Claude Code
+        // Capitalize first letter of agent_type
+        let agent_type_display = {
+            let mut chars = self.agent_type.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => self.agent_type.clone(),
+            }
+        };
+        let desc = truncate_description(&self.description, (width as usize).saturating_sub(20));
+        let header = format!("{agent_type_display}({desc})");
 
         lines.push(Line::from(vec![
             tree_prefix.dim(),
@@ -1777,58 +1890,98 @@ impl SubAgentCell {
             header.into(),
         ]));
 
-        // Status line under agent - show the last activity
-        // Use └ when collapsed (last item), ├ when expanded (more items follow)
-        let status_prefix = format!("{continuation}{} ", if show_expanded { "├" } else { "└" });
-        let status_text = self.current_status_text();
-        lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
+        // If collapsed, show status line with stats
+        if !show_expanded {
+            let status_text = self.current_status_text();
+            let stats = format!(
+                "{} · {} tool uses · {}",
+                status_text,
+                self.tool_uses_count,
+                self.format_tokens()
+            );
+            lines.push(Line::from(vec![
+                format!("{continuation}└ ").dim(),
+                stats.dim(),
+            ]));
+        }
 
-        // If expanded, show prompt, response, tool events, and done line
+        // If expanded, show full details like Claude Code
         if show_expanded {
-            // Show prompt (if available)
+            let tool_calls = self.extract_tool_calls();
+
+            // Show prompt (if available) - full text on own line
             if let Some(prompt) = &self.prompt {
-                let truncated = truncate_description(prompt, (width as usize).saturating_sub(14));
                 lines.push(Line::from(vec![
-                    format!("{continuation}├ ").dim(),
-                    "Prompt: ".bold(),
-                    truncated.dim(),
+                    format!("{continuation}├  ").dim(),
+                    "Prompt:".green().bold(),
                 ]));
+                // Show prompt text (may be multi-line, truncate for now)
+                let prompt_lines: Vec<&str> = prompt.lines().take(3).collect();
+                for (i, line) in prompt_lines.iter().enumerate() {
+                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
+                    let is_last_prompt_line = i == prompt_lines.len() - 1 && tool_calls.is_empty() && self.output.is_none();
+                    let prefix = if is_last_prompt_line && self.status != SubAgentStatus::Completed {
+                        format!("{continuation}└    ")
+                    } else {
+                        format!("{continuation}│    ")
+                    };
+                    lines.push(Line::from(vec![
+                        prefix.dim(),
+                        truncated.into(),
+                    ]));
+                }
+            }
+
+            // Show tool calls with outputs
+            for (j, call) in tool_calls.iter().enumerate() {
+                let is_last_tool = j == tool_calls.len() - 1 && self.output.is_none() && self.status != SubAgentStatus::Completed;
+
+                // Tool call header: ToolName(args)
+                let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
+                let call_text = format!("{}({})", call.tool_name, truncate_to_n_chars(display_arg, 50));
+                lines.push(Line::from(vec![
+                    format!("{continuation}├  ").dim(),
+                    call_text.into(),
+                ]));
+
+                // Show output if available
+                if let Some(output) = &call.output {
+                    let output_lines: Vec<&str> = output.lines().take(3).collect();
+                    for (i, line) in output_lines.iter().enumerate() {
+                        let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
+                        let is_last_output = i == output_lines.len() - 1 && is_last_tool;
+                        let prefix = if is_last_output {
+                            format!("{continuation}└    ")
+                        } else {
+                            format!("{continuation}│    ")
+                        };
+                        lines.push(Line::from(vec![
+                            prefix.dim(),
+                            truncated.dim(),
+                        ]));
+                    }
+                }
             }
 
             // Show response (if available)
             if let Some(output) = &self.output {
-                let truncated = truncate_description(output, (width as usize).saturating_sub(14));
                 lines.push(Line::from(vec![
-                    format!("{continuation}├ ").dim(),
-                    "Response: ".bold(),
-                    truncated.into(),
+                    format!("{continuation}├  ").dim(),
+                    "Response:".green().bold(),
                 ]));
-            }
-
-            // Show tool events
-            if !self.forwarded_events.is_empty() {
-                for (j, event) in self.forwarded_events.iter().enumerate() {
-                    let is_last_event = j == self.forwarded_events.len() - 1
-                        && self.status != SubAgentStatus::Completed;
-                    let event_prefix = format!(
-                        "{continuation}{} ",
-                        if is_last_event { "└" } else { "├" }
-                    );
-
-                    let status_icon = match event.status.as_str() {
-                        "completed" => "✓".green(),
-                        "error" => "✗".red(),
-                        _ => "○".cyan(),
+                // Show response text (may be multi-line)
+                let response_lines: Vec<&str> = output.lines().take(5).collect();
+                for (i, line) in response_lines.iter().enumerate() {
+                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
+                    let is_last_response = i == response_lines.len() - 1 && self.status != SubAgentStatus::Completed;
+                    let prefix = if is_last_response {
+                        format!("{continuation}└    ")
+                    } else {
+                        format!("{continuation}│    ")
                     };
-
-                    let title_text = event.title.clone().unwrap_or_default();
                     lines.push(Line::from(vec![
-                        event_prefix.dim(),
-                        status_icon,
-                        " ".into(),
-                        event.tool_name.clone().into(),
-                        " ".into(),
-                        title_text.dim(),
+                        prefix.dim(),
+                        truncated.into(),
                     ]));
                 }
             }
@@ -1846,7 +1999,7 @@ impl SubAgentCell {
                     duration_str,
                 );
                 lines.push(Line::from(vec![
-                    format!("{continuation}└ ").dim(),
+                    format!("{continuation}└  ").dim(),
                     done_text.into(),
                 ]));
             }
@@ -1857,17 +2010,23 @@ impl SubAgentCell {
     fn calculate_height(&self, show_expanded: bool) -> u16 {
         let base = 2; // Header + status line
         if show_expanded {
+            let tool_calls = self.extract_tool_calls();
             let mut height = base;
-            // Prompt line
+            // Prompt lines (label + up to 3 lines of content)
             if self.prompt.is_some() {
-                height += 1;
+                height += 1 + self.prompt.as_ref().map(|p| p.lines().take(3).count()).unwrap_or(0) as u16;
             }
-            // Response line
+            // Tool calls with outputs
+            for call in &tool_calls {
+                height += 1; // Tool call line
+                if let Some(output) = &call.output {
+                    height += output.lines().take(3).count() as u16;
+                }
+            }
+            // Response lines (label + up to 5 lines of content)
             if self.output.is_some() {
-                height += 1;
+                height += 1 + self.output.as_ref().map(|o| o.lines().take(5).count()).unwrap_or(0) as u16;
             }
-            // Tool events
-            height += self.forwarded_events.len() as u16;
             // Done line (for completed agents)
             if self.status == SubAgentStatus::Completed {
                 height += 1;
@@ -1896,28 +2055,29 @@ pub(crate) fn new_subagent_cell(
         tool_uses_count: 0,
         token_usage: None,
         duration_ms: None,
-        forwarded_events: Vec::new(),
+        raw_events: Vec::new(),
         expanded: false,
         animations_enabled,
     }
 }
 
 /// Create a SubAgentCell from SubagentHistory (for session resume).
-/// The cell is marked as completed and reconstructs statistics from the history.
+/// The cell is marked as completed and stores raw events for render-time processing.
 pub(crate) fn subagent_cell_from_history(
     history: SubagentHistory,
     animations_enabled: bool,
 ) -> SubAgentCell {
     use codex_core::protocol::EventMsg;
-    use codex_protocol::models::{LocalShellAction, ResponseItem};
+    use codex_protocol::models::ResponseItem;
     use codex_protocol::protocol::RolloutItem;
 
     let mut begin_event: Option<SubAgentBeginEvent> = None;
     let mut end_event: Option<SubAgentEndEvent> = None;
-    let mut forwarded_events: Vec<ForwardedToolEvent> = Vec::new();
     let mut prompt: Option<String> = None;
     let mut output: Option<String> = None;
+    let mut tool_count = 0;
 
+    // Extract lifecycle events and count tools
     for item in &history.history {
         match item {
             RolloutItem::EventMsg(ev) => match ev {
@@ -1931,28 +2091,10 @@ pub(crate) fn subagent_cell_from_history(
                 }
                 _ => {}
             },
-            // Extract tool calls from ResponseItems
-            RolloutItem::ResponseItem(resp) => match resp {
-                ResponseItem::FunctionCall { name, arguments, .. } => {
-                    let title = extract_title_from_arguments(name, arguments);
-                    forwarded_events.push(ForwardedToolEvent {
-                        tool_name: name.clone(),
-                        title,
-                        status: "completed".to_string(),
-                    });
-                }
-                ResponseItem::LocalShellCall { action, .. } => {
-                    let title = match action {
-                        LocalShellAction::Exec(exec) => Some(exec.command.join(" ")),
-                    };
-                    forwarded_events.push(ForwardedToolEvent {
-                        tool_name: "shell".to_string(),
-                        title,
-                        status: "completed".to_string(),
-                    });
-                }
-                _ => {}
-            },
+            RolloutItem::ResponseItem(ResponseItem::FunctionCall { .. })
+            | RolloutItem::ResponseItem(ResponseItem::LocalShellCall { .. }) => {
+                tool_count += 1;
+            }
             _ => {}
         }
     }
@@ -1984,10 +2126,10 @@ pub(crate) fn subagent_cell_from_history(
         status,
         start_time: None,
         resumed,
-        tool_uses_count: forwarded_events.len(),
+        tool_uses_count: tool_count,
         token_usage,
         duration_ms,
-        forwarded_events,
+        raw_events: history.history, // Store raw events directly
         expanded: false,
         animations_enabled,
     }
@@ -2118,10 +2260,7 @@ impl<'a> RunningAgentsGroup<'a> {
         let mut height: u16 = 1; // Group header
 
         for agent in &self.agents {
-            height += 2; // Agent header + status line
-            if self.expanded && !agent.forwarded_events().is_empty() {
-                height += agent.forwarded_events().len() as u16;
-            }
+            height += agent.calculate_height(self.expanded);
         }
 
         height
@@ -2223,10 +2362,7 @@ impl SubAgentGroupCell {
         let mut height: u16 = 1; // Group header
 
         for agent in &self.cells {
-            height += 2; // Agent header + status line
-            if show_expanded && !agent.forwarded_events().is_empty() {
-                height += agent.forwarded_events().len() as u16;
-            }
+            height += agent.calculate_height(show_expanded);
         }
 
         height
@@ -3336,12 +3472,15 @@ mod tests {
 
         let mut cell = new_subagent_cell(begin_event, false);
 
-        // Add a forwarded event
-        cell.add_forwarded_event(ForwardedToolEvent {
-            tool_name: "Read".to_string(),
-            title: Some("file.rs".to_string()),
-            status: "completed".to_string(),
-        });
+        // Add a raw event (FunctionCall)
+        use codex_protocol::models::ResponseItem;
+        use codex_protocol::protocol::RolloutItem;
+        cell.add_raw_event(RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+            id: None,
+            name: "Read".to_string(),
+            arguments: r#"{"file_path":"file.rs"}"#.to_string(),
+            call_id: "call-1".to_string(),
+        }));
 
         // Initially collapsed
         let lines_collapsed = cell.display_lines(80);
@@ -3415,7 +3554,7 @@ mod tests {
         // Should have: header, agent header, agent status
         assert!(rendered.len() >= 3, "Expected at least 3 lines, got {}", rendered.len());
         assert!(rendered[0].contains("Running 1 agent"), "Header should show '1 agent': {}", rendered[0]);
-        assert!(rendered[1].contains("explore"), "Should contain agent type: {}", rendered[1]);
+        assert!(rendered[1].contains("Explore(Search for files)"), "Should contain Explore(description): {}", rendered[1]);
         assert!(rendered[2].contains("Initializing"), "Should show initializing status: {}", rendered[2]);
     }
 
@@ -3470,17 +3609,27 @@ mod tests {
         };
 
         let mut cell = new_subagent_cell(begin, false);
-        cell.add_forwarded_event(ForwardedToolEvent {
-            tool_name: "shell".to_string(),
-            title: Some("ls -la".to_string()),
-            status: "completed".to_string(),
-        });
+        // Add a raw event (ExecCommandBegin)
+        use codex_core::protocol::EventMsg;
+        use codex_protocol::protocol::RolloutItem;
+        cell.add_raw_event(RolloutItem::EventMsg(EventMsg::ExecCommandBegin(
+            codex_core::protocol::ExecCommandBeginEvent {
+                call_id: "exec-1".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["ls".to_string(), "-la".to_string()],
+                cwd: std::path::PathBuf::from("/"),
+                parsed_cmd: vec![],
+                source: codex_core::protocol::ExecCommandSource::Agent,
+                interaction_input: None,
+            },
+        )));
 
         let group = RunningAgentsGroup::new(vec![&cell], true, false);
         let lines = group.render_lines(80);
         let rendered = render_lines(&lines);
 
-        // Should include the forwarded event line when expanded
+        // Should include the tool call line when expanded
         assert!(
             rendered.iter().any(|l| l.contains("shell")),
             "Should contain tool name 'shell' when expanded: {:?}",
@@ -3502,21 +3651,31 @@ mod tests {
         };
 
         let mut cell = new_subagent_cell(begin, false);
-        cell.add_forwarded_event(ForwardedToolEvent {
-            tool_name: "shell".to_string(),
-            title: Some("ls -la".to_string()),
-            status: "completed".to_string(),
-        });
+        // Add a raw event (ExecCommandBegin)
+        use codex_core::protocol::EventMsg;
+        use codex_protocol::protocol::RolloutItem;
+        cell.add_raw_event(RolloutItem::EventMsg(EventMsg::ExecCommandBegin(
+            codex_core::protocol::ExecCommandBeginEvent {
+                call_id: "exec-1".to_string(),
+                process_id: None,
+                turn_id: "turn-1".to_string(),
+                command: vec!["ls".to_string(), "-la".to_string()],
+                cwd: std::path::PathBuf::from("/"),
+                parsed_cmd: vec![],
+                source: codex_core::protocol::ExecCommandSource::Agent,
+                interaction_input: None,
+            },
+        )));
 
         let group = RunningAgentsGroup::new(vec![&cell], false, false);
         let lines = group.render_lines(80);
         let rendered = render_lines(&lines);
 
-        // When collapsed, should NOT include the full tool event with its title (ls -la)
-        // The status line "Completed shell" is still visible as the status text
+        // When collapsed, should show status summary but NOT expanded tool details
+        // Status line "shell: ls -la" is shown in the status area
         assert!(
-            !rendered.iter().any(|l| l.contains("ls -la")),
-            "Should NOT contain event title 'ls -la' when collapsed: {:?}",
+            rendered.iter().any(|l| l.contains("shell")),
+            "Should show current tool status when collapsed: {:?}",
             rendered
         );
         // Should only have header (1) + agent header (1) + status (1) = 3 lines
@@ -3602,8 +3761,9 @@ mod tests {
         assert!(rendered.len() >= 3, "Expected at least 3 lines: {:?}", rendered);
         assert!(rendered[0].contains("1 agent"), "Header should show '1 agent': {}", rendered[0]);
         assert!(rendered[0].contains("completed"), "Header should show 'completed': {}", rendered[0]);
-        assert!(rendered[1].contains("explore"), "Should contain agent type: {}", rendered[1]);
-        assert!(rendered[1].contains("7.0k tokens"), "Should show token count: {}", rendered[1]);
+        assert!(rendered[1].contains("Explore(Search files)"), "Should contain Explore(description): {}", rendered[1]);
+        // Token count shown in status line
+        assert!(rendered.iter().any(|l| l.contains("7.0k tokens")), "Should show token count: {:?}", rendered);
     }
 
     #[test]
@@ -3726,11 +3886,15 @@ mod tests {
         };
 
         let mut cell = new_subagent_cell(begin, false);
-        cell.add_forwarded_event(ForwardedToolEvent {
-            tool_name: "Read".to_string(),
-            title: Some("config.json".to_string()),
-            status: "completed".to_string(),
-        });
+        // Add a raw event (FunctionCall)
+        use codex_protocol::models::ResponseItem;
+        use codex_protocol::protocol::RolloutItem;
+        cell.add_raw_event(RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+            id: None,
+            name: "Read".to_string(),
+            arguments: r#"{"file_path":"config.json"}"#.to_string(),
+            call_id: "call-read".to_string(),
+        }));
         cell.complete(&SubAgentEndEvent {
             call_id: "call-1".to_string(),
             session_id: "sess-1".to_string(),
