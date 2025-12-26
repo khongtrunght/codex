@@ -872,6 +872,9 @@ pub struct SubAgentBeginEvent {
     pub agent_type: String,
     /// Short description of the task.
     pub description: String,
+    /// The detailed prompt given to the sub-agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     /// Unique session ID for this sub-agent task.
     pub session_id: String,
     /// Whether this is resuming a previous session.

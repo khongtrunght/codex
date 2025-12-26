@@ -151,6 +151,7 @@ impl ToolHandler for TaskHandler {
                     call_id: call_id.clone(),
                     agent_type: params.subagent_type.clone(),
                     description: params.description.clone(),
+                    prompt: Some(params.prompt.clone()),
                     session_id: task_session_id.clone(),
                     resumed,
                 }),

@@ -1497,6 +1497,10 @@ pub(crate) struct SubAgentCell {
     session_id: String,
     agent_type: String,
     description: String,
+    /// The detailed prompt given to the sub-agent.
+    prompt: Option<String>,
+    /// The final output/response from the sub-agent.
+    output: Option<String>,
     status: SubAgentStatus,
     start_time: Option<Instant>,
     /// Whether this is a resumed session.
@@ -1548,6 +1552,7 @@ impl SubAgentCell {
         self.duration_ms = Some(end_event.duration_ms);
         self.token_usage = end_event.token_usage.clone();
         self.tool_uses_count = end_event.tool_summary.len();
+        self.output = Some(end_event.output.clone());
         self.start_time = None;
     }
 
@@ -1590,6 +1595,15 @@ impl SubAgentCell {
 
     /// Get a human-readable status text for the current state.
     pub fn current_status_text(&self) -> String {
+        // For completed agents, show "Done" regardless of forwarded_events
+        if self.status == SubAgentStatus::Completed {
+            return "Done".to_string();
+        }
+        if self.status == SubAgentStatus::Error {
+            return "Error".to_string();
+        }
+
+        // For running agents, show last tool activity
         if self.forwarded_events.is_empty() {
             "Initializing...".to_string()
         } else if let Some(last) = self.forwarded_events.last() {
@@ -1744,22 +1758,16 @@ impl SubAgentCell {
             SubAgentStatus::Error => "●".red().bold(),
         };
 
-        // Agent header: "agent-type (description) · N tool uses · Xk tokens · duration"
+        // Agent header: "agent-type (description) · N tool uses · Xk tokens"
+        // Note: Duration is now only shown in the expanded "Done" line
         let desc = truncate_description(&self.description, (width as usize).saturating_sub(50));
         let tokens = self.format_tokens();
-        let duration_str = if let Some(ms) = self.duration_ms {
-            let duration = Duration::from_millis(ms);
-            format!(" · {}", format_duration(duration))
-        } else {
-            String::new()
-        };
         let header = format!(
-            "{} ({}) · {} tool uses · {}{}",
+            "{} ({}) · {} tool uses · {}",
             self.agent_type,
             desc,
             self.tool_uses_count,
             tokens,
-            duration_str,
         );
 
         lines.push(Line::from(vec![
@@ -1770,33 +1778,76 @@ impl SubAgentCell {
         ]));
 
         // Status line under agent - show the last activity
-        let status_prefix = format!("{continuation}└ ");
+        // Use └ when collapsed (last item), ├ when expanded (more items follow)
+        let status_prefix = format!("{continuation}{} ", if show_expanded { "├" } else { "└" });
         let status_text = self.current_status_text();
         lines.push(Line::from(vec![status_prefix.dim(), status_text.dim()]));
 
-        // If expanded, show forwarded events
-        if show_expanded && !self.forwarded_events.is_empty() {
-            for (j, event) in self.forwarded_events.iter().enumerate() {
-                let is_last_event = j == self.forwarded_events.len() - 1;
-                let event_prefix = format!(
-                    "{continuation}   {} ",
-                    if is_last_event { "└" } else { "├" }
-                );
-
-                let status_icon = match event.status.as_str() {
-                    "completed" => "✓".green(),
-                    "error" => "✗".red(),
-                    _ => "○".cyan(),
-                };
-
-                let title_text = event.title.clone().unwrap_or_default();
+        // If expanded, show prompt, response, tool events, and done line
+        if show_expanded {
+            // Show prompt (if available)
+            if let Some(prompt) = &self.prompt {
+                let truncated = truncate_description(prompt, (width as usize).saturating_sub(14));
                 lines.push(Line::from(vec![
-                    event_prefix.dim(),
-                    status_icon,
-                    " ".into(),
-                    event.tool_name.clone().into(),
-                    " ".into(),
-                    title_text.dim(),
+                    format!("{continuation}├ ").dim(),
+                    "Prompt: ".bold(),
+                    truncated.dim(),
+                ]));
+            }
+
+            // Show response (if available)
+            if let Some(output) = &self.output {
+                let truncated = truncate_description(output, (width as usize).saturating_sub(14));
+                lines.push(Line::from(vec![
+                    format!("{continuation}├ ").dim(),
+                    "Response: ".bold(),
+                    truncated.into(),
+                ]));
+            }
+
+            // Show tool events
+            if !self.forwarded_events.is_empty() {
+                for (j, event) in self.forwarded_events.iter().enumerate() {
+                    let is_last_event = j == self.forwarded_events.len() - 1
+                        && self.status != SubAgentStatus::Completed;
+                    let event_prefix = format!(
+                        "{continuation}{} ",
+                        if is_last_event { "└" } else { "├" }
+                    );
+
+                    let status_icon = match event.status.as_str() {
+                        "completed" => "✓".green(),
+                        "error" => "✗".red(),
+                        _ => "○".cyan(),
+                    };
+
+                    let title_text = event.title.clone().unwrap_or_default();
+                    lines.push(Line::from(vec![
+                        event_prefix.dim(),
+                        status_icon,
+                        " ".into(),
+                        event.tool_name.clone().into(),
+                        " ".into(),
+                        title_text.dim(),
+                    ]));
+                }
+            }
+
+            // Show Done line with duration (only for completed agents)
+            if self.status == SubAgentStatus::Completed {
+                let duration_str = self
+                    .duration_ms
+                    .map(|ms| format!(" · {}", format_duration(Duration::from_millis(ms))))
+                    .unwrap_or_default();
+                let done_text = format!(
+                    "Done ({} tool uses · {}{})",
+                    self.tool_uses_count,
+                    self.format_tokens(),
+                    duration_str,
+                );
+                lines.push(Line::from(vec![
+                    format!("{continuation}└ ").dim(),
+                    done_text.into(),
                 ]));
             }
         }
@@ -1804,13 +1855,26 @@ impl SubAgentCell {
 
     /// Calculate height with explicit expanded flag.
     fn calculate_height(&self, show_expanded: bool) -> u16 {
-        let base = 2; // Header + description
-        let hint = if !self.forwarded_events.is_empty() || show_expanded { 1 } else { 0 };
+        let base = 2; // Header + status line
         if show_expanded {
-            let events = if self.forwarded_events.is_empty() { 1 } else { self.forwarded_events.len() };
-            base + events as u16 + hint
+            let mut height = base;
+            // Prompt line
+            if self.prompt.is_some() {
+                height += 1;
+            }
+            // Response line
+            if self.output.is_some() {
+                height += 1;
+            }
+            // Tool events
+            height += self.forwarded_events.len() as u16;
+            // Done line (for completed agents)
+            if self.status == SubAgentStatus::Completed {
+                height += 1;
+            }
+            height
         } else {
-            base + hint
+            base
         }
     }
 }
@@ -1824,6 +1888,8 @@ pub(crate) fn new_subagent_cell(
         session_id: begin_event.session_id,
         agent_type: begin_event.agent_type,
         description: begin_event.description,
+        prompt: begin_event.prompt.clone(),
+        output: None,
         status: SubAgentStatus::Running,
         start_time: Some(Instant::now()),
         resumed: begin_event.resumed,
@@ -1843,66 +1909,111 @@ pub(crate) fn subagent_cell_from_history(
     animations_enabled: bool,
 ) -> SubAgentCell {
     use codex_core::protocol::EventMsg;
+    use codex_protocol::models::{LocalShellAction, ResponseItem};
     use codex_protocol::protocol::RolloutItem;
 
-    // Extract SubAgentBegin and SubAgentEnd events from history
     let mut begin_event: Option<SubAgentBeginEvent> = None;
     let mut end_event: Option<SubAgentEndEvent> = None;
+    let mut forwarded_events: Vec<ForwardedToolEvent> = Vec::new();
+    let mut prompt: Option<String> = None;
+    let mut output: Option<String> = None;
 
     for item in &history.history {
-        if let RolloutItem::EventMsg(ev) = item {
-            match ev {
+        match item {
+            RolloutItem::EventMsg(ev) => match ev {
                 EventMsg::SubAgentBegin(ev) => {
                     begin_event = Some(ev.clone());
+                    prompt = ev.prompt.clone();
                 }
                 EventMsg::SubAgentEnd(ev) => {
                     end_event = Some(ev.clone());
+                    output = Some(ev.output.clone());
                 }
                 _ => {}
-            }
+            },
+            // Extract tool calls from ResponseItems
+            RolloutItem::ResponseItem(resp) => match resp {
+                ResponseItem::FunctionCall { name, arguments, .. } => {
+                    let title = extract_title_from_arguments(name, arguments);
+                    forwarded_events.push(ForwardedToolEvent {
+                        tool_name: name.clone(),
+                        title,
+                        status: "completed".to_string(),
+                    });
+                }
+                ResponseItem::LocalShellCall { action, .. } => {
+                    let title = match action {
+                        LocalShellAction::Exec(exec) => Some(exec.command.join(" ")),
+                    };
+                    forwarded_events.push(ForwardedToolEvent {
+                        tool_name: "shell".to_string(),
+                        title,
+                        status: "completed".to_string(),
+                    });
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
 
-    // Build the cell from the events we found
+    // Build the cell from extracted data
     let (agent_type, description, resumed) = begin_event
-        .map(|ev| (ev.agent_type, ev.description, ev.resumed))
-        .unwrap_or_else(|| {
-            // Fallback to history metadata if no begin event found
-            (
-                history.agent_type.clone(),
-                history.description.clone(),
-                true,
-            )
-        });
+        .as_ref()
+        .map(|ev| (ev.agent_type.clone(), ev.description.clone(), ev.resumed))
+        .unwrap_or_else(|| (history.agent_type.clone(), history.description.clone(), true));
 
-    // Extract final statistics from end event if available
-    let (status, tool_uses_count, token_usage, duration_ms) = end_event
+    let (status, token_usage, duration_ms) = end_event
+        .as_ref()
         .map(|ev| {
             let status = if ev.success {
                 SubAgentStatus::Completed
             } else {
                 SubAgentStatus::Error
             };
-            (status, ev.tool_summary.len(), ev.token_usage, Some(ev.duration_ms))
+            (status, ev.token_usage.clone(), Some(ev.duration_ms))
         })
-        .unwrap_or_else(|| {
-            // If no end event, assume completed successfully
-            (SubAgentStatus::Completed, 0, None, None)
-        });
+        .unwrap_or((SubAgentStatus::Completed, None, None));
 
     SubAgentCell {
         session_id: history.session_id,
         agent_type,
         description,
+        prompt,
+        output,
         status,
         start_time: None,
         resumed,
-        tool_uses_count,
+        tool_uses_count: forwarded_events.len(),
         token_usage,
         duration_ms,
-        forwarded_events: Vec::new(),
+        forwarded_events,
         expanded: false,
         animations_enabled,
+    }
+}
+
+/// Helper to extract a human-readable title from function call arguments.
+fn extract_title_from_arguments(tool_name: &str, arguments: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    match tool_name {
+        "Read" | "Write" | "Edit" => parsed.get("file_path")?.as_str().map(String::from),
+        "Glob" => parsed.get("pattern")?.as_str().map(String::from),
+        "Grep" => parsed.get("pattern")?.as_str().map(String::from),
+        "Bash" => {
+            let cmd = parsed.get("command")?.as_str()?;
+            Some(truncate_to_n_chars(cmd, 50))
+        }
+        _ => None,
+    }
+}
+
+/// Truncate a string to n characters with ellipsis if needed.
+fn truncate_to_n_chars(s: &str, n: usize) -> String {
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..n.saturating_sub(3)])
     }
 }
 
@@ -3095,6 +3206,7 @@ mod tests {
             session_id: "task-456".to_string(),
             agent_type: "explore".to_string(),
             description: "Search for rust files".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3119,6 +3231,7 @@ mod tests {
             session_id: "task-456".to_string(),
             agent_type: "explore".to_string(),
             description: "Resuming previous search".to_string(),
+            prompt: None,
             resumed: true,
         };
 
@@ -3143,6 +3256,7 @@ mod tests {
             session_id: "task-456".to_string(),
             agent_type: "explore".to_string(),
             description: "Search for rust files".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3179,6 +3293,7 @@ mod tests {
             session_id: "task-456".to_string(),
             agent_type: "explore".to_string(),
             description: "Test".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3215,6 +3330,7 @@ mod tests {
             session_id: "task-456".to_string(),
             agent_type: "explore".to_string(),
             description: "Test".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3249,6 +3365,7 @@ mod tests {
             session_id: "task-456".to_string(),
             agent_type: "explore".to_string(),
             description: "Test".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3285,6 +3402,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "Search for files".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3310,6 +3428,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "First task".to_string(),
+            prompt: None,
             resumed: false,
         };
         let begin2 = SubAgentBeginEvent {
@@ -3317,6 +3436,7 @@ mod tests {
             session_id: "sess-2".to_string(),
             agent_type: "analyze".to_string(),
             description: "Second task".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3345,6 +3465,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "Task".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3376,6 +3497,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "Task".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3410,6 +3532,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "Task 1".to_string(),
+            prompt: None,
             resumed: false,
         };
         let begin2 = SubAgentBeginEvent {
@@ -3417,6 +3540,7 @@ mod tests {
             session_id: "sess-2".to_string(),
             agent_type: "analyze".to_string(),
             description: "Task 2".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3452,6 +3576,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "Search files".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3490,6 +3615,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "First task".to_string(),
+            prompt: None,
             resumed: false,
         };
         let begin2 = SubAgentBeginEvent {
@@ -3497,6 +3623,7 @@ mod tests {
             session_id: "sess-2".to_string(),
             agent_type: "analyze".to_string(),
             description: "Second task".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3542,6 +3669,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "Success task".to_string(),
+            prompt: None,
             resumed: false,
         };
         let begin2 = SubAgentBeginEvent {
@@ -3549,6 +3677,7 @@ mod tests {
             session_id: "sess-2".to_string(),
             agent_type: "analyze".to_string(),
             description: "Failed task".to_string(),
+            prompt: None,
             resumed: false,
         };
 
@@ -3592,6 +3721,7 @@ mod tests {
             session_id: "sess-1".to_string(),
             agent_type: "explore".to_string(),
             description: "Task".to_string(),
+            prompt: None,
             resumed: false,
         };
 
