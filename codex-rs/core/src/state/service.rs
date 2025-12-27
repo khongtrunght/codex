@@ -20,7 +20,10 @@ pub(crate) struct SessionServices {
     pub(crate) mcp_startup_cancellation_token: CancellationToken,
     pub(crate) unified_exec_manager: UnifiedExecSessionManager,
     pub(crate) notifier: UserNotifier,
-    pub(crate) rollout: Mutex<Option<RolloutRecorder>>,
+    /// The rollout recorder is wrapped in Arc to allow sharing with subagents.
+    /// Subagents use SharedSubagentContext to write ResponseItems to their unified file
+    /// via the parent's recorder.
+    pub(crate) rollout: Arc<Mutex<Option<RolloutRecorder>>>,
     pub(crate) user_shell: Arc<crate::shell::Shell>,
     pub(crate) show_raw_agent_reasoning: bool,
     pub(crate) auth_manager: Arc<AuthManager>,

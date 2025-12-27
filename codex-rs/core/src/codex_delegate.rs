@@ -22,6 +22,7 @@ use crate::codex::Codex;
 use crate::codex::CodexSpawnOk;
 use crate::codex::SUBMISSION_CHANNEL_CAPACITY;
 use crate::codex::Session;
+use crate::codex::SharedSubagentContext;
 use crate::codex::TurnContext;
 use crate::config::Config;
 use crate::error::CodexErr;
@@ -47,7 +48,13 @@ pub(crate) async fn run_codex_conversation_interactive(
     let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_ops, rx_ops) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
 
-    let CodexSpawnOk { codex, .. } = Codex::spawn(
+    // Create shared context for subagent to write to unified rollout file
+    let shared_context = source_session_id.as_ref().map(|sid| SharedSubagentContext {
+        recorder: Arc::clone(&parent_session.services.rollout),
+        session_id: sid.clone(),
+    });
+
+    let CodexSpawnOk { codex, .. } = Codex::spawn_with_context(
         config,
         auth_manager,
         models_manager,
@@ -55,6 +62,7 @@ pub(crate) async fn run_codex_conversation_interactive(
         initial_history.unwrap_or(InitialHistory::New),
         SessionSource::SubAgent(SubAgentSource::Review),
         source_session_id,
+        shared_context,
     )
     .await?;
     let codex = Arc::new(codex);

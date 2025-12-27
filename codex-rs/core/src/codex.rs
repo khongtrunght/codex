@@ -289,6 +289,116 @@ impl Codex {
             session_source_clone,
             skills_manager,
             source_session_id,
+            None, // No shared context for normal sessions
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to create session: {e:#}");
+            map_session_init_error(&e, &config.codex_home)
+        })?;
+        let conversation_id = session.conversation_id;
+
+        // This task will run until Op::Shutdown is received.
+        tokio::spawn(submission_loop(session, config, rx_sub));
+        let codex = Codex {
+            next_id: AtomicU64::new(0),
+            tx_sub,
+            rx_event,
+        };
+
+        Ok(CodexSpawnOk {
+            codex,
+            conversation_id,
+        })
+    }
+
+    /// Spawn a Codex session with optional shared subagent context.
+    /// Use this for subagents that should share the parent's RolloutRecorder.
+    ///
+    /// When `shared_subagent_context` is Some:
+    /// - Session won't create its own RolloutRecorder
+    /// - Session will write ResponseItems to the unified subagent file
+    /// - Session will use parent's recorder via the shared context
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn spawn_with_context(
+        config: Config,
+        auth_manager: Arc<AuthManager>,
+        models_manager: Arc<ModelsManager>,
+        skills_manager: Arc<SkillsManager>,
+        conversation_history: InitialHistory,
+        session_source: SessionSource,
+        source_session_id: Option<String>,
+        shared_subagent_context: Option<SharedSubagentContext>,
+    ) -> CodexResult<CodexSpawnOk> {
+        let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
+        let (tx_event, rx_event) = async_channel::unbounded();
+
+        let loaded_skills = config
+            .features
+            .enabled(Feature::Skills)
+            .then(|| skills_manager.skills_for_cwd(&config.cwd));
+
+        if let Some(outcome) = &loaded_skills {
+            for err in &outcome.errors {
+                error!(
+                    "failed to load skill {}: {}",
+                    err.path.display(),
+                    err.message
+                );
+            }
+        }
+
+        let user_instructions = get_user_instructions(
+            &config,
+            loaded_skills
+                .as_ref()
+                .map(|outcome| outcome.skills.as_slice()),
+        )
+        .await;
+
+        let exec_policy = load_exec_policy_for_features(&config.features, &config.codex_home)
+            .await
+            .map_err(|err| CodexErr::Fatal(format!("failed to load execpolicy: {err}")))?;
+        let exec_policy = Arc::new(RwLock::new(exec_policy));
+
+        let config = Arc::new(config);
+        if config.features.enabled(Feature::RemoteModels)
+            && let Err(err) = models_manager.refresh_available_models(&config).await
+        {
+            error!("failed to refresh available models: {err:?}");
+        }
+        let model = models_manager.get_model(&config.model, &config).await;
+        let session_configuration = SessionConfiguration {
+            provider: config.model_provider.clone(),
+            model: model.clone(),
+            model_reasoning_effort: config.model_reasoning_effort,
+            model_reasoning_summary: config.model_reasoning_summary,
+            developer_instructions: config.developer_instructions.clone(),
+            user_instructions,
+            base_instructions: config.base_instructions.clone(),
+            compact_prompt: config.compact_prompt.clone(),
+            approval_policy: config.approval_policy.clone(),
+            sandbox_policy: config.sandbox_policy.clone(),
+            cwd: config.cwd.clone(),
+            original_config_do_not_use: Arc::clone(&config),
+            exec_policy,
+            session_source,
+        };
+
+        // Generate a unique ID for the lifetime of this Codex session.
+        let session_source_clone = session_configuration.session_source.clone();
+
+        let session = Session::new(
+            session_configuration,
+            config.clone(),
+            auth_manager.clone(),
+            models_manager.clone(),
+            tx_event.clone(),
+            conversation_history,
+            session_source_clone,
+            skills_manager,
+            source_session_id,
+            shared_subagent_context,
         )
         .await
         .map_err(|e| {
@@ -345,6 +455,17 @@ impl Codex {
 /// Context for an initialized model agent
 ///
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
+/// Context for subagents sharing parent's rollout recorder.
+/// When provided to Session::new(), the session will not create its own
+/// rollout file and will instead write ResponseItems to the unified subagent file.
+#[derive(Clone)]
+pub(crate) struct SharedSubagentContext {
+    /// Parent's rollout recorder (shared via Arc<Mutex>)
+    pub recorder: Arc<Mutex<Option<RolloutRecorder>>>,
+    /// This subagent's session ID (for routing writes to the correct file)
+    pub session_id: String,
+}
+
 pub(crate) struct Session {
     conversation_id: ConversationId,
     tx_event: Sender<Event>,
@@ -362,6 +483,9 @@ pub(crate) struct Session {
     /// Set of registered subagent session IDs.
     /// Used for routing forwarded events to the correct subagent rollout file.
     registered_subagents: Mutex<std::collections::HashSet<String>>,
+    /// For subagents: the parent's recorder to use for writing to the unified subagent file.
+    /// When Some, this session should NOT create its own rollout file.
+    shared_subagent_context: Option<SharedSubagentContext>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -606,6 +730,7 @@ impl Session {
         session_source: SessionSource,
         skills_manager: Arc<SkillsManager>,
         source_session_id: Option<String>,
+        shared_subagent_context: Option<SharedSubagentContext>,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -618,46 +743,62 @@ impl Session {
             ));
         }
 
-        let (conversation_id, rollout_params) = match &initial_history {
-            InitialHistory::New | InitialHistory::Forked(_) => {
-                let conversation_id = ConversationId::default();
-                (
-                    conversation_id,
-                    RolloutRecorderParams::new(
+        // For subagents with shared context, we don't create our own rollout.
+        // The parent's recorder is used via SharedSubagentContext.
+        let (conversation_id, rollout_recorder, rollout_path) = if let Some(ref ctx) =
+            shared_subagent_context
+        {
+            // Subagent: use a new conversation ID but don't create a rollout file.
+            // The rollout_path points to the unified subagent file (created by parent).
+            let conversation_id = ConversationId::default();
+            let recorder_guard = ctx.recorder.lock().await;
+            let path = recorder_guard
+                .as_ref()
+                .map(|r| {
+                    r.session_dir()
+                        .join(format!("subagent-{}.jsonl", ctx.session_id))
+                })
+                .unwrap_or_default();
+            (conversation_id, None, path)
+        } else {
+            // Normal session: create our own rollout recorder
+            let (conversation_id, rollout_params) = match &initial_history {
+                InitialHistory::New | InitialHistory::Forked(_) => {
+                    let conversation_id = ConversationId::default();
+                    (
                         conversation_id,
-                        session_configuration.user_instructions.clone(),
-                        session_source,
-                    ),
-                )
-            }
-            InitialHistory::Resumed(resumed_history) => (
-                resumed_history.conversation_id,
-                RolloutRecorderParams::resume(resumed_history.rollout_path.clone()),
-            ),
+                        RolloutRecorderParams::new(
+                            conversation_id,
+                            session_configuration.user_instructions.clone(),
+                            session_source,
+                        ),
+                    )
+                }
+                InitialHistory::Resumed(resumed_history) => (
+                    resumed_history.conversation_id,
+                    RolloutRecorderParams::resume(resumed_history.rollout_path.clone()),
+                ),
+            };
+
+            let rollout_recorder = RolloutRecorder::new(&config, rollout_params)
+                .await
+                .map_err(|e| {
+                    error!("failed to initialize rollout recorder: {e:#}");
+                    anyhow::Error::from(e)
+                })?;
+            let path = rollout_recorder.rollout_path.clone();
+            (conversation_id, Some(rollout_recorder), path)
         };
 
         // Kick off independent async setup tasks in parallel to reduce startup latency.
-        //
-        // - initialize RolloutRecorder with new or resumed session info
-        // - perform default shell discovery
-        // - load history metadata
-        let rollout_fut = RolloutRecorder::new(&config, rollout_params);
-
         let history_meta_fut = crate::message_history::history_metadata(&config);
         let auth_statuses_fut = compute_auth_statuses(
             config.mcp_servers.iter(),
             config.mcp_oauth_credentials_store_mode,
         );
 
-        // Join all independent futures.
-        let (rollout_recorder, (history_log_id, history_entry_count), auth_statuses) =
-            tokio::join!(rollout_fut, history_meta_fut, auth_statuses_fut);
-
-        let rollout_recorder = rollout_recorder.map_err(|e| {
-            error!("failed to initialize rollout recorder: {e:#}");
-            anyhow::Error::from(e)
-        })?;
-        let rollout_path = rollout_recorder.rollout_path.clone();
+        let ((history_log_id, history_entry_count), auth_statuses) =
+            tokio::join!(history_meta_fut, auth_statuses_fut);
 
         let mut post_session_configured_events = Vec::<Event>::new();
 
@@ -724,7 +865,7 @@ impl Session {
             mcp_startup_cancellation_token: CancellationToken::new(),
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notifier: UserNotifier::new(config.notify.clone()),
-            rollout: Mutex::new(Some(rollout_recorder)),
+            rollout: Arc::new(Mutex::new(rollout_recorder)),
             user_shell: Arc::new(default_shell),
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
             auth_manager: Arc::clone(&auth_manager),
@@ -746,6 +887,7 @@ impl Session {
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id,
             registered_subagents: Mutex::new(std::collections::HashSet::new()),
+            shared_subagent_context,
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -1438,6 +1580,18 @@ impl Session {
     }
 
     pub(crate) async fn persist_rollout_items(&self, items: &[RolloutItem]) {
+        // If we have a shared context, we're a subagent - write to unified file
+        if let Some(ctx) = &self.shared_subagent_context {
+            let recorder = ctx.recorder.lock().await;
+            if let Some(rec) = recorder.as_ref()
+                && let Err(e) = rec.record_subagent_items(&ctx.session_id, items).await
+            {
+                warn!("failed to record subagent rollout items: {e}");
+            }
+            return;
+        }
+
+        // Normal session: write to own rollout
         let recorder = {
             let guard = self.services.rollout.lock().await;
             guard.clone()
@@ -3299,7 +3453,7 @@ mod tests {
             mcp_startup_cancellation_token: CancellationToken::new(),
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notifier: UserNotifier::new(None),
-            rollout: Mutex::new(None),
+            rollout: Arc::new(Mutex::new(None)),
             user_shell: Arc::new(default_user_shell()),
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
             auth_manager: auth_manager.clone(),
@@ -3332,6 +3486,7 @@ mod tests {
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id: None,
             registered_subagents: Mutex::new(std::collections::HashSet::new()),
+            shared_subagent_context: None,
         };
 
         (session, turn_context)
@@ -3392,7 +3547,7 @@ mod tests {
             mcp_startup_cancellation_token: CancellationToken::new(),
             unified_exec_manager: UnifiedExecSessionManager::default(),
             notifier: UserNotifier::new(None),
-            rollout: Mutex::new(None),
+            rollout: Arc::new(Mutex::new(None)),
             user_shell: Arc::new(default_user_shell()),
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
             auth_manager: Arc::clone(&auth_manager),
@@ -3425,6 +3580,7 @@ mod tests {
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id: None,
             registered_subagents: Mutex::new(std::collections::HashSet::new()),
+            shared_subagent_context: None,
         });
 
         (session, turn_context, rx_event)
