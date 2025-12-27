@@ -115,10 +115,18 @@ impl ToolHandler for TaskHandler {
         {
             let recorder = session.services.rollout.lock().await;
             if let Some(rec) = recorder.as_ref() {
+                // Get parent rollout filename for bidirectional reference
+                let parent_rollout_filename = rec
+                    .rollout_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(String::from);
+
                 match rec
                     .create_subagent_file(
                         &task_session_id,
                         session.source_session_id().map(std::string::String::as_str),
+                        parent_rollout_filename.as_deref(),
                         &params.subagent_type,
                         &params.description,
                     )

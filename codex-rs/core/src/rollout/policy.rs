@@ -14,6 +14,8 @@ pub(crate) fn is_persisted_response_item(item: &RolloutItem) -> bool {
         }
         // Persist subagent file references for session resume
         RolloutItem::SubAgentFileRef(_) => true,
+        // Persist subagent metadata for unified subagent files
+        RolloutItem::SubagentMeta(_) => true,
     }
 }
 

@@ -431,6 +431,9 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
             RolloutItem::SubAgentFileRef(_) => {
                 // Not included in `head`; skip.
             }
+            RolloutItem::SubagentMeta(_) => {
+                // Not included in `head`; skip.
+            }
         }
 
         if summary.saw_session_meta && summary.saw_user_event {

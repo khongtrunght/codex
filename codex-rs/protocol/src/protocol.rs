@@ -1310,6 +1310,24 @@ pub struct SubAgentFileRef {
     pub description: String,
 }
 
+/// Metadata stored at the beginning of a unified subagent file.
+/// This provides context about the subagent without requiring parent lookup.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubagentMeta {
+    /// Subagent session ID (e.g., "task-abc123")
+    pub session_id: String,
+    /// Parent session ID (None = spawned by root session)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// Parent's rollout filename for bidirectional reference
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_rollout: Option<String>,
+    /// Agent type (e.g., "explore", "plan", "general")
+    pub agent_type: String,
+    /// Task description
+    pub description: String,
+}
+
 /// History loaded from a subagent's rollout file during session resume.
 #[derive(Debug, Clone)]
 pub struct SubagentHistory {
@@ -1493,6 +1511,8 @@ pub enum RolloutItem {
     EventMsg(EventMsg),
     /// Reference to a subagent's separate rollout file
     SubAgentFileRef(SubAgentFileRef),
+    /// Metadata header for unified subagent files
+    SubagentMeta(SubagentMeta),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, JsonSchema, TS)]

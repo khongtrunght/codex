@@ -36,6 +36,7 @@ use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentFileRef;
 use codex_protocol::protocol::SubagentHistory;
+use codex_protocol::protocol::SubagentMeta;
 
 /// Records all [`ResponseItem`]s for a session and flushes them to disk after
 /// every update.
@@ -75,10 +76,11 @@ enum RolloutCmd {
     Shutdown {
         ack: oneshot::Sender<()>,
     },
-    /// Create a new subagent rollout file
+    /// Create a new unified subagent rollout file
     CreateSubagentFile {
         session_id: String,
         parent_session_id: Option<String>,
+        parent_rollout_filename: Option<String>,
         agent_type: String,
         description: String,
         ack: oneshot::Sender<std::io::Result<PathBuf>>,
@@ -289,6 +291,10 @@ impl RolloutRecorder {
                         subagent_refs.push(ref_.clone());
                         items.push(RolloutItem::SubAgentFileRef(ref_));
                     }
+                    RolloutItem::SubagentMeta(meta) => {
+                        // SubagentMeta in parent file is just stored as-is
+                        items.push(RolloutItem::SubagentMeta(meta));
+                    }
                 },
                 Err(e) => {
                     warn!("failed to parse rollout line: {v:?}, error: {e}");
@@ -390,12 +396,13 @@ impl RolloutRecorder {
         }
     }
 
-    /// Create a new subagent rollout file and record a SubAgentFileRef in the main rollout.
+    /// Create a new unified subagent rollout file and record a SubAgentFileRef in the main rollout.
     /// Returns the path to the created subagent file.
     pub async fn create_subagent_file(
         &self,
         session_id: &str,
         parent_session_id: Option<&str>,
+        parent_rollout_filename: Option<&str>,
         agent_type: &str,
         description: &str,
     ) -> std::io::Result<PathBuf> {
@@ -404,6 +411,7 @@ impl RolloutRecorder {
             .send(RolloutCmd::CreateSubagentFile {
                 session_id: session_id.to_string(),
                 parent_session_id: parent_session_id.map(ToString::to_string),
+                parent_rollout_filename: parent_rollout_filename.map(ToString::to_string),
                 agent_type: agent_type.to_string(),
                 description: description.to_string(),
                 ack: tx,
@@ -558,11 +566,13 @@ async fn rollout_writer(
             RolloutCmd::CreateSubagentFile {
                 session_id,
                 parent_session_id,
+                parent_rollout_filename,
                 agent_type,
                 description,
                 ack,
             } => {
-                let filename = format!("{session_id}.jsonl");
+                // Use "subagent-" prefix for unified files
+                let filename = format!("subagent-{session_id}.jsonl");
                 let path = session_dir.join(&filename);
 
                 // Create the subagent file
@@ -572,9 +582,22 @@ async fn rollout_writer(
                         .create(true)
                         .open(&path)
                         .await?;
-                    subagent_writers.insert(session_id.clone(), JsonlWriter { file });
+                    let mut sw = JsonlWriter { file };
 
-                    // Write SubAgentFileRef to main rollout
+                    // Write SubagentMeta as the first line
+                    let meta = SubagentMeta {
+                        session_id: session_id.clone(),
+                        parent_session_id: parent_session_id.clone(),
+                        parent_rollout: parent_rollout_filename,
+                        agent_type: agent_type.clone(),
+                        description: description.clone(),
+                    };
+                    sw.write_rollout_item(RolloutItem::SubagentMeta(meta))
+                        .await?;
+
+                    subagent_writers.insert(session_id.clone(), sw);
+
+                    // Write SubAgentFileRef to main rollout (unchanged reference)
                     let file_ref = SubAgentFileRef {
                         session_id: session_id.clone(),
                         filename,
