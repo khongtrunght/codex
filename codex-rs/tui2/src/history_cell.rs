@@ -1948,16 +1948,17 @@ impl SubAgentCell {
                     && self.output.is_none()
                     && self.status != SubAgentStatus::Completed;
 
-                // Tool call header: ToolName(args)
+                // Tool call header: ToolName(args) - tool name bold, path uses terminal width
                 let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
-                let call_text = format!(
-                    "{}({})",
-                    call.tool_name,
-                    truncate_to_n_chars(display_arg, 50)
-                );
+                let prefix_width = 4; // "├  " prefix
+                let available_for_args = (width as usize)
+                    .saturating_sub(prefix_width + call.tool_name.len() + 2); // 2 for "()"
+                let arg_display =
+                    crate::text_formatting::center_truncate_path(display_arg, available_for_args);
                 lines.push(Line::from(vec![
                     format!("{continuation}├  ").dim(),
-                    call_text.into(),
+                    call.tool_name.clone().bold(),
+                    format!("({arg_display})").into(),
                 ]));
 
                 // Show output if available
@@ -4070,6 +4071,119 @@ mod tests {
         assert!(
             rendered.iter().any(|l| l.contains("config.json")),
             "Verbose mode should show tool title 'config.json': {:?}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn subagent_rollout_json_parses_patch_apply_begin() {
+        use codex_protocol::protocol::RolloutItem;
+        use codex_protocol::protocol::RolloutLine;
+
+        // This is the actual JSON format from a subagent rollout file
+        let patch_apply_json = r#"{"timestamp":"2025-12-28T04:44:52.442Z","type":"event_msg","payload":{"type":"patch_apply_begin","call_id":"toolu_01AjQkSJNcC6T8Wb33URGVqJ","turn_id":"0","auto_approved":true,"changes":{"/Users/test/file.txt":{"type":"add","content":"Hello"}}}}"#;
+
+        // Parse as RolloutLine (like load_subagent_file does)
+        let parsed: RolloutLine =
+            serde_json::from_str(patch_apply_json).expect("Failed to parse JSON");
+
+        // Verify it's the correct variant
+        match &parsed.item {
+            RolloutItem::EventMsg(ev) => {
+                use codex_core::protocol::EventMsg;
+                match ev {
+                    EventMsg::PatchApplyBegin(begin) => {
+                        assert_eq!(begin.call_id, "toolu_01AjQkSJNcC6T8Wb33URGVqJ");
+                        assert!(begin.auto_approved);
+                        assert_eq!(begin.changes.len(), 1);
+                    }
+                    other => panic!("Expected PatchApplyBegin, got: {:?}", other),
+                }
+            }
+            other => panic!("Expected EventMsg, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn subagent_cell_from_history_shows_patch_apply_begin() {
+        use codex_core::protocol::EventMsg;
+        use codex_core::protocol::PatchApplyBeginEvent;
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
+        use codex_protocol::protocol::FileChange;
+        use codex_protocol::protocol::RolloutItem;
+        use codex_protocol::protocol::SubagentHistory;
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        // Create a history with PatchApplyBegin event (as would be loaded from rollout file)
+        let mut changes = HashMap::new();
+        changes.insert(
+            PathBuf::from("/test/file.txt"),
+            FileChange::Add {
+                content: "Hello".to_string(),
+            },
+        );
+
+        let history = SubagentHistory {
+            session_id: "sess-1".to_string(),
+            parent_session_id: None,
+            agent_type: "general".to_string(),
+            description: "Write to file".to_string(),
+            rollout_path: PathBuf::from("/test/rollout.jsonl"),
+            history: vec![
+                RolloutItem::EventMsg(EventMsg::SubAgentBegin(SubAgentBeginEvent {
+                    call_id: "call-1".to_string(),
+                    session_id: "sess-1".to_string(),
+                    agent_type: "general".to_string(),
+                    description: "Write to file".to_string(),
+                    prompt: Some("Write Hello to file".to_string()),
+                    resumed: false,
+                })),
+                RolloutItem::EventMsg(EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
+                    call_id: "patch-call-1".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    auto_approved: true,
+                    changes,
+                })),
+                RolloutItem::EventMsg(EventMsg::SubAgentEnd(SubAgentEndEvent {
+                    call_id: "call-1".to_string(),
+                    session_id: "sess-1".to_string(),
+                    success: true,
+                    output: "Done".to_string(),
+                    duration_ms: 500,
+                    tool_summary: vec![],
+                    token_usage: None,
+                })),
+            ],
+        };
+
+        let cell = subagent_cell_from_history(history, false);
+
+        // Verify raw_events contains the PatchApplyBegin
+        assert_eq!(cell.raw_events().len(), 3);
+
+        // Verify extract_tool_calls finds the patch tool
+        let tool_calls = cell.extract_tool_calls();
+        assert_eq!(
+            tool_calls.len(),
+            1,
+            "Should have 1 tool call from PatchApplyBegin: {:?}",
+            tool_calls
+        );
+        assert_eq!(tool_calls[0].tool_name, "patch");
+        assert!(
+            tool_calls[0].title.as_ref().unwrap().contains("file.txt"),
+            "Title should contain filename: {:?}",
+            tool_calls[0].title
+        );
+
+        // Verify verbose mode shows the tool
+        let lines = cell.display_lines_verbose(80, true);
+        let rendered = render_lines(&lines);
+        assert!(
+            rendered.iter().any(|l| l.contains("patch")),
+            "Verbose mode should show tool name 'patch': {:?}",
             rendered
         );
     }
