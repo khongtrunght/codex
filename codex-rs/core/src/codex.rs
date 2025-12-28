@@ -480,9 +480,6 @@ pub(crate) struct Session {
     /// Used for session tree tracking - when a sub-agent spawns another sub-agent,
     /// this value becomes the child's parent_session_id.
     source_session_id: Option<String>,
-    /// Set of registered subagent session IDs.
-    /// Used for routing forwarded events to the correct subagent rollout file.
-    registered_subagents: Mutex<std::collections::HashSet<String>>,
     /// For subagents: the parent's recorder to use for writing to the unified subagent file.
     /// When Some, this session should NOT create its own rollout file.
     shared_subagent_context: Option<SharedSubagentContext>,
@@ -683,16 +680,16 @@ impl Session {
         // Only add agent configs (and thus the task tool) for main sessions,
         // not for sub-agents.
         let tools_config = if per_turn_config.subagent_tool_filter.is_none() {
-            let agent_configs = crate::agent_types::AgentTypeRegistry::with_defaults()
-                .agent_configs();
+            let agent_configs =
+                crate::agent_types::AgentTypeRegistry::with_defaults().agent_configs();
             tools_config.with_agent_configs(agent_configs)
         } else {
             tools_config
         };
 
         // Store the tool filter in the tools config for later use in build_specs
-        let tools_config = tools_config
-            .with_subagent_filter(per_turn_config.subagent_tool_filter.clone());
+        let tools_config =
+            tools_config.with_subagent_filter(per_turn_config.subagent_tool_filter.clone());
 
         TurnContext {
             sub_id,
@@ -745,50 +742,49 @@ impl Session {
 
         // For subagents with shared context, we don't create our own rollout.
         // The parent's recorder is used via SharedSubagentContext.
-        let (conversation_id, rollout_recorder, rollout_path) = if let Some(ref ctx) =
-            shared_subagent_context
-        {
-            // Subagent: use a new conversation ID but don't create a rollout file.
-            // The rollout_path points to the unified subagent file (created by parent).
-            let conversation_id = ConversationId::default();
-            let recorder_guard = ctx.recorder.lock().await;
-            let path = recorder_guard
-                .as_ref()
-                .map(|r| {
-                    r.session_dir()
-                        .join(format!("subagent-{}.jsonl", ctx.session_id))
-                })
-                .unwrap_or_default();
-            (conversation_id, None, path)
-        } else {
-            // Normal session: create our own rollout recorder
-            let (conversation_id, rollout_params) = match &initial_history {
-                InitialHistory::New | InitialHistory::Forked(_) => {
-                    let conversation_id = ConversationId::default();
-                    (
-                        conversation_id,
-                        RolloutRecorderParams::new(
+        let (conversation_id, rollout_recorder, rollout_path) =
+            if let Some(ref ctx) = shared_subagent_context {
+                // Subagent: use a new conversation ID but don't create a rollout file.
+                // The rollout_path points to the unified subagent file (created by parent).
+                let conversation_id = ConversationId::default();
+                let recorder_guard = ctx.recorder.lock().await;
+                let path = recorder_guard
+                    .as_ref()
+                    .map(|r| {
+                        r.session_dir()
+                            .join(format!("subagent-{}.jsonl", ctx.session_id))
+                    })
+                    .unwrap_or_default();
+                (conversation_id, None, path)
+            } else {
+                // Normal session: create our own rollout recorder
+                let (conversation_id, rollout_params) = match &initial_history {
+                    InitialHistory::New | InitialHistory::Forked(_) => {
+                        let conversation_id = ConversationId::default();
+                        (
                             conversation_id,
-                            session_configuration.user_instructions.clone(),
-                            session_source,
-                        ),
-                    )
-                }
-                InitialHistory::Resumed(resumed_history) => (
-                    resumed_history.conversation_id,
-                    RolloutRecorderParams::resume(resumed_history.rollout_path.clone()),
-                ),
-            };
+                            RolloutRecorderParams::new(
+                                conversation_id,
+                                session_configuration.user_instructions.clone(),
+                                session_source,
+                            ),
+                        )
+                    }
+                    InitialHistory::Resumed(resumed_history) => (
+                        resumed_history.conversation_id,
+                        RolloutRecorderParams::resume(resumed_history.rollout_path.clone()),
+                    ),
+                };
 
-            let rollout_recorder = RolloutRecorder::new(&config, rollout_params)
-                .await
-                .map_err(|e| {
-                    error!("failed to initialize rollout recorder: {e:#}");
-                    anyhow::Error::from(e)
-                })?;
-            let path = rollout_recorder.rollout_path.clone();
-            (conversation_id, Some(rollout_recorder), path)
-        };
+                let rollout_recorder = RolloutRecorder::new(&config, rollout_params)
+                    .await
+                    .map_err(|e| {
+                        error!("failed to initialize rollout recorder: {e:#}");
+                        anyhow::Error::from(e)
+                    })?;
+                let path = rollout_recorder.rollout_path.clone();
+                (conversation_id, Some(rollout_recorder), path)
+            };
 
         // Kick off independent async setup tasks in parallel to reduce startup latency.
         let history_meta_fut = crate::message_history::history_metadata(&config);
@@ -886,7 +882,6 @@ impl Session {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id,
-            registered_subagents: Mutex::new(std::collections::HashSet::new()),
             shared_subagent_context,
         });
 
@@ -1193,7 +1188,8 @@ impl Session {
 
     /// Persist the event to rollout and send it to clients.
     pub(crate) async fn send_event(&self, turn_context: &TurnContext, msg: EventMsg) {
-        self.send_event_with_source(turn_context, msg, None, None).await;
+        self.send_event_with_source(turn_context, msg, None, None)
+            .await;
     }
 
     /// Persist the event to rollout and send it to clients with source session ID.
@@ -1227,45 +1223,17 @@ impl Session {
     }
 
     pub(crate) async fn send_event_raw(&self, event: Event) {
-        // Route event to appropriate rollout file based on source_session_id
-        if let Some(ref source_id) = event.source_session_id {
-            // Forwarded event from a sub-agent - persist to subagent's file
-            self.persist_to_subagent_rollout(source_id, &event.msg)
-                .await;
-        } else {
-            // Main session event - persist to main rollout
+        // Only persist if this is NOT a forwarded subagent event.
+        // Subagents persist their own events via SharedSubagentContext in persist_rollout_items().
+        // When events are forwarded to parent (source_session_id is Some), they're already persisted.
+        if event.source_session_id.is_none() {
             let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
             self.persist_rollout_items(&rollout_items).await;
         }
+
+        // Always send to channel for UI/consumers
         if let Err(e) = self.tx_event.send(event).await {
             error!("failed to send tool call event: {e}");
-        }
-    }
-
-    /// Register a subagent session ID for event routing.
-    pub(crate) async fn register_subagent(&self, session_id: &str) {
-        self.registered_subagents
-            .lock()
-            .await
-            .insert(session_id.to_string());
-    }
-
-    /// Persist an event to a subagent's rollout file.
-    async fn persist_to_subagent_rollout(&self, session_id: &str, msg: &EventMsg) {
-        // Check if this subagent is registered
-        let is_registered = self.registered_subagents.lock().await.contains(session_id);
-        if !is_registered {
-            // Subagent not registered - this is likely a forwarded event before registration
-            // Just skip persistence (will be captured in SubAgentEnd summary)
-            return;
-        }
-
-        let recorder = self.services.rollout.lock().await;
-        if let Some(rec) = recorder.as_ref() {
-            let items = vec![RolloutItem::EventMsg(msg.clone())];
-            if let Err(e) = rec.record_subagent_items(session_id, &items).await {
-                warn!("failed to record subagent event: {e}");
-            }
         }
     }
 
@@ -3485,7 +3453,6 @@ mod tests {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id: None,
-            registered_subagents: Mutex::new(std::collections::HashSet::new()),
             shared_subagent_context: None,
         };
 
@@ -3579,7 +3546,6 @@ mod tests {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             source_session_id: None,
-            registered_subagents: Mutex::new(std::collections::HashSet::new()),
             shared_subagent_context: None,
         });
 

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::Duration;
+use chrono::Utc;
 use http::HeaderMap;
 
 use crate::auth::RefreshTokenError;

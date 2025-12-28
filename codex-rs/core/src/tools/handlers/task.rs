@@ -112,7 +112,8 @@ impl ToolHandler for TaskHandler {
         );
 
         // Create subagent rollout file and register for event routing
-        {
+        // Track whether persistence was successfully set up
+        let subagent_persistence_ok = {
             let recorder = session.services.rollout.lock().await;
             if let Some(rec) = recorder.as_ref() {
                 // Get parent rollout filename for bidirectional reference
@@ -129,27 +130,31 @@ impl ToolHandler for TaskHandler {
                         parent_rollout_filename.as_deref(),
                         &params.subagent_type,
                         &params.description,
+                        resumed, // Pass resume flag to avoid duplicate SubagentMeta
                     )
                     .await
                 {
                     Ok(_path) => {
                         info!(
                             session_id = %task_session_id,
+                            resumed = %resumed,
                             "Created subagent rollout file"
                         );
+                        true
                     }
                     Err(e) => {
                         warn!(
                             session_id = %task_session_id,
                             error = %e,
-                            "Failed to create subagent rollout file"
+                            "Failed to create subagent rollout file - persistence disabled for this subagent"
                         );
+                        false
                     }
                 }
+            } else {
+                false
             }
-        }
-        // Register subagent for event routing
-        session.register_subagent(&task_session_id).await;
+        };
 
         // Emit SubAgentBegin event
         session
@@ -191,6 +196,7 @@ impl ToolHandler for TaskHandler {
             task_session_id.clone(),
             Arc::clone(&tool_summary),
             Arc::clone(&token_usage),
+            subagent_persistence_ok,
         )
         .await;
 
@@ -223,8 +229,8 @@ impl ToolHandler for TaskHandler {
             )
             .await;
 
-        // Close subagent rollout file
-        {
+        // Close subagent rollout file (only if persistence was set up)
+        if subagent_persistence_ok {
             let recorder = session.services.rollout.lock().await;
             if let Some(rec) = recorder.as_ref()
                 && let Err(e) = rec.close_subagent_file(&task_session_id).await
@@ -331,12 +337,21 @@ async fn run_task_subagent(
     session_id: String,
     tool_summary: Arc<Mutex<Vec<SubAgentToolSummary>>>,
     token_usage: Arc<Mutex<SubAgentTokenUsage>>,
+    persistence_ok: bool,
 ) -> Result<String, String> {
     // Build user input
     let input = vec![UserInput::Text { text: prompt }];
 
     // Spawn sub-agent using the existing infrastructure
     // Pass the session_id so the sub-agent Session knows its own identity
+    // Only pass session_id for persistence if the rollout file was created successfully
+    let source_session_id = if persistence_ok {
+        Some(session_id.clone())
+    } else {
+        // Without persistence, don't set source_session_id - this prevents
+        // SharedSubagentContext creation and avoids trying to write to a non-existent file
+        None
+    };
     let codex = run_codex_conversation_one_shot(
         config,
         Arc::clone(&parent_session.services.auth_manager),
@@ -346,7 +361,7 @@ async fn run_task_subagent(
         Arc::clone(&parent_turn),
         cancel_token.clone(),
         None, // For now, don't support resume - would need rollout path lookup
-        Some(session_id.clone()), // Sub-agent's own session ID
+        source_session_id,
     )
     .await
     .map_err(|e| format!("Failed to spawn sub-agent: {e}"))?;

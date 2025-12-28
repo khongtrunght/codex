@@ -17,9 +17,13 @@ use crate::exec::ExecToolCallOutput;
 use crate::exec::StreamOutput;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::FileChange;
-use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
-use crate::tools::events::{ToolEmitter, ToolEventCtx};
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
+use crate::tools::events::ToolEmitter;
+use crate::tools::events::ToolEventCtx;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 
 #[derive(Deserialize)]
 struct EditFileArgs {
@@ -70,10 +74,7 @@ fn normalize_whitespace(s: &str) -> String {
 
 /// Trim each line individually.
 fn line_trim(s: &str) -> String {
-    s.lines()
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join("\n")
+    s.lines().map(str::trim).collect::<Vec<_>>().join("\n")
 }
 
 /// Try to find and replace the old_string in the content using various matching strategies.
@@ -92,7 +93,11 @@ fn try_replace(
         } else {
             content.replacen(old_string, new_string, 1)
         };
-        return Some((new_content, MatchStrategy::Exact, if replace_all { count } else { 1 }));
+        return Some((
+            new_content,
+            MatchStrategy::Exact,
+            if replace_all { count } else { 1 },
+        ));
     }
 
     // Strategy 2: Normalized whitespace match
@@ -101,7 +106,8 @@ fn try_replace(
 
     if normalized_content.contains(&normalized_old) {
         // Find positions in normalized content, then map back to original
-        if let Some(result) = replace_with_normalized(content, old_string, new_string, replace_all) {
+        if let Some(result) = replace_with_normalized(content, old_string, new_string, replace_all)
+        {
             return Some((result.0, MatchStrategy::NormalizedWhitespace, result.1));
         }
     }
@@ -210,10 +216,8 @@ fn replace_with_line_trim(
 
         if matches {
             // Preserve leading whitespace from the first matching line
-            let leading_whitespace: String = lines[i]
-                .chars()
-                .take_while(|c| c.is_whitespace())
-                .collect();
+            let leading_whitespace: String =
+                lines[i].chars().take_while(|c| c.is_whitespace()).collect();
 
             // Replace the matching lines with new_string lines, preserving indentation
             let new_lines: Vec<String> = new_string
@@ -381,7 +385,8 @@ impl ToolHandler for EditFileHandler {
         .collect();
 
         let emitter = ToolEmitter::apply_patch(changes, true);
-        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        let event_ctx =
+            ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
         emitter.begin(event_ctx).await;
 
         // Create success output and emit end event
@@ -394,7 +399,8 @@ impl ToolHandler for EditFileHandler {
             duration: Duration::ZERO,
             timed_out: false,
         };
-        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        let event_ctx =
+            ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
         let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
 
         let strategy_note = if strategy != MatchStrategy::Exact {

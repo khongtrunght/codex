@@ -4,8 +4,11 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
-use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 use crate::unified_exec::SessionStatusInfo;
 
 pub struct BashOutputHandler;
@@ -32,7 +35,9 @@ impl ToolHandler for BashOutputHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { session, payload, .. } = invocation;
+        let ToolInvocation {
+            session, payload, ..
+        } = invocation;
 
         let ToolPayload::Function { arguments } = payload else {
             return Err(FunctionCallError::RespondToModel(
@@ -45,19 +50,23 @@ impl ToolHandler for BashOutputHandler {
         })?;
 
         let manager = &session.services.unified_exec_manager;
-        let snapshot = manager.get_session_output(&args.bash_id).await.map_err(|e| {
-            FunctionCallError::RespondToModel(format!(
-                "No shell found with ID: {}. {e:?}",
-                args.bash_id
-            ))
-        })?;
+        let snapshot = manager
+            .get_session_output(&args.bash_id)
+            .await
+            .map_err(|e| {
+                FunctionCallError::RespondToModel(format!(
+                    "No shell found with ID: {}. {e:?}",
+                    args.bash_id
+                ))
+            })?;
 
         // Apply optional regex filter
         let output = if let Some(pattern) = &args.filter {
-            let regex = regex::Regex::new(pattern).map_err(|e| {
-                FunctionCallError::RespondToModel(format!("Invalid regex: {e}"))
-            })?;
-            snapshot.output.lines()
+            let regex = regex::Regex::new(pattern)
+                .map_err(|e| FunctionCallError::RespondToModel(format!("Invalid regex: {e}")))?;
+            snapshot
+                .output
+                .lines()
                 .filter(|line| regex.is_match(line))
                 .collect::<Vec<_>>()
                 .join("\n")

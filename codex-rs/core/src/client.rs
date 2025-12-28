@@ -311,19 +311,15 @@ impl ModelClient {
                 .and_then(|m| m.get_provider_auth(config_key, &self.provider));
 
             let api_provider = self.provider.to_api_provider(None)?;
-            let api_auth = auth_provider_from_provider_auth(
-                provider_auth.as_deref(),
-                &self.provider,
-            )?;
+            let api_auth =
+                auth_provider_from_provider_auth(provider_auth.as_deref(), &self.provider)?;
 
             let transport = ReqwestTransport::new(build_reqwest_client());
             let (request_telemetry, sse_telemetry) = self.build_streaming_telemetry();
             let client = ApiAnthropicClient::new(transport, api_provider, api_auth)
                 .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
 
-            let stream_result = client
-                .stream_prompt(&self.get_model(), &api_prompt)
-                .await;
+            let stream_result = client.stream_prompt(&self.get_model(), &api_prompt).await;
 
             match stream_result {
                 Ok(stream) => return Ok(stream),
@@ -331,9 +327,7 @@ impl ModelClient {
                     if status == StatusCode::UNAUTHORIZED =>
                 {
                     // For Anthropic, refresh provider-specific token
-                    if !refreshed
-                        && let Some(manager) = auth_manager.as_ref()
-                    {
+                    if !refreshed && let Some(manager) = auth_manager.as_ref() {
                         let _ = manager.refresh_provider_token(config_key).await;
                         refreshed = true;
                         continue;

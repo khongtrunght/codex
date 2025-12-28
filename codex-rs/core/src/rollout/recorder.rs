@@ -83,6 +83,8 @@ enum RolloutCmd {
         parent_rollout_filename: Option<String>,
         agent_type: String,
         description: String,
+        /// If true, this is a resume operation - skip writing SubagentMeta if file already has it
+        resume: bool,
         ack: oneshot::Sender<std::io::Result<PathBuf>>,
     },
     /// Add items to a subagent's rollout file
@@ -398,6 +400,9 @@ impl RolloutRecorder {
 
     /// Create a new unified subagent rollout file and record a SubAgentFileRef in the main rollout.
     /// Returns the path to the created subagent file.
+    ///
+    /// If `resume` is true, skips writing SubagentMeta if the file already contains one,
+    /// preventing duplicate metadata entries on resume.
     pub async fn create_subagent_file(
         &self,
         session_id: &str,
@@ -405,6 +410,7 @@ impl RolloutRecorder {
         parent_rollout_filename: Option<&str>,
         agent_type: &str,
         description: &str,
+        resume: bool,
     ) -> std::io::Result<PathBuf> {
         let (tx, rx) = oneshot::channel();
         self.tx
@@ -414,12 +420,14 @@ impl RolloutRecorder {
                 parent_rollout_filename: parent_rollout_filename.map(ToString::to_string),
                 agent_type: agent_type.to_string(),
                 description: description.to_string(),
+                resume,
                 ack: tx,
             })
             .await
             .map_err(|e| IoError::other(format!("failed to send create subagent file cmd: {e}")))?;
-        rx.await
-            .map_err(|e| IoError::other(format!("failed waiting for subagent file creation: {e}")))?
+        rx.await.map_err(|e| {
+            IoError::other(format!("failed waiting for subagent file creation: {e}"))
+        })?
     }
 
     /// Record items to a subagent's rollout file.
@@ -549,10 +557,20 @@ async fn rollout_writer(
                 }
             }
             RolloutCmd::Flush { ack } => {
-                // Ensure underlying file is flushed and then ack.
+                // Ensure underlying file is flushed
                 if let Err(e) = writer.file.flush().await {
                     let _ = ack.send(());
                     return Err(e);
+                }
+                // Also flush all subagent files for complete persistence
+                for (session_id, sw) in subagent_writers.iter_mut() {
+                    if let Err(e) = sw.file.flush().await {
+                        warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "failed to flush subagent file during Flush"
+                        );
+                    }
                 }
                 let _ = ack.send(());
             }
@@ -569,6 +587,7 @@ async fn rollout_writer(
                 parent_rollout_filename,
                 agent_type,
                 description,
+                resume,
                 ack,
             } => {
                 // Use "subagent-" prefix for unified files
@@ -577,6 +596,25 @@ async fn rollout_writer(
 
                 // Create the subagent file
                 let result = async {
+                    // Check if file already exists and has SubagentMeta (for resume)
+                    let file_exists = path.exists();
+                    let has_existing_meta = if resume && file_exists {
+                        // Read first line to check for existing SubagentMeta
+                        match tokio::fs::read_to_string(&path).await {
+                            Ok(content) => content
+                                .lines()
+                                .next()
+                                .and_then(|line| {
+                                    serde_json::from_str::<serde_json::Value>(line).ok()
+                                })
+                                .and_then(|v| v.get("item")?.get("type").cloned())
+                                .is_some_and(|t| t == "subagent_meta"),
+                            Err(_) => false,
+                        }
+                    } else {
+                        false
+                    };
+
                     let file = tokio::fs::OpenOptions::new()
                         .append(true)
                         .create(true)
@@ -584,20 +622,32 @@ async fn rollout_writer(
                         .await?;
                     let mut sw = JsonlWriter { file };
 
-                    // Write SubagentMeta as the first line
-                    let meta = SubagentMeta {
-                        session_id: session_id.clone(),
-                        parent_session_id: parent_session_id.clone(),
-                        parent_rollout: parent_rollout_filename,
-                        agent_type: agent_type.clone(),
-                        description: description.clone(),
-                    };
-                    sw.write_rollout_item(RolloutItem::SubagentMeta(meta))
-                        .await?;
+                    // Write SubagentMeta only if this is a new file (not resume with existing meta)
+                    if !has_existing_meta {
+                        let meta = SubagentMeta {
+                            session_id: session_id.clone(),
+                            parent_session_id: parent_session_id.clone(),
+                            parent_rollout: parent_rollout_filename,
+                            agent_type: agent_type.clone(),
+                            description: description.clone(),
+                        };
+                        sw.write_rollout_item(RolloutItem::SubagentMeta(meta))
+                            .await?;
+                    } else {
+                        info!(
+                            session_id = %session_id,
+                            "Resuming subagent file, skipping SubagentMeta write"
+                        );
+                    }
 
                     subagent_writers.insert(session_id.clone(), sw);
+                    info!(
+                        session_id = %session_id,
+                        active_subagent_writers = subagent_writers.len(),
+                        "Created/resumed subagent writer"
+                    );
 
-                    // Write SubAgentFileRef to main rollout (unchanged reference)
+                    // Write SubAgentFileRef to main rollout (always, for tracking)
                     let file_ref = SubAgentFileRef {
                         session_id: session_id.clone(),
                         filename,
@@ -625,14 +675,31 @@ async fn rollout_writer(
                         }
                     }
                 } else {
-                    warn!("subagent writer not found for session_id: {session_id}");
+                    // This can happen if events arrive after CloseSubagentFile was called.
+                    // This indicates a potential ordering issue - events should be drained
+                    // before the subagent is closed.
+                    warn!(
+                        session_id = %session_id,
+                        item_count = items.len(),
+                        "subagent writer not found - late events after close? Items dropped."
+                    );
                 }
             }
             RolloutCmd::CloseSubagentFile { session_id } => {
-                if let Some(mut sw) = subagent_writers.remove(&session_id)
-                    && let Err(e) = sw.file.flush().await
-                {
-                    warn!("failed to flush subagent file: {e}");
+                if let Some(mut sw) = subagent_writers.remove(&session_id) {
+                    info!(
+                        session_id = %session_id,
+                        remaining_subagent_writers = subagent_writers.len(),
+                        "Closing subagent writer"
+                    );
+                    if let Err(e) = sw.file.flush().await {
+                        warn!("failed to flush subagent file: {e}");
+                    }
+                } else {
+                    warn!(
+                        session_id = %session_id,
+                        "CloseSubagentFile called but writer not found"
+                    );
                 }
             }
         }

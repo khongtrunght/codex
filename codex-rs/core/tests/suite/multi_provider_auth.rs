@@ -1,12 +1,12 @@
 use chrono::Utc;
-use codex_core::auth::AuthCredentialsStoreMode;
-use codex_core::auth::AuthManager;
-use codex_core::auth::ProviderCredential;
-use codex_core::auth::ProviderAuth;
-use codex_core::auth::AnthropicAuth;
-use codex_core::auth::OpenAIAuth;
 use codex_core::ModelProviderInfo;
 use codex_core::WireApi;
+use codex_core::auth::AnthropicAuth;
+use codex_core::auth::AuthCredentialsStoreMode;
+use codex_core::auth::AuthManager;
+use codex_core::auth::OpenAIAuth;
+use codex_core::auth::ProviderAuth;
+use codex_core::auth::ProviderCredential;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 
@@ -348,9 +348,11 @@ fn test_provider_logout() {
 
     // Anthropic should be gone
     let anthropic_provider = create_anthropic_provider();
-    assert!(manager
-        .get_provider_auth("anthropic", &anthropic_provider)
-        .is_none());
+    assert!(
+        manager
+            .get_provider_auth("anthropic", &anthropic_provider)
+            .is_none()
+    );
 }
 
 #[test]

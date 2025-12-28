@@ -12,9 +12,13 @@ use crate::exec::ExecToolCallOutput;
 use crate::exec::StreamOutput;
 use crate::function_tool::FunctionCallError;
 use crate::protocol::FileChange;
-use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
-use crate::tools::events::{ToolEmitter, ToolEventCtx};
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
+use crate::tools::events::ToolEmitter;
+use crate::tools::events::ToolEventCtx;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 
 #[derive(Deserialize)]
 struct WriteFileArgs {
@@ -122,7 +126,8 @@ impl ToolHandler for WriteFileHandler {
             [(path.clone(), change)].into_iter().collect();
 
         let emitter = ToolEmitter::apply_patch(changes, true);
-        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        let event_ctx =
+            ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
         emitter.begin(event_ctx).await;
 
         // Create success output and emit end event
@@ -130,7 +135,9 @@ impl ToolHandler for WriteFileHandler {
         let bytes = args.content.len();
         let success_msg = format!(
             "Successfully wrote {} lines ({} bytes) to {}",
-            lines, bytes, path.display()
+            lines,
+            bytes,
+            path.display()
         );
         let exec_output = ExecToolCallOutput {
             exit_code: 0,
@@ -140,7 +147,8 @@ impl ToolHandler for WriteFileHandler {
             duration: Duration::ZERO,
             timed_out: false,
         };
-        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+        let event_ctx =
+            ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
         let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
 
         // Track that this file was written (mark as read so subsequent writes are allowed)

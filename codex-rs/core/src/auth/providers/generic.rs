@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use http::HeaderMap;
 
+use crate::auth::RefreshTokenError;
 use crate::auth::provider_auth::ProviderAuth;
 use crate::auth::storage::ProviderCredential;
-use crate::auth::RefreshTokenError;
 use codex_api::AuthScheme;
 use codex_client::CodexHttpClient;
 

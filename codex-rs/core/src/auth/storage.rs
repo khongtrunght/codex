@@ -73,7 +73,11 @@ pub struct AuthDotJson {
 
     // === BACKWARDS COMPATIBILITY (deprecated, migrate on load) ===
     /// Legacy: OpenAI API key (migrate to credentials["openai"])
-    #[serde(rename = "OPENAI_API_KEY", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "OPENAI_API_KEY",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub openai_api_key: Option<String>,
 
     /// Legacy: ChatGPT OAuth tokens (migrate to credentials["openai"])
@@ -445,7 +449,9 @@ mod tests {
         let mut auth_dot_json = AuthDotJson::default();
         auth_dot_json.credentials.insert(
             "openai".to_string(),
-            ProviderCredential::Api { key: "test-key".to_string() },
+            ProviderCredential::Api {
+                key: "test-key".to_string(),
+            },
         );
 
         storage
@@ -465,7 +471,9 @@ mod tests {
         let mut auth_dot_json = AuthDotJson::default();
         auth_dot_json.credentials.insert(
             "openai".to_string(),
-            ProviderCredential::Api { key: "test-key".to_string() },
+            ProviderCredential::Api {
+                key: "test-key".to_string(),
+            },
         );
 
         let file = get_auth_file(codex_home.path());
@@ -486,7 +494,9 @@ mod tests {
         let mut auth_dot_json = AuthDotJson::default();
         auth_dot_json.credentials.insert(
             "openai".to_string(),
-            ProviderCredential::Api { key: "sk-test-key".to_string() },
+            ProviderCredential::Api {
+                key: "sk-test-key".to_string(),
+            },
         );
         let storage = create_auth_storage(dir.path().to_path_buf(), AuthCredentialsStoreMode::File);
         storage.save(&auth_dot_json)?;
@@ -519,7 +529,10 @@ mod tests {
         assert!(loaded.last_refresh.is_none());
 
         // Also migrated to credentials
-        let cred = loaded.credentials.get("openai").expect("openai cred should exist");
+        let cred = loaded
+            .credentials
+            .get("openai")
+            .expect("openai cred should exist");
         assert!(matches!(cred, ProviderCredential::Api { key } if key == "sk-legacy-key"));
         Ok(())
     }
@@ -626,7 +639,9 @@ mod tests {
         let mut expected = AuthDotJson::default();
         expected.credentials.insert(
             "openai".to_string(),
-            ProviderCredential::Api { key: "sk-test".to_string() },
+            ProviderCredential::Api {
+                key: "sk-test".to_string(),
+            },
         );
         seed_keyring_with_auth(
             &mock_keyring,

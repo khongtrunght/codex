@@ -1,9 +1,14 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use crate::auth::provider_auth::ProviderAuth;
-use crate::auth::providers::{AnthropicAuth, OpenAIAuth};
-use crate::auth::storage::{AuthDotJson, AuthStorageBackend, ProviderCredential};
-use crate::model_provider_info::{ModelProviderInfo, WireApi};
+use crate::auth::providers::AnthropicAuth;
+use crate::auth::providers::OpenAIAuth;
+use crate::auth::storage::AuthDotJson;
+use crate::auth::storage::AuthStorageBackend;
+use crate::auth::storage::ProviderCredential;
+use crate::model_provider_info::ModelProviderInfo;
+use crate::model_provider_info::WireApi;
 
 /// Load credentials for a provider from multiple sources.
 ///
@@ -171,7 +176,8 @@ impl std::fmt::Debug for CredentialLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::storage::{create_auth_storage, AuthCredentialsStoreMode};
+    use crate::auth::storage::AuthCredentialsStoreMode;
+    use crate::auth::storage::create_auth_storage;
     use tempfile::tempdir;
 
     fn create_test_provider(env_key: Option<&str>, wire_api: WireApi) -> ModelProviderInfo {

@@ -92,7 +92,7 @@ impl AgentTypeRegistry {
             "general".to_string(),
             AgentTypeConfig {
                 name: "general".to_string(),
-                description: 
+                description:
                     r#"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."#
                         .to_string()
                 ,
@@ -111,7 +111,7 @@ impl AgentTypeRegistry {
             "explore".to_string(),
             AgentTypeConfig {
                 name: "explore".to_string(),
-                description: 
+                description:
                     r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
                 ,
                 model: None,
@@ -143,7 +143,7 @@ impl AgentTypeRegistry {
             "plan".to_string(),
             AgentTypeConfig {
                 name: "plan".to_string(),
-                description: 
+                description:
                     r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
                 ,
                 model: None,
@@ -246,10 +246,7 @@ mod tests {
         registry.merge_from_config(user_agents);
 
         assert!(registry.get("custom").is_some());
-        assert_eq!(
-            registry.get("custom").unwrap().description,
-            "Custom agent"
-        );
+        assert_eq!(registry.get("custom").unwrap().description, "Custom agent");
     }
 
     #[test]

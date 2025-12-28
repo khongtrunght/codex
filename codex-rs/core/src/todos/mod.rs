@@ -6,7 +6,8 @@
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 /// Subdirectory within codex_home where plan files are stored.
 pub const TODOS_SUBDIR: &str = "todos";
@@ -71,7 +72,8 @@ pub fn load_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::plan_tool::{PlanItemArg, StepStatus};
+    use codex_protocol::plan_tool::PlanItemArg;
+    use codex_protocol::plan_tool::StepStatus;
     use tempfile::tempdir;
 
     #[test]

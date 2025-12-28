@@ -1,7 +1,7 @@
 mod loader;
-mod storage;
 pub mod provider_auth;
 pub mod providers;
+mod storage;
 
 pub use loader::CredentialLoader;
 
@@ -26,8 +26,8 @@ use codex_protocol::config_types::ForcedLoginMethod;
 
 pub use crate::auth::storage::AuthCredentialsStoreMode;
 pub use crate::auth::storage::AuthDotJson;
-pub use crate::auth::storage::ProviderCredential;
 use crate::auth::storage::AuthStorageBackend;
+pub use crate::auth::storage::ProviderCredential;
 
 pub use crate::auth::provider_auth::ProviderAuth;
 pub use crate::auth::providers::AnthropicAuth;
@@ -35,9 +35,9 @@ pub use crate::auth::providers::GenericAuth;
 pub use crate::auth::providers::OpenAIAuth;
 use crate::auth::storage::create_auth_storage;
 use crate::config::Config;
-use crate::model_provider_info::ModelProviderInfo;
 use crate::error::RefreshTokenFailedError;
 use crate::error::RefreshTokenFailedReason;
+use crate::model_provider_info::ModelProviderInfo;
 use crate::token_data::KnownPlan as InternalKnownPlan;
 use crate::token_data::PlanType as InternalPlanType;
 use crate::token_data::TokenData;
@@ -1298,7 +1298,9 @@ impl AuthManager {
         }
 
         // Create new
-        let auth = self.loader.create_provider_auth(provider_id, provider_info)?;
+        let auth = self
+            .loader
+            .create_provider_auth(provider_id, provider_info)?;
         let auth: Arc<dyn ProviderAuth> = Arc::from(auth);
 
         // Cache it

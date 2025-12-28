@@ -661,10 +661,7 @@ impl UnifiedExecSessionManager {
                 process_id: process_id.to_string(),
             })?;
 
-        let OutputHandles {
-            output_buffer,
-            ..
-        } = entry.session.output_handles();
+        let OutputHandles { output_buffer, .. } = entry.session.output_handles();
 
         // Drain current buffer contents
         let chunks = output_buffer.lock().await.drain();
@@ -690,9 +687,11 @@ impl UnifiedExecSessionManager {
         process_id: &str,
     ) -> Result<SessionTerminateResult, UnifiedExecError> {
         let mut store = self.session_store.lock().await;
-        let entry = store.remove(process_id).ok_or(UnifiedExecError::UnknownSessionId {
-            process_id: process_id.to_string(),
-        })?;
+        let entry = store
+            .remove(process_id)
+            .ok_or(UnifiedExecError::UnknownSessionId {
+                process_id: process_id.to_string(),
+            })?;
 
         let command = entry.command.clone();
         let was_running = !entry.session.has_exited();

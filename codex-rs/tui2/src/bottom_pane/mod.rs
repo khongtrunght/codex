@@ -51,8 +51,8 @@ pub(crate) enum CancellationEvent {
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 use codex_protocol::custom_prompts::CustomPrompt;
-use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::plan_tool::StepStatus;
+use codex_protocol::plan_tool::UpdatePlanArgs;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;

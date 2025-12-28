@@ -36,7 +36,8 @@ pub struct AnthropicRequest {
 }
 
 /// System prompt header for Claude Code identification
-pub const CLAUDE_CODE_SYSTEM_HEADER: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
+pub const CLAUDE_CODE_SYSTEM_HEADER: &str =
+    "You are Claude Code, Anthropic's official CLI for Claude.";
 
 /// Builder for Anthropic Messages API requests.
 pub struct AnthropicRequestBuilder<'a> {
@@ -287,10 +288,7 @@ impl<'a> AnthropicRequestBuilder<'a> {
     /// Attach cache_control to a content block.
     fn attach_cache_control(content_block: &mut Value) {
         if let Some(obj) = content_block.as_object_mut() {
-            obj.insert(
-                "cache_control".to_string(),
-                json!({"type": "ephemeral"}),
-            );
+            obj.insert("cache_control".to_string(), json!({"type": "ephemeral"}));
         }
     }
 
@@ -665,7 +663,13 @@ mod tests {
 
         // Should have: user, assistant (text + tool_use combined)
         // NOT: user, assistant (text), user (Continue.), assistant (tool_use)
-        assert_eq!(messages.len(), 2, "Expected 2 messages, got {}: {:?}", messages.len(), messages);
+        assert_eq!(
+            messages.len(),
+            2,
+            "Expected 2 messages, got {}: {:?}",
+            messages.len(),
+            messages
+        );
 
         // First message is user
         assert_eq!(messages[0]["role"], "user");
@@ -674,7 +678,11 @@ mod tests {
         // Second message is assistant with BOTH text and tool_use
         assert_eq!(messages[1]["role"], "assistant");
         let content = messages[1]["content"].as_array().unwrap();
-        assert_eq!(content.len(), 2, "Expected 2 content blocks in assistant message");
+        assert_eq!(
+            content.len(),
+            2,
+            "Expected 2 content blocks in assistant message"
+        );
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], "I'll create a file.");
         assert_eq!(content[1]["type"], "tool_use");
@@ -685,7 +693,10 @@ mod tests {
             if let Some(content) = msg["content"].as_array() {
                 for part in content {
                     if part["type"] == "text" {
-                        assert_ne!(part["text"], "Continue.", "Found unexpected 'Continue.' message");
+                        assert_ne!(
+                            part["text"], "Continue.",
+                            "Found unexpected 'Continue.' message"
+                        );
                     }
                 }
             }
@@ -729,7 +740,11 @@ mod tests {
         // Second message should have both tool_use blocks
         assert_eq!(messages[1]["role"], "assistant");
         let content = messages[1]["content"].as_array().unwrap();
-        assert_eq!(content.len(), 2, "Expected 2 tool_use blocks in assistant message");
+        assert_eq!(
+            content.len(),
+            2,
+            "Expected 2 tool_use blocks in assistant message"
+        );
         assert_eq!(content[0]["type"], "tool_use");
         assert_eq!(content[0]["id"], "call_1");
         assert_eq!(content[1]["type"], "tool_use");

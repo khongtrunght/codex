@@ -919,7 +919,11 @@ impl McpToolCallCell {
         self.result = Some(Err("interrupted".to_string()));
     }
 
-    fn render_content_block(block: &mcp_types::ContentBlock, width: usize, max_lines: usize) -> String {
+    fn render_content_block(
+        block: &mcp_types::ContentBlock,
+        width: usize,
+        max_lines: usize,
+    ) -> String {
         match block {
             mcp_types::ContentBlock::TextContent(text) => {
                 format_and_truncate_tool_result(&text.text, max_lines, width)
@@ -964,7 +968,8 @@ impl McpToolCallCell {
         // Calculate duration span for elapsed time display
         let duration_span: Option<Span<'static>> = if status.is_some() {
             // Completed: show final duration
-            self.duration.map(|d| format!(" ({})", format_duration(d)).dim())
+            self.duration
+                .map(|d| format!(" ({})", format_duration(d)).dim())
         } else {
             // Running: show elapsed time from start_time
             let elapsed = self.start_time.elapsed();
@@ -1004,7 +1009,8 @@ impl McpToolCallCell {
                 Ok(mcp_types::CallToolResult { content, .. }) => {
                     if !content.is_empty() {
                         for block in content {
-                            let text = Self::render_content_block(block, detail_wrap_width, max_lines);
+                            let text =
+                                Self::render_content_block(block, detail_wrap_width, max_lines);
                             for segment in text.split('\n') {
                                 let line = Line::from(segment.to_string().dim());
                                 let wrapped = word_wrap_line(
@@ -1583,7 +1589,8 @@ impl SubAgentCell {
     /// Handles both ResponseItem (from model/history) and EventMsg (from live sessions).
     pub fn extract_tool_calls(&self) -> Vec<ToolCallInfo> {
         use codex_core::protocol::EventMsg;
-        use codex_protocol::models::{LocalShellAction, ResponseItem};
+        use codex_protocol::models::LocalShellAction;
+        use codex_protocol::models::ResponseItem;
         use codex_protocol::protocol::RolloutItem;
         use std::collections::HashMap;
 
@@ -1618,7 +1625,9 @@ impl SubAgentCell {
                     });
                 }
                 // ResponseItem::LocalShellCall (from model/history)
-                RolloutItem::ResponseItem(ResponseItem::LocalShellCall { action, call_id, .. }) => {
+                RolloutItem::ResponseItem(ResponseItem::LocalShellCall {
+                    action, call_id, ..
+                }) => {
                     let (title, args) = match action {
                         LocalShellAction::Exec(exec) => {
                             let cmd = exec.command.join(" ");
@@ -1718,7 +1727,11 @@ impl SubAgentCell {
         if tool_calls.is_empty() {
             "Initializing...".to_string()
         } else if let Some(last) = tool_calls.last() {
-            format!("{}: {}", last.tool_name, last.title.as_deref().unwrap_or(""))
+            format!(
+                "{}: {}",
+                last.tool_name,
+                last.title.as_deref().unwrap_or("")
+            )
         } else {
             "Working...".to_string()
         }
@@ -1756,7 +1769,10 @@ impl SubAgentCell {
         let bullet = match self.status {
             SubAgentStatus::Completed => "●".green().bold(),
             SubAgentStatus::Error => "●".red().bold(),
-            SubAgentStatus::Running => spinner(Some(self.start_time.unwrap_or(Instant::now())), self.animations_enabled),
+            SubAgentStatus::Running => spinner(
+                Some(self.start_time.unwrap_or(Instant::now())),
+                self.animations_enabled,
+            ),
         };
 
         let status_text = match (&self.status, self.resumed) {
@@ -1782,11 +1798,7 @@ impl SubAgentCell {
             self.format_tokens(),
         );
 
-        lines.push(Line::from(vec![
-            bullet,
-            " ".into(),
-            header.into(),
-        ]));
+        lines.push(Line::from(vec![bullet, " ".into(), header.into()]));
 
         // Description line
         let desc_width = (width as usize).saturating_sub(4).max(1);
@@ -1795,10 +1807,7 @@ impl SubAgentCell {
         } else {
             self.description.clone()
         };
-        lines.push(Line::from(vec![
-            "  └ ".dim(),
-            truncated_desc.dim(),
-        ]));
+        lines.push(Line::from(vec!["  └ ".dim(), truncated_desc.dim()]));
 
         // If expanded, show tool calls with outputs
         let tool_calls = self.extract_tool_calls();
@@ -1811,11 +1820,12 @@ impl SubAgentCell {
                 };
                 // Format: ToolName(title) or ToolName(args)
                 let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
-                let call_text = format!("{}({})", call.tool_name, truncate_to_n_chars(display_arg, 60));
-                lines.push(Line::from(vec![
-                    prefix.dim(),
-                    call_text.into(),
-                ]));
+                let call_text = format!(
+                    "{}({})",
+                    call.tool_name,
+                    truncate_to_n_chars(display_arg, 60)
+                );
+                lines.push(Line::from(vec![prefix.dim(), call_text.into()]));
                 // Show output if available (truncated)
                 if let Some(output) = &call.output {
                     let output_prefix = if i == tool_calls.len() - 1 {
@@ -1919,26 +1929,32 @@ impl SubAgentCell {
                 let prompt_lines: Vec<&str> = prompt.lines().take(3).collect();
                 for (i, line) in prompt_lines.iter().enumerate() {
                     let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
-                    let is_last_prompt_line = i == prompt_lines.len() - 1 && tool_calls.is_empty() && self.output.is_none();
-                    let prefix = if is_last_prompt_line && self.status != SubAgentStatus::Completed {
+                    let is_last_prompt_line = i == prompt_lines.len() - 1
+                        && tool_calls.is_empty()
+                        && self.output.is_none();
+                    let prefix = if is_last_prompt_line && self.status != SubAgentStatus::Completed
+                    {
                         format!("{continuation}└    ")
                     } else {
                         format!("{continuation}│    ")
                     };
-                    lines.push(Line::from(vec![
-                        prefix.dim(),
-                        truncated.into(),
-                    ]));
+                    lines.push(Line::from(vec![prefix.dim(), truncated.into()]));
                 }
             }
 
             // Show tool calls with outputs
             for (j, call) in tool_calls.iter().enumerate() {
-                let is_last_tool = j == tool_calls.len() - 1 && self.output.is_none() && self.status != SubAgentStatus::Completed;
+                let is_last_tool = j == tool_calls.len() - 1
+                    && self.output.is_none()
+                    && self.status != SubAgentStatus::Completed;
 
                 // Tool call header: ToolName(args)
                 let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
-                let call_text = format!("{}({})", call.tool_name, truncate_to_n_chars(display_arg, 50));
+                let call_text = format!(
+                    "{}({})",
+                    call.tool_name,
+                    truncate_to_n_chars(display_arg, 50)
+                );
                 lines.push(Line::from(vec![
                     format!("{continuation}├  ").dim(),
                     call_text.into(),
@@ -1948,17 +1964,15 @@ impl SubAgentCell {
                 if let Some(output) = &call.output {
                     let output_lines: Vec<&str> = output.lines().take(3).collect();
                     for (i, line) in output_lines.iter().enumerate() {
-                        let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
+                        let truncated =
+                            truncate_to_n_chars(line, (width as usize).saturating_sub(8));
                         let is_last_output = i == output_lines.len() - 1 && is_last_tool;
                         let prefix = if is_last_output {
                             format!("{continuation}└    ")
                         } else {
                             format!("{continuation}│    ")
                         };
-                        lines.push(Line::from(vec![
-                            prefix.dim(),
-                            truncated.dim(),
-                        ]));
+                        lines.push(Line::from(vec![prefix.dim(), truncated.dim()]));
                     }
                 }
             }
@@ -1973,16 +1987,14 @@ impl SubAgentCell {
                 let response_lines: Vec<&str> = output.lines().take(5).collect();
                 for (i, line) in response_lines.iter().enumerate() {
                     let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
-                    let is_last_response = i == response_lines.len() - 1 && self.status != SubAgentStatus::Completed;
+                    let is_last_response =
+                        i == response_lines.len() - 1 && self.status != SubAgentStatus::Completed;
                     let prefix = if is_last_response {
                         format!("{continuation}└    ")
                     } else {
                         format!("{continuation}│    ")
                     };
-                    lines.push(Line::from(vec![
-                        prefix.dim(),
-                        truncated.into(),
-                    ]));
+                    lines.push(Line::from(vec![prefix.dim(), truncated.into()]));
                 }
             }
 
@@ -2014,7 +2026,11 @@ impl SubAgentCell {
             let mut height = base;
             // Prompt lines (label + up to 3 lines of content)
             if self.prompt.is_some() {
-                height += 1 + self.prompt.as_ref().map(|p| p.lines().take(3).count()).unwrap_or(0) as u16;
+                height += 1 + self
+                    .prompt
+                    .as_ref()
+                    .map(|p| p.lines().take(3).count())
+                    .unwrap_or(0) as u16;
             }
             // Tool calls with outputs
             for call in &tool_calls {
@@ -2025,7 +2041,11 @@ impl SubAgentCell {
             }
             // Response lines (label + up to 5 lines of content)
             if self.output.is_some() {
-                height += 1 + self.output.as_ref().map(|o| o.lines().take(5).count()).unwrap_or(0) as u16;
+                height += 1 + self
+                    .output
+                    .as_ref()
+                    .map(|o| o.lines().take(5).count())
+                    .unwrap_or(0) as u16;
             }
             // Done line (for completed agents)
             if self.status == SubAgentStatus::Completed {
@@ -2103,7 +2123,13 @@ pub(crate) fn subagent_cell_from_history(
     let (agent_type, description, resumed) = begin_event
         .as_ref()
         .map(|ev| (ev.agent_type.clone(), ev.description.clone(), ev.resumed))
-        .unwrap_or_else(|| (history.agent_type.clone(), history.description.clone(), true));
+        .unwrap_or_else(|| {
+            (
+                history.agent_type.clone(),
+                history.description.clone(),
+                true,
+            )
+        });
 
     let (status, token_usage, duration_ms) = end_event
         .as_ref()
@@ -2195,7 +2221,11 @@ impl<'a> RunningAgentsGroup<'a> {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // Count running vs completed agents
-        let running_count = self.agents.iter().filter(|a| a.status() == SubAgentStatus::Running).count();
+        let running_count = self
+            .agents
+            .iter()
+            .filter(|a| a.status() == SubAgentStatus::Running)
+            .count();
         let total_count = self.agents.len();
         let completed_count = total_count - running_count;
 
@@ -2248,7 +2278,13 @@ impl<'a> RunningAgentsGroup<'a> {
         is_last: bool,
         width: u16,
     ) {
-        agent.render_in_group(lines, is_last, width, self.expanded, self.animations_enabled);
+        agent.render_in_group(
+            lines,
+            is_last,
+            width,
+            self.expanded,
+            self.animations_enabled,
+        );
     }
 
     /// Calculate the height needed to render the group.
@@ -2297,8 +2333,16 @@ impl SubAgentGroupCell {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // Count completed vs error
-        let completed_count = self.cells.iter().filter(|c| c.status() == SubAgentStatus::Completed).count();
-        let error_count = self.cells.iter().filter(|c| c.status() == SubAgentStatus::Error).count();
+        let completed_count = self
+            .cells
+            .iter()
+            .filter(|c| c.status() == SubAgentStatus::Completed)
+            .count();
+        let error_count = self
+            .cells
+            .iter()
+            .filter(|c| c.status() == SubAgentStatus::Error)
+            .count();
         let total_count = self.cells.len();
 
         // Group header: "● 4 agents completed (ctrl+o to expand)"
@@ -3378,14 +3422,23 @@ mod tests {
         // Should show "Resumed" instead of "Running"
         assert!(rendered.len() >= 2);
         assert!(rendered[0].contains("explore"));
-        assert!(rendered[0].contains("Resumed"), "Expected 'Resumed' in: {}", rendered[0]);
-        assert!(!rendered[0].contains("Running"), "Should not contain 'Running' when resumed");
+        assert!(
+            rendered[0].contains("Resumed"),
+            "Expected 'Resumed' in: {}",
+            rendered[0]
+        );
+        assert!(
+            !rendered[0].contains("Running"),
+            "Should not contain 'Running' when resumed"
+        );
         assert!(rendered[1].contains("Resuming previous search"));
     }
 
     #[test]
     fn subagent_cell_renders_completed_state() {
-        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent, SubAgentTokenUsage};
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
+        use codex_core::protocol::SubAgentTokenUsage;
 
         let begin_event = SubAgentBeginEvent {
             call_id: "call-123".to_string(),
@@ -3422,7 +3475,9 @@ mod tests {
 
     #[test]
     fn subagent_cell_formats_tokens_correctly() {
-        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent, SubAgentTokenUsage};
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
+        use codex_core::protocol::SubAgentTokenUsage;
 
         let begin_event = SubAgentBeginEvent {
             call_id: "call-123".to_string(),
@@ -3454,7 +3509,11 @@ mod tests {
         let lines = cell.display_lines(80);
         let rendered = render_lines(&lines);
 
-        assert!(rendered[0].contains("101.5k tokens"), "Expected '101.5k tokens' in: {}", rendered[0]);
+        assert!(
+            rendered[0].contains("101.5k tokens"),
+            "Expected '101.5k tokens' in: {}",
+            rendered[0]
+        );
     }
 
     #[test]
@@ -3485,19 +3544,26 @@ mod tests {
         // Initially collapsed
         let lines_collapsed = cell.display_lines(80);
         let rendered_collapsed = render_lines(&lines_collapsed);
-        assert!(!rendered_collapsed.iter().any(|l| l.contains("Read")), "Tool should not be visible when collapsed");
+        assert!(
+            !rendered_collapsed.iter().any(|l| l.contains("Read")),
+            "Tool should not be visible when collapsed"
+        );
 
         // Toggle to expanded
         cell.toggle_expanded();
         let lines_expanded = cell.display_lines(80);
         let rendered_expanded = render_lines(&lines_expanded);
-        assert!(rendered_expanded.iter().any(|l| l.contains("Read")), "Tool should be visible when expanded");
+        assert!(
+            rendered_expanded.iter().any(|l| l.contains("Read")),
+            "Tool should be visible when expanded"
+        );
         assert!(rendered_expanded.iter().any(|l| l.contains("file.rs")));
     }
 
     #[test]
     fn subagent_cell_error_state() {
-        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
 
         let begin_event = SubAgentBeginEvent {
             call_id: "call-123".to_string(),
@@ -3552,10 +3618,26 @@ mod tests {
         let rendered = render_lines(&lines);
 
         // Should have: header, agent header, agent status
-        assert!(rendered.len() >= 3, "Expected at least 3 lines, got {}", rendered.len());
-        assert!(rendered[0].contains("Running 1 agent"), "Header should show '1 agent': {}", rendered[0]);
-        assert!(rendered[1].contains("Explore(Search for files)"), "Should contain Explore(description): {}", rendered[1]);
-        assert!(rendered[2].contains("Initializing"), "Should show initializing status: {}", rendered[2]);
+        assert!(
+            rendered.len() >= 3,
+            "Expected at least 3 lines, got {}",
+            rendered.len()
+        );
+        assert!(
+            rendered[0].contains("Running 1 agent"),
+            "Header should show '1 agent': {}",
+            rendered[0]
+        );
+        assert!(
+            rendered[1].contains("Explore(Search for files)"),
+            "Should contain Explore(description): {}",
+            rendered[1]
+        );
+        assert!(
+            rendered[2].contains("Initializing"),
+            "Should show initializing status: {}",
+            rendered[2]
+        );
     }
 
     #[test]
@@ -3587,12 +3669,28 @@ mod tests {
         let rendered = render_lines(&lines);
 
         // Should have: header, 2x(agent header + status)
-        assert!(rendered.len() >= 5, "Expected at least 5 lines, got {}", rendered.len());
-        assert!(rendered[0].contains("Running 2 agents"), "Header should show '2 agents': {}", rendered[0]);
+        assert!(
+            rendered.len() >= 5,
+            "Expected at least 5 lines, got {}",
+            rendered.len()
+        );
+        assert!(
+            rendered[0].contains("Running 2 agents"),
+            "Header should show '2 agents': {}",
+            rendered[0]
+        );
 
         // First agent uses ├─, last uses └─
-        assert!(rendered[1].contains("├"), "First agent should have ├ prefix: {}", rendered[1]);
-        assert!(rendered[3].contains("└"), "Last agent should have └ prefix: {}", rendered[3]);
+        assert!(
+            rendered[1].contains("├"),
+            "First agent should have ├ prefix: {}",
+            rendered[1]
+        );
+        assert!(
+            rendered[3].contains("└"),
+            "Last agent should have └ prefix: {}",
+            rendered[3]
+        );
     }
 
     #[test]
@@ -3679,7 +3777,12 @@ mod tests {
             rendered
         );
         // Should only have header (1) + agent header (1) + status (1) = 3 lines
-        assert_eq!(rendered.len(), 3, "Collapsed should have 3 lines: {:?}", rendered);
+        assert_eq!(
+            rendered.len(),
+            3,
+            "Collapsed should have 3 lines: {:?}",
+            rendered
+        );
     }
 
     #[test]
@@ -3728,7 +3831,8 @@ mod tests {
 
     #[test]
     fn subagent_group_cell_renders_single_completed_agent() {
-        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
 
         let begin = SubAgentBeginEvent {
             call_id: "call-1".to_string(),
@@ -3758,17 +3862,38 @@ mod tests {
         let lines = group.display_lines(80);
         let rendered = render_lines(&lines);
 
-        assert!(rendered.len() >= 3, "Expected at least 3 lines: {:?}", rendered);
-        assert!(rendered[0].contains("1 agent"), "Header should show '1 agent': {}", rendered[0]);
-        assert!(rendered[0].contains("completed"), "Header should show 'completed': {}", rendered[0]);
-        assert!(rendered[1].contains("Explore(Search files)"), "Should contain Explore(description): {}", rendered[1]);
+        assert!(
+            rendered.len() >= 3,
+            "Expected at least 3 lines: {:?}",
+            rendered
+        );
+        assert!(
+            rendered[0].contains("1 agent"),
+            "Header should show '1 agent': {}",
+            rendered[0]
+        );
+        assert!(
+            rendered[0].contains("completed"),
+            "Header should show 'completed': {}",
+            rendered[0]
+        );
+        assert!(
+            rendered[1].contains("Explore(Search files)"),
+            "Should contain Explore(description): {}",
+            rendered[1]
+        );
         // Token count shown in status line
-        assert!(rendered.iter().any(|l| l.contains("7.0k tokens")), "Should show token count: {:?}", rendered);
+        assert!(
+            rendered.iter().any(|l| l.contains("7.0k tokens")),
+            "Should show token count: {:?}",
+            rendered
+        );
     }
 
     #[test]
     fn subagent_group_cell_renders_multiple_completed_agents() {
-        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
 
         let begin1 = SubAgentBeginEvent {
             call_id: "call-1".to_string(),
@@ -3813,16 +3938,33 @@ mod tests {
         let lines = group.display_lines(80);
         let rendered = render_lines(&lines);
 
-        assert!(rendered.len() >= 5, "Expected at least 5 lines: {:?}", rendered);
-        assert!(rendered[0].contains("2 agents"), "Header should show '2 agents': {}", rendered[0]);
+        assert!(
+            rendered.len() >= 5,
+            "Expected at least 5 lines: {:?}",
+            rendered
+        );
+        assert!(
+            rendered[0].contains("2 agents"),
+            "Header should show '2 agents': {}",
+            rendered[0]
+        );
         // First agent uses ├─, last uses └─
-        assert!(rendered[1].contains("├"), "First agent should have ├ prefix: {}", rendered[1]);
-        assert!(rendered[3].contains("└"), "Last agent should have └ prefix: {}", rendered[3]);
+        assert!(
+            rendered[1].contains("├"),
+            "First agent should have ├ prefix: {}",
+            rendered[1]
+        );
+        assert!(
+            rendered[3].contains("└"),
+            "Last agent should have └ prefix: {}",
+            rendered[3]
+        );
     }
 
     #[test]
     fn subagent_group_cell_shows_error_status() {
-        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
 
         let begin1 = SubAgentBeginEvent {
             call_id: "call-1".to_string(),
@@ -3868,13 +4010,22 @@ mod tests {
         let rendered = render_lines(&lines);
 
         // Header should show "1 completed, 1 failed"
-        assert!(rendered[0].contains("1 completed"), "Header should show completed count: {}", rendered[0]);
-        assert!(rendered[0].contains("1 failed"), "Header should show failed count: {}", rendered[0]);
+        assert!(
+            rendered[0].contains("1 completed"),
+            "Header should show completed count: {}",
+            rendered[0]
+        );
+        assert!(
+            rendered[0].contains("1 failed"),
+            "Header should show failed count: {}",
+            rendered[0]
+        );
     }
 
     #[test]
     fn subagent_group_cell_verbose_shows_events() {
-        use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent};
+        use codex_core::protocol::SubAgentBeginEvent;
+        use codex_core::protocol::SubAgentEndEvent;
 
         let begin = SubAgentBeginEvent {
             call_id: "call-1".to_string(),

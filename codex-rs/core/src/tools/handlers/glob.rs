@@ -7,9 +7,12 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
 use crate::function_tool::FunctionCallError;
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 
 const MAX_RESULTS: usize = 100;
 
@@ -73,16 +76,16 @@ impl ToolHandler for GlobHandler {
         // Use ignore crate with glob pattern
         let mut walker = WalkBuilder::new(&search_path);
         walker
-            .hidden(false)  // Include hidden files
+            .hidden(false) // Include hidden files
             .follow_links(true)
             .git_ignore(true)
             .git_global(true);
 
         // Add glob pattern as an override
         let mut override_builder = OverrideBuilder::new(&search_path);
-        override_builder.add(pattern).map_err(|e| {
-            FunctionCallError::RespondToModel(format!("invalid glob pattern: {e}"))
-        })?;
+        override_builder
+            .add(pattern)
+            .map_err(|e| FunctionCallError::RespondToModel(format!("invalid glob pattern: {e}")))?;
 
         // Exclude .git directory
         let _ = override_builder.add("!.git/**");
@@ -132,14 +135,13 @@ impl ToolHandler for GlobHandler {
             });
         }
 
-        let mut output: Vec<String> = files
-            .iter()
-            .map(|(p, _)| p.display().to_string())
-            .collect();
+        let mut output: Vec<String> = files.iter().map(|(p, _)| p.display().to_string()).collect();
 
         if truncated {
             output.push(String::new());
-            output.push("(Results truncated. Consider using a more specific pattern or path.)".to_string());
+            output.push(
+                "(Results truncated. Consider using a more specific pattern or path.)".to_string(),
+            );
         }
 
         Ok(ToolOutput::Function {

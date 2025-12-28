@@ -440,7 +440,8 @@ impl ExecCell {
             })
         } else {
             // Completed: show final duration
-            call.duration.map(|d| format!(" ({})", format_duration(d)).dim())
+            call.duration
+                .map(|d| format!(" ({})", format_duration(d)).dim())
         };
         if let Some(span) = duration_span {
             header_line.push_span(span);
@@ -456,10 +457,8 @@ impl ExecCell {
         } else {
             layout.command_continuation_max_lines
         };
-        let continuation_lines = Self::limit_lines_no_ellipsis(
-            &continuation_lines,
-            continuation_max,
-        );
+        let continuation_lines =
+            Self::limit_lines_no_ellipsis(&continuation_lines, continuation_max);
         if !continuation_lines.is_empty() {
             lines.extend(prefix_lines(
                 continuation_lines,

@@ -3505,7 +3505,9 @@ async fn subagent_begin_creates_running_cell() {
 /// Test that SubAgentEnd completes and moves the cell to history.
 #[tokio::test]
 async fn subagent_end_completes_cell() {
-    use codex_core::protocol::{SubAgentBeginEvent, SubAgentEndEvent, SubAgentTokenUsage};
+    use codex_core::protocol::SubAgentBeginEvent;
+    use codex_core::protocol::SubAgentEndEvent;
+    use codex_core::protocol::SubAgentTokenUsage;
 
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(None).await;
 
@@ -3551,7 +3553,10 @@ async fn subagent_end_completes_cell() {
 
     // Cell should have been added to history
     let cells = drain_insert_history(&mut rx);
-    assert!(!cells.is_empty(), "Completed subagent should be added to history");
+    assert!(
+        !cells.is_empty(),
+        "Completed subagent should be added to history"
+    );
 }
 
 /// Test that forwarded events from subagents are routed to the correct cell.
@@ -3594,8 +3599,14 @@ async fn forwarded_events_update_subagent_cell() {
     });
 
     // The cell should have recorded the raw event
-    let cell = chat.running_subagents.get("call-123").expect("cell should exist");
-    assert!(!cell.raw_events().is_empty(), "Raw event should be recorded");
+    let cell = chat
+        .running_subagents
+        .get("call-123")
+        .expect("cell should exist");
+    assert!(
+        !cell.raw_events().is_empty(),
+        "Raw event should be recorded"
+    );
 }
 
 /// Test that events with source_session_id are not dispatched to main history.
@@ -3635,9 +3646,9 @@ async fn forwarded_events_not_in_main_history() {
 
     // Main history should not have received the forwarded event
     let cells = drain_insert_history(&mut rx);
-    let has_forwarded_message = cells.iter().any(|lines| {
-        lines_to_single_string(lines).contains("Searching for files")
-    });
+    let has_forwarded_message = cells
+        .iter()
+        .any(|lines| lines_to_single_string(lines).contains("Searching for files"));
     assert!(
         !has_forwarded_message,
         "Forwarded events should not appear in main history"
@@ -3685,8 +3696,14 @@ async fn events_with_parent_session_id_are_forwarded() {
     });
 
     // The event should still be routed to the subagent cell by source_session_id
-    let cell = chat.running_subagents.get("call-123").expect("cell should exist");
-    assert!(!cell.raw_events().is_empty(), "Event with parent_session_id should be forwarded");
+    let cell = chat
+        .running_subagents
+        .get("call-123")
+        .expect("cell should exist");
+    assert!(
+        !cell.raw_events().is_empty(),
+        "Event with parent_session_id should be forwarded"
+    );
 }
 
 /// Test that multiple subagents can run concurrently.
@@ -3802,9 +3819,21 @@ async fn events_routed_to_correct_subagent() {
     });
 
     // Each subagent should have raw events
-    let cell1 = chat.running_subagents.get("call-1").expect("cell 1 should exist");
-    let cell2 = chat.running_subagents.get("call-2").expect("cell 2 should exist");
+    let cell1 = chat
+        .running_subagents
+        .get("call-1")
+        .expect("cell 1 should exist");
+    let cell2 = chat
+        .running_subagents
+        .get("call-2")
+        .expect("cell 2 should exist");
 
-    assert!(!cell1.raw_events().is_empty(), "Cell 1 should have raw events");
-    assert!(!cell2.raw_events().is_empty(), "Cell 2 should have raw events");
+    assert!(
+        !cell1.raw_events().is_empty(),
+        "Cell 1 should have raw events"
+    );
+    assert!(
+        !cell2.raw_events().is_empty(),
+        "Cell 2 should have raw events"
+    );
 }

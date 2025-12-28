@@ -13,9 +13,13 @@ use crate::exec_env::create_env;
 use crate::function_tool::FunctionCallError;
 use crate::is_safe_command::is_known_safe_command;
 use crate::sandboxing::SandboxPermissions;
-use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
-use crate::tools::registry::{ToolHandler, ToolKind};
-use crate::unified_exec::{ExecCommandRequest, UnifiedExecContext};
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
+use crate::unified_exec::ExecCommandRequest;
+use crate::unified_exec::UnifiedExecContext;
 
 use super::ShellHandler;
 
@@ -68,11 +72,7 @@ impl BashHandler {
         let manager = &session.services.unified_exec_manager;
         let process_id = manager.allocate_process_id().await;
 
-        let context = UnifiedExecContext::new(
-            Arc::clone(&session),
-            Arc::clone(&turn),
-            call_id,
-        );
+        let context = UnifiedExecContext::new(Arc::clone(&session), Arc::clone(&turn), call_id);
 
         // Use a short yield time for background - we return immediately
         let yield_time_ms = 500; // Brief wait to capture initial output
@@ -161,9 +161,7 @@ impl ToolHandler for BashHandler {
         };
 
         let params: BashToolCallParams = serde_json::from_str(&arguments).map_err(|e| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to parse bash arguments: {e:?}"
-            ))
+            FunctionCallError::RespondToModel(format!("failed to parse bash arguments: {e:?}"))
         })?;
 
         if params.run_in_background {

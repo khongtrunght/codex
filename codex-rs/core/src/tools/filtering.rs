@@ -24,7 +24,9 @@ pub struct SubAgentToolFilter {
 impl SubAgentToolFilter {
     /// Create a new filter with default settings (no agent-specific restrictions).
     pub fn new() -> Self {
-        Self { allowed_tools: None }
+        Self {
+            allowed_tools: None,
+        }
     }
 
     /// Create a new filter with a list of allowed tools.

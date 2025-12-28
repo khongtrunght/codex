@@ -4,8 +4,11 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
-use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
-use crate::tools::registry::{ToolHandler, ToolKind};
+use crate::tools::context::ToolInvocation;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
+use crate::tools::registry::ToolHandler;
+use crate::tools::registry::ToolKind;
 
 pub struct KillShellHandler;
 
@@ -29,7 +32,9 @@ impl ToolHandler for KillShellHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { session, payload, .. } = invocation;
+        let ToolInvocation {
+            session, payload, ..
+        } = invocation;
 
         let ToolPayload::Function { arguments } = payload else {
             return Err(FunctionCallError::RespondToModel(
@@ -42,12 +47,15 @@ impl ToolHandler for KillShellHandler {
         })?;
 
         let manager = &session.services.unified_exec_manager;
-        let result = manager.terminate_session(&args.shell_id).await.map_err(|e| {
-            FunctionCallError::RespondToModel(format!(
-                "No shell found with ID: {}. {e:?}",
-                args.shell_id
-            ))
-        })?;
+        let result = manager
+            .terminate_session(&args.shell_id)
+            .await
+            .map_err(|e| {
+                FunctionCallError::RespondToModel(format!(
+                    "No shell found with ID: {}. {e:?}",
+                    args.shell_id
+                ))
+            })?;
 
         let message = if result.was_running {
             format!("Successfully killed shell: {}", args.shell_id)

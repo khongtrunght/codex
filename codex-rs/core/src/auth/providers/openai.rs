@@ -1,9 +1,10 @@
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::Duration;
+use chrono::Utc;
 
+use crate::auth::RefreshTokenError;
 use crate::auth::provider_auth::ProviderAuth;
 use crate::auth::storage::ProviderCredential;
-use crate::auth::RefreshTokenError;
 use codex_api::AuthScheme;
 use codex_client::CodexHttpClient;
 
@@ -113,7 +114,9 @@ impl ProviderAuth for OpenAIAuth {
                     account_id: None,               // Will be updated from id_token parsing
                     // Preserve the exchanged API key - it remains valid after OAuth refresh
                     exchanged_api_key: exchanged_api_key.clone(),
-                    extra: response.id_token.map(|t| serde_json::json!({ "id_token": t })),
+                    extra: response
+                        .id_token
+                        .map(|t| serde_json::json!({ "id_token": t })),
                 }))
             }
         }

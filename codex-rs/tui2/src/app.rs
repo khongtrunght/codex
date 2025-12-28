@@ -586,7 +586,8 @@ impl App {
             Vec::new()
         } else {
             let verbose = app.chat_widget.is_verbose();
-            let (lines, line_meta) = Self::build_transcript_lines(&app.transcript_cells, width, verbose);
+            let (lines, line_meta) =
+                Self::build_transcript_lines(&app.transcript_cells, width, verbose);
             let is_user_cell: Vec<bool> = app
                 .transcript_cells
                 .iter()
@@ -731,7 +732,8 @@ impl App {
         };
 
         let verbose = self.chat_widget.is_verbose();
-        let (lines, line_meta) = Self::build_transcript_lines(cells, transcript_area.width, verbose);
+        let (lines, line_meta) =
+            Self::build_transcript_lines(cells, transcript_area.width, verbose);
         if lines.is_empty() {
             Clear.render_ref(transcript_area, frame.buffer);
             self.transcript_scroll = TranscriptScroll::default();
@@ -1118,7 +1120,8 @@ impl App {
         }
 
         let verbose = self.chat_widget.is_verbose();
-        let (lines, line_meta) = Self::build_transcript_lines(&self.transcript_cells, width, verbose);
+        let (lines, line_meta) =
+            Self::build_transcript_lines(&self.transcript_cells, width, verbose);
         if lines.is_empty() || line_meta.is_empty() {
             return;
         }

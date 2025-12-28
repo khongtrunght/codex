@@ -292,7 +292,10 @@ mod tests {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains(&format!("{}: Operation not permitted", config_toml.display())),
+            stderr.contains(&format!(
+                "{}: Operation not permitted",
+                config_toml.display()
+            )),
             "expected 'Operation not permitted' for {}, got: {stderr}",
             config_toml.display()
         );
@@ -328,7 +331,10 @@ mod tests {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains(&format!("{}: Operation not permitted", pre_commit_hook.display())),
+            stderr.contains(&format!(
+                "{}: Operation not permitted",
+                pre_commit_hook.display()
+            )),
             "expected 'Operation not permitted' for {}, got: {stderr}",
             pre_commit_hook.display()
         );

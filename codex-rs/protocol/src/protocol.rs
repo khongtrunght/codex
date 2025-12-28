@@ -2239,10 +2239,12 @@ mod tests {
 
     // Session tree tests for parent_session_id and SubAgentProgressUpdate
     mod session_tree_tests {
-        use super::{
-            Event, EventMsg, SubAgentProgressEvent, SubAgentProgressUpdate, SubAgentTokenUsage,
-            TaskStartedEvent,
-        };
+        use super::Event;
+        use super::EventMsg;
+        use super::SubAgentProgressEvent;
+        use super::SubAgentProgressUpdate;
+        use super::SubAgentTokenUsage;
+        use super::TaskStartedEvent;
 
         #[test]
         fn test_event_serialization_with_parent() {
@@ -2264,10 +2266,7 @@ mod tests {
                 deserialized.parent_session_id,
                 Some("session-main".to_string())
             );
-            assert_eq!(
-                deserialized.source_session_id,
-                Some("task-abc".to_string())
-            );
+            assert_eq!(deserialized.source_session_id, Some("task-abc".to_string()));
         }
 
         #[test]
