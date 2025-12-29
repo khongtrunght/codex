@@ -8,8 +8,8 @@ use std::collections::HashSet;
 /// Tools blocked from ALL sub-agents (prevents infinite nesting).
 /// These tools are never available to sub-agents regardless of configuration.
 pub static BLOCKED_FROM_SUBAGENTS: &[&str] = &[
-    "task",        // Cannot spawn sub-sub-agents
-    "update_plan", // Plan mode tools
+    "task",       // Cannot spawn sub-sub-agents
+    "todo_write", // TODO tracking tools
 ];
 
 /// Configuration for filtering tools in sub-agent sessions.
@@ -81,7 +81,7 @@ mod tests {
     fn test_blocks_task_tool() {
         let filter = SubAgentToolFilter::new();
         assert!(!filter.is_tool_allowed("task"));
-        assert!(!filter.is_tool_allowed("update_plan"));
+        assert!(!filter.is_tool_allowed("todo_write"));
     }
 
     #[test]
@@ -99,11 +99,11 @@ mod tests {
             "shell".to_string(),
             "task".to_string(),
             "read_file".to_string(),
-            "update_plan".to_string(),
+            "todo_write".to_string(),
         ];
         let filtered = filter.filter_tools(&tools);
         assert!(!filtered.contains(&"task".to_string()));
-        assert!(!filtered.contains(&"update_plan".to_string()));
+        assert!(!filtered.contains(&"todo_write".to_string()));
         assert!(filtered.contains(&"shell".to_string()));
         assert!(filtered.contains(&"read_file".to_string()));
     }
@@ -157,7 +157,7 @@ mod tests {
     fn test_blocked_tools_set() {
         let blocked = SubAgentToolFilter::blocked_tools();
         assert!(blocked.contains("task"));
-        assert!(blocked.contains("update_plan"));
+        assert!(blocked.contains("todo_write"));
         assert!(!blocked.contains("shell"));
     }
 }

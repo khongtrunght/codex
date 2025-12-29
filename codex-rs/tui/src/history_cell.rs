@@ -34,9 +34,9 @@ use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
-use codex_protocol::plan_tool::PlanItemArg;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::todo_tool::StepStatus;
+use codex_protocol::todo_tool::TodoItem;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use image::DynamicImage;
 use image::ImageReader;
 use mcp_types::EmbeddedResourceResource;
@@ -1546,15 +1546,18 @@ pub(crate) fn new_error_event(message: String) -> PlainHistoryCell {
 }
 
 /// Render a user‑friendly plan update styled like a checkbox todo list.
-pub(crate) fn new_plan_update(update: UpdatePlanArgs) -> PlanUpdateCell {
-    let UpdatePlanArgs { explanation, plan } = update;
+pub(crate) fn new_plan_update(update: TodoWriteArgs) -> PlanUpdateCell {
+    let TodoWriteArgs {
+        explanation,
+        todos: plan,
+    } = update;
     PlanUpdateCell { explanation, plan }
 }
 
 #[derive(Debug)]
 pub(crate) struct PlanUpdateCell {
     explanation: Option<String>,
-    plan: Vec<PlanItemArg>,
+    plan: Vec<TodoItem>,
 }
 
 impl HistoryCell for PlanUpdateCell {
@@ -1601,7 +1604,7 @@ impl HistoryCell for PlanUpdateCell {
         if self.plan.is_empty() {
             indented_lines.push(Line::from("(no steps provided)".dim().italic()));
         } else {
-            for PlanItemArg { step, status } in self.plan.iter() {
+            for TodoItem { step, status } in self.plan.iter() {
                 indented_lines.extend(render_step(status, step));
             }
         }
@@ -2621,21 +2624,21 @@ mod tests {
     #[test]
     fn plan_update_with_note_and_wrapping_snapshot() {
         // Long explanation forces wrapping; include long step text to verify step wrapping and alignment.
-        let update = UpdatePlanArgs {
+        let update = TodoWriteArgs {
             explanation: Some(
                 "I’ll update Grafana call error handling by adding retries and clearer messages when the backend is unreachable."
                     .to_string(),
             ),
-            plan: vec![
-                PlanItemArg {
+            todos: vec![
+                TodoItem {
                     step: "Investigate existing error paths and logging around HTTP timeouts".into(),
                     status: StepStatus::Completed,
                 },
-                PlanItemArg {
+                TodoItem {
                     step: "Harden Grafana client error handling with retry/backoff and user‑friendly messages".into(),
                     status: StepStatus::InProgress,
                 },
-                PlanItemArg {
+                TodoItem {
                     step: "Add tests for transient failure scenarios and surfacing to the UI".into(),
                     status: StepStatus::Pending,
                 },
@@ -2651,14 +2654,14 @@ mod tests {
 
     #[test]
     fn plan_update_without_note_snapshot() {
-        let update = UpdatePlanArgs {
+        let update = TodoWriteArgs {
             explanation: None,
-            plan: vec![
-                PlanItemArg {
+            todos: vec![
+                TodoItem {
                     step: "Define error taxonomy".into(),
                     status: StepStatus::InProgress,
                 },
-                PlanItemArg {
+                TodoItem {
                     step: "Implement mapping to user messages".into(),
                     status: StepStatus::Pending,
                 },

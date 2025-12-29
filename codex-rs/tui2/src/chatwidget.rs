@@ -144,7 +144,7 @@ use codex_core::protocol::SandboxPolicy;
 use codex_file_search::FileMatch;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use strum::IntoEnumIterator;
 
 const USER_SHELL_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it locally";
@@ -418,9 +418,9 @@ impl ChatWidget {
         // Load persisted plan for this session
         let session_id = event.session_id.to_string();
         if let Ok(Some(plan)) =
-            codex_core::todos::load_plan(&self.config.codex_home, &session_id, None)
+            codex_core::todos::load_todos(&self.config.codex_home, &session_id, None)
         {
-            self.set_plan(Some(plan));
+            self.set_todos(Some(plan));
         }
         let initial_messages = event.initial_messages.clone();
         let model_for_header = event.model.clone();
@@ -452,9 +452,9 @@ impl ChatWidget {
         self.bottom_pane.set_skills(skills);
     }
 
-    /// Update the current plan for display in the bottom pane.
-    pub(crate) fn set_plan(&mut self, plan: Option<codex_protocol::plan_tool::UpdatePlanArgs>) {
-        self.bottom_pane.set_plan(plan);
+    /// Update the current todos for display in the bottom pane.
+    pub(crate) fn set_todos(&mut self, todos: Option<codex_protocol::todo_tool::TodoWriteArgs>) {
+        self.bottom_pane.set_todos(todos);
     }
 
     /// Toggle expanded plan view (Ctrl+U).
@@ -835,7 +835,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_plan_update(&mut self, _update: UpdatePlanArgs) {
+    fn on_plan_update(&mut self, _update: TodoWriteArgs) {
         // Plan is stored in App.current_plan via AppEvent handler.
         // No history entry needed - display handled by render_plan_status().
     }
@@ -1945,7 +1945,7 @@ impl ChatWidget {
                     self.on_interrupted_turn(ev.reason);
                 }
             },
-            EventMsg::PlanUpdate(update) => self.on_plan_update(update),
+            EventMsg::TodoUpdate(update) => self.on_plan_update(update),
             EventMsg::ExecApprovalRequest(ev) => {
                 // For replayed events, synthesize an empty id (these should not occur).
                 self.on_exec_approval_request(id.unwrap_or_default(), ev)

@@ -58,7 +58,7 @@ async fn model_selects_expected_tools() {
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
             "glob".to_string(),
-            "update_plan".to_string(),
+            "todo_write".to_string(),
             "view_image".to_string(),
             "task".to_string()
         ],
@@ -74,7 +74,7 @@ async fn model_selects_expected_tools() {
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
             "glob".to_string(),
-            "update_plan".to_string(),
+            "todo_write".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()
@@ -91,7 +91,7 @@ async fn model_selects_expected_tools() {
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
             "glob".to_string(),
-            "update_plan".to_string(),
+            "todo_write".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()
@@ -108,7 +108,7 @@ async fn model_selects_expected_tools() {
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
             "glob".to_string(),
-            "update_plan".to_string(),
+            "todo_write".to_string(),
             "view_image".to_string(),
             "task".to_string()
         ],
@@ -124,7 +124,7 @@ async fn model_selects_expected_tools() {
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
             "glob".to_string(),
-            "update_plan".to_string(),
+            "todo_write".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()
@@ -141,7 +141,7 @@ async fn model_selects_expected_tools() {
             "list_mcp_resource_templates".to_string(),
             "read_mcp_resource".to_string(),
             "glob".to_string(),
-            "update_plan".to_string(),
+            "todo_write".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()

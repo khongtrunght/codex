@@ -51,8 +51,8 @@ pub(crate) enum CancellationEvent {
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 use codex_protocol::custom_prompts::CustomPrompt;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::todo_tool::StepStatus;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -88,7 +88,7 @@ pub(crate) struct BottomPane {
     context_window_used_tokens: Option<i64>,
 
     /// Current plan for display below the status indicator.
-    current_plan: Option<UpdatePlanArgs>,
+    current_todos: Option<TodoWriteArgs>,
     /// Whether to show the expanded plan view (toggled with Ctrl+U).
     show_expanded_plan: bool,
 }
@@ -139,7 +139,7 @@ impl BottomPane {
             animations_enabled,
             context_window_percent: None,
             context_window_used_tokens: None,
-            current_plan: None,
+            current_todos: None,
             show_expanded_plan: false,
         }
     }
@@ -168,8 +168,8 @@ impl BottomPane {
     }
 
     /// Update the current plan for display.
-    pub(crate) fn set_plan(&mut self, plan: Option<UpdatePlanArgs>) {
-        self.current_plan = plan;
+    pub(crate) fn set_todos(&mut self, todos: Option<TodoWriteArgs>) {
+        self.current_todos = todos;
         self.request_redraw();
     }
 
@@ -553,7 +553,7 @@ impl BottomPane {
 
     /// Generate the plan status lines for display.
     fn plan_lines(&self) -> Vec<Line<'static>> {
-        let plan = match &self.current_plan {
+        let plan = match &self.current_todos {
             Some(p) => p,
             None => {
                 if self.show_expanded_plan {
@@ -573,7 +573,7 @@ impl BottomPane {
             let mut lines: Vec<Line<'static>> = Vec::new();
 
             // Plan steps with └ on first item
-            for (i, item) in plan.plan.iter().enumerate() {
+            for (i, item) in plan.todos.iter().enumerate() {
                 let prefix = if i == 0 { "  └ " } else { "    " };
                 let (checkbox, style) = match item.status {
                     StepStatus::Completed => {
@@ -595,7 +595,7 @@ impl BottomPane {
         } else {
             // Collapsed view: show only "└ Next: [in-progress step]"
             if let Some(in_progress) = plan
-                .plan
+                .todos
                 .iter()
                 .find(|s| matches!(s.status, StepStatus::InProgress))
             {
@@ -629,7 +629,7 @@ impl BottomPane {
             flex.push(1, RenderableItem::Borrowed(&self.queued_user_messages));
             if self.status.is_some()
                 || !self.queued_user_messages.messages.is_empty()
-                || self.current_plan.is_some()
+                || self.current_todos.is_some()
             {
                 flex.push(0, RenderableItem::Owned("".into()));
             }

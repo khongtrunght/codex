@@ -8,7 +8,7 @@ mod kill_shell;
 mod list_dir;
 mod mcp;
 mod mcp_resource;
-mod plan;
+mod todo_write;
 mod read_file;
 mod shell;
 mod task;
@@ -17,7 +17,7 @@ mod unified_exec;
 mod view_image;
 mod write_file;
 
-pub use plan::PLAN_TOOL;
+pub use todo_write::TODO_WRITE_TOOL;
 
 pub use apply_patch::ApplyPatchHandler;
 pub use bash::BashHandler;
@@ -29,7 +29,7 @@ pub use kill_shell::KillShellHandler;
 pub use list_dir::ListDirHandler;
 pub use mcp::McpHandler;
 pub use mcp_resource::McpResourceHandler;
-pub use plan::PlanHandler;
+pub use todo_write::TodoWriteHandler;
 pub use read_file::ReadFileHandler;
 pub use shell::ShellCommandHandler;
 pub use shell::ShellHandler;

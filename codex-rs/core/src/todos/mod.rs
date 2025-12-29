@@ -3,7 +3,7 @@
 //! Persists plans to `{codex_home}/todos/{session_id}.json` so they survive
 //! session resume.
 
-use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -32,11 +32,11 @@ pub fn get_todo_path(codex_home: &Path, session_id: &str, agent_id: Option<&str>
 /// Saves a plan to disk.
 ///
 /// Creates the todos directory if it doesn't exist.
-pub fn save_plan(
+pub fn save_todos(
     codex_home: &Path,
     session_id: &str,
     agent_id: Option<&str>,
-    plan: &UpdatePlanArgs,
+    plan: &TodoWriteArgs,
 ) -> io::Result<()> {
     let dir = get_todo_dir(codex_home);
     fs::create_dir_all(&dir)?;
@@ -50,11 +50,11 @@ pub fn save_plan(
 ///
 /// Returns `Ok(None)` if the file doesn't exist.
 /// Returns `Ok(None)` and logs a warning if the file exists but can't be parsed.
-pub fn load_plan(
+pub fn load_todos(
     codex_home: &Path,
     session_id: &str,
     agent_id: Option<&str>,
-) -> io::Result<Option<UpdatePlanArgs>> {
+) -> io::Result<Option<TodoWriteArgs>> {
     let path = get_todo_path(codex_home, session_id, agent_id);
     match fs::read_to_string(&path) {
         Ok(content) => match serde_json::from_str(&content) {
@@ -72,8 +72,8 @@ pub fn load_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::plan_tool::PlanItemArg;
-    use codex_protocol::plan_tool::StepStatus;
+    use codex_protocol::todo_tool::StepStatus;
+    use codex_protocol::todo_tool::TodoItem;
     use tempfile::tempdir;
 
     #[test]
@@ -101,14 +101,14 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let codex_home = temp_dir.path();
 
-        let plan = UpdatePlanArgs {
+        let plan = TodoWriteArgs {
             explanation: Some("Test plan".to_string()),
-            plan: vec![
-                PlanItemArg {
+            todos: vec![
+                TodoItem {
                     step: "Step 1".to_string(),
                     status: StepStatus::Completed,
                 },
-                PlanItemArg {
+                TodoItem {
                     step: "Step 2".to_string(),
                     status: StepStatus::InProgress,
                 },
@@ -116,16 +116,16 @@ mod tests {
         };
 
         // Save
-        save_plan(codex_home, "test-session", None, &plan).unwrap();
+        save_todos(codex_home, "test-session", None, &plan).unwrap();
 
         // Load
-        let loaded = load_plan(codex_home, "test-session", None).unwrap();
+        let loaded = load_todos(codex_home, "test-session", None).unwrap();
         assert!(loaded.is_some());
         let loaded = loaded.unwrap();
         assert_eq!(loaded.explanation, Some("Test plan".to_string()));
-        assert_eq!(loaded.plan.len(), 2);
-        assert_eq!(loaded.plan[0].step, "Step 1");
-        assert_eq!(loaded.plan[0].status, StepStatus::Completed);
+        assert_eq!(loaded.todos.len(), 2);
+        assert_eq!(loaded.todos[0].step, "Step 1");
+        assert_eq!(loaded.todos[0].status, StepStatus::Completed);
     }
 
     #[test]
@@ -133,7 +133,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let codex_home = temp_dir.path();
 
-        let loaded = load_plan(codex_home, "nonexistent", None).unwrap();
+        let loaded = load_todos(codex_home, "nonexistent", None).unwrap();
         assert!(loaded.is_none());
     }
 }

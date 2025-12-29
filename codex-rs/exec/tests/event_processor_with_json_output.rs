@@ -44,12 +44,12 @@ use codex_exec::exec_events::TurnFailedEvent;
 use codex_exec::exec_events::TurnStartedEvent;
 use codex_exec::exec_events::Usage;
 use codex_exec::exec_events::WebSearchItem;
-use codex_protocol::plan_tool::PlanItemArg;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ExecCommandOutputDeltaEvent;
 use codex_protocol::protocol::ExecOutputStream;
+use codex_protocol::todo_tool::StepStatus;
+use codex_protocol::todo_tool::TodoItem;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use mcp_types::CallToolResult;
 use mcp_types::ContentBlock;
 use mcp_types::TextContent;
@@ -142,14 +142,14 @@ fn plan_update_emits_todo_list_started_updated_and_completed() {
     // First plan update => item.started (todo_list)
     let first = event(
         "p1",
-        EventMsg::PlanUpdate(UpdatePlanArgs {
+        EventMsg::TodoUpdate(TodoWriteArgs {
             explanation: None,
-            plan: vec![
-                PlanItemArg {
+            todos: vec![
+                TodoItem {
                     step: "step one".to_string(),
                     status: StepStatus::Pending,
                 },
-                PlanItemArg {
+                TodoItem {
                     step: "step two".to_string(),
                     status: StepStatus::InProgress,
                 },
@@ -181,14 +181,14 @@ fn plan_update_emits_todo_list_started_updated_and_completed() {
     // Second plan update in same turn => item.updated (same id)
     let second = event(
         "p2",
-        EventMsg::PlanUpdate(UpdatePlanArgs {
+        EventMsg::TodoUpdate(TodoWriteArgs {
             explanation: None,
-            plan: vec![
-                PlanItemArg {
+            todos: vec![
+                TodoItem {
                     step: "step one".to_string(),
                     status: StepStatus::Completed,
                 },
-                PlanItemArg {
+                TodoItem {
                     step: "step two".to_string(),
                     status: StepStatus::InProgress,
                 },
@@ -453,9 +453,9 @@ fn plan_update_after_complete_starts_new_todo_list_with_new_id() {
     // First turn: start + complete
     let start = event(
         "t1",
-        EventMsg::PlanUpdate(UpdatePlanArgs {
+        EventMsg::TodoUpdate(TodoWriteArgs {
             explanation: None,
-            plan: vec![PlanItemArg {
+            todos: vec![TodoItem {
                 step: "only".to_string(),
                 status: StepStatus::Pending,
             }],
@@ -473,9 +473,9 @@ fn plan_update_after_complete_starts_new_todo_list_with_new_id() {
     // Second turn: a new todo list should have a new id
     let start_again = event(
         "t3",
-        EventMsg::PlanUpdate(UpdatePlanArgs {
+        EventMsg::TodoUpdate(TodoWriteArgs {
             explanation: None,
-            plan: vec![PlanItemArg {
+            todos: vec![TodoItem {
                 step: "again".to_string(),
                 status: StepStatus::Pending,
             }],

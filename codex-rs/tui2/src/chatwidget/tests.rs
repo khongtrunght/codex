@@ -50,10 +50,10 @@ use codex_protocol::account::PlanType;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::parse_command::ParsedCommand;
-use codex_protocol::plan_tool::PlanItemArg;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::CodexErrorInfo;
+use codex_protocol::todo_tool::StepStatus;
+use codex_protocol::todo_tool::TodoItem;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -2968,18 +2968,18 @@ async fn plan_update_does_not_create_history_cell() {
     // Plan updates should NOT create history cells - they are displayed in-place
     // via the render_plan_status() method in App, not in the transcript history.
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
-    let update = UpdatePlanArgs {
+    let update = TodoWriteArgs {
         explanation: Some("Adapting plan".to_string()),
-        plan: vec![
-            PlanItemArg {
+        todos: vec![
+            TodoItem {
                 step: "Explore codebase".into(),
                 status: StepStatus::Completed,
             },
-            PlanItemArg {
+            TodoItem {
                 step: "Implement feature".into(),
                 status: StepStatus::InProgress,
             },
-            PlanItemArg {
+            TodoItem {
                 step: "Write tests".into(),
                 status: StepStatus::Pending,
             },
@@ -2987,7 +2987,7 @@ async fn plan_update_does_not_create_history_cell() {
     };
     chat.handle_codex_event(Event {
         id: "sub-1".into(),
-        msg: EventMsg::PlanUpdate(update),
+        msg: EventMsg::TodoUpdate(update),
         source_session_id: None,
         parent_session_id: None,
     });

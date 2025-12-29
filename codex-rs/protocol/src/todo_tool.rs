@@ -14,15 +14,15 @@ pub enum StepStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
-pub struct PlanItemArg {
+pub struct TodoItem {
     pub step: String,
     pub status: StepStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(deny_unknown_fields)]
-pub struct UpdatePlanArgs {
+pub struct TodoWriteArgs {
     #[serde(default)]
     pub explanation: Option<String>,
-    pub plan: Vec<PlanItemArg>,
+    pub todos: Vec<TodoItem>,
 }

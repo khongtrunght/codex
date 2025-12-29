@@ -9,7 +9,7 @@ use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::plan_tool::StepStatus;
+use codex_protocol::todo_tool::StepStatus;
 use codex_protocol::user_input::UserInput;
 use core_test_support::assert_regex_match;
 use core_test_support::responses;
@@ -106,7 +106,7 @@ async fn shell_tool_executes_command_and_streams_output() -> anyhow::Result<()> 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
+async fn todo_write_tool_emits_plan_update_event() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -131,7 +131,7 @@ async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
 
     let first_response = sse(vec![
         ev_response_created("resp-1"),
-        ev_function_call(call_id, "update_plan", &plan_args),
+        ev_function_call(call_id, "todo_write", &plan_args),
         ev_completed("resp-1"),
     ]);
     responses::mount_sse_once(&server, first_response).await;
@@ -161,14 +161,14 @@ async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
 
     let mut saw_plan_update = false;
     wait_for_event(&codex, |event| match event {
-        EventMsg::PlanUpdate(update) => {
+        EventMsg::TodoUpdate(update) => {
             saw_plan_update = true;
             assert_eq!(update.explanation.as_deref(), Some("Tool harness check"));
-            assert_eq!(update.plan.len(), 2);
-            assert_eq!(update.plan[0].step, "Inspect workspace");
-            assert_matches!(update.plan[0].status, StepStatus::InProgress);
-            assert_eq!(update.plan[1].step, "Report results");
-            assert_matches!(update.plan[1].status, StepStatus::Pending);
+            assert_eq!(update.todos.len(), 2);
+            assert_eq!(update.todos[0].step, "Inspect workspace");
+            assert_matches!(update.todos[0].status, StepStatus::InProgress);
+            assert_eq!(update.todos[1].step, "Report results");
+            assert_matches!(update.todos[1].status, StepStatus::Pending);
             false
         }
         EventMsg::TaskComplete(_) => true,
@@ -180,13 +180,13 @@ async fn update_plan_tool_emits_plan_update_event() -> anyhow::Result<()> {
 
     let req = second_mock.single_request();
     let (output_text, _success_flag) = call_output(&req, call_id);
-    assert_eq!(output_text, "Plan updated");
+    assert_eq!(output_text, "TODO list updated");
 
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
+async fn todo_write_tool_rejects_malformed_payload() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -207,7 +207,7 @@ async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
 
     let first_response = sse(vec![
         ev_response_created("resp-1"),
-        ev_function_call(call_id, "update_plan", &invalid_args),
+        ev_function_call(call_id, "todo_write", &invalid_args),
         ev_completed("resp-1"),
     ]);
     responses::mount_sse_once(&server, first_response).await;
@@ -237,7 +237,7 @@ async fn update_plan_tool_rejects_malformed_payload() -> anyhow::Result<()> {
 
     let mut saw_plan_update = false;
     wait_for_event(&codex, |event| match event {
-        EventMsg::PlanUpdate(_) => {
+        EventMsg::TodoUpdate(_) => {
             saw_plan_update = true;
             false
         }

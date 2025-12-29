@@ -4,7 +4,7 @@ use crate::client_common::tools::ToolSpec;
 use crate::features::Feature;
 use crate::features::Features;
 use crate::models_manager::model_family::ModelFamily;
-use crate::tools::handlers::PLAN_TOOL;
+use crate::tools::handlers::TODO_WRITE_TOOL;
 use crate::tools::handlers::apply_patch::create_apply_patch_freeform_tool;
 use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
 use crate::tools::registry::ToolRegistryBuilder;
@@ -37,7 +37,7 @@ pub const TEST_SYNC_TOOL_NAME: &str = "test_sync_tool";
 pub const LIST_MCP_RESOURCES_TOOL_NAME: &str = "list_mcp_resources";
 pub const LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME: &str = "list_mcp_resource_templates";
 pub const READ_MCP_RESOURCE_TOOL_NAME: &str = "read_mcp_resource";
-pub const UPDATE_PLAN_TOOL_NAME: &str = "update_plan";
+pub const TODO_WRITE_TOOL_NAME: &str = "todo_write";
 pub const BASH_OUTPUT_TOOL_NAME: &str = "bash_output";
 pub const KILL_SHELL_TOOL_NAME: &str = "kill_shell";
 
@@ -1548,7 +1548,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
-    use crate::tools::handlers::PlanHandler;
+    use crate::tools::handlers::TodoWriteHandler;
     use crate::tools::handlers::ReadFileHandler;
     use crate::tools::handlers::ShellCommandHandler;
     use crate::tools::handlers::ShellHandler;
@@ -1563,7 +1563,7 @@ pub(crate) fn build_specs(
 
     let shell_handler = Arc::new(ShellHandler);
     let unified_exec_handler = Arc::new(UnifiedExecHandler);
-    let plan_handler = Arc::new(PlanHandler);
+    let todo_write_handler = Arc::new(TodoWriteHandler);
     let apply_patch_handler = Arc::new(ApplyPatchHandler);
     let view_image_handler = Arc::new(ViewImageHandler);
     let mcp_handler = Arc::new(McpHandler);
@@ -1631,8 +1631,8 @@ pub(crate) fn build_specs(
         builder.register_handler(GLOB_TOOL_NAME, glob_handler);
     }
 
-    builder.push_spec(PLAN_TOOL.clone());
-    builder.register_handler(UPDATE_PLAN_TOOL_NAME, plan_handler);
+    builder.push_spec(TODO_WRITE_TOOL.clone());
+    builder.register_handler(TODO_WRITE_TOOL_NAME, todo_write_handler);
 
     // Edit tools based on edit_tool_type
     if let Some(edit_tool_type) = &config.edit_tool_type {
@@ -1878,7 +1878,7 @@ mod tests {
             create_list_mcp_resource_templates_tool(),
             create_read_mcp_resource_tool(),
             create_glob_tool(),
-            PLAN_TOOL.clone(),
+            TODO_WRITE_TOOL.clone(),
             create_apply_patch_freeform_tool(),
             ToolSpec::WebSearch {},
             create_view_image_tool(),
@@ -1924,7 +1924,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "apply_patch",
                 "view_image",
             ],
@@ -1942,7 +1942,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "apply_patch",
                 "view_image",
             ],
@@ -1963,7 +1963,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -1985,7 +1985,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2005,7 +2005,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "view_image",
             ],
         );
@@ -2022,7 +2022,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "apply_patch",
                 "view_image",
             ],
@@ -2041,7 +2041,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "view_image",
             ],
         );
@@ -2058,7 +2058,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "apply_patch",
                 "view_image",
             ],
@@ -2077,7 +2077,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "apply_patch",
                 "view_image",
             ],
@@ -2099,7 +2099,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "web_search",
                 "view_image",
             ],
@@ -2120,7 +2120,7 @@ mod tests {
                 "list_mcp_resource_templates",
                 "read_mcp_resource",
                 "glob",
-                "update_plan",
+                "todo_write",
                 "write_file",
                 "edit_file",
                 "view_image",
@@ -2142,7 +2142,7 @@ mod tests {
         let (tools, _) = build_specs(&tools_config, Some(HashMap::new())).build();
 
         // Only check the shell variant and a couple of core tools.
-        let mut subset = vec!["exec_command", "write_stdin", "update_plan"];
+        let mut subset = vec!["exec_command", "write_stdin", "todo_write"];
         if let Some(shell_tool) = shell_tool_name(&tools_config) {
             subset.push(shell_tool);
         }

@@ -21,7 +21,7 @@ use crate::models::ResponseItem;
 use crate::num_format::format_with_separators;
 use crate::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crate::parse_command::ParsedCommand;
-use crate::plan_tool::UpdatePlanArgs;
+use crate::todo_tool::TodoWriteArgs;
 use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use mcp_types::CallToolResult;
@@ -664,7 +664,7 @@ pub enum EventMsg {
     /// Notification that skill data may have been updated and clients may want to reload.
     SkillsUpdateAvailable,
 
-    PlanUpdate(UpdatePlanArgs),
+    TodoUpdate(TodoWriteArgs),
 
     TurnAborted(TurnAbortedEvent),
 
@@ -1370,27 +1370,28 @@ impl InitialHistory {
 
                         // If this is SubAgentBegin, inject the subagent's events
                         if let EventMsg::SubAgentBegin(begin) = ev
-                            && let Some(history) = resumed.subagent_histories.get(&begin.session_id) {
-                                // Inject subagent events with source_session_id set
-                                for subagent_item in &history.history {
-                                    if let RolloutItem::EventMsg(subagent_ev) = subagent_item {
-                                        // Skip SubAgentBegin/SubAgentEnd from subagent files
-                                        // (they're metadata, not forwarded events)
-                                        if matches!(
-                                            subagent_ev,
-                                            EventMsg::SubAgentBegin(_) | EventMsg::SubAgentEnd(_)
-                                        ) {
-                                            continue;
-                                        }
-                                        events.push(Event {
-                                            id: String::new(),
-                                            msg: subagent_ev.clone(),
-                                            source_session_id: Some(begin.session_id.clone()),
-                                            parent_session_id: history.parent_session_id.clone(),
-                                        });
+                            && let Some(history) = resumed.subagent_histories.get(&begin.session_id)
+                        {
+                            // Inject subagent events with source_session_id set
+                            for subagent_item in &history.history {
+                                if let RolloutItem::EventMsg(subagent_ev) = subagent_item {
+                                    // Skip SubAgentBegin/SubAgentEnd from subagent files
+                                    // (they're metadata, not forwarded events)
+                                    if matches!(
+                                        subagent_ev,
+                                        EventMsg::SubAgentBegin(_) | EventMsg::SubAgentEnd(_)
+                                    ) {
+                                        continue;
                                     }
+                                    events.push(Event {
+                                        id: String::new(),
+                                        msg: subagent_ev.clone(),
+                                        source_session_id: Some(begin.session_id.clone()),
+                                        parent_session_id: history.parent_session_id.clone(),
+                                    });
                                 }
                             }
+                        }
                     }
                 }
 

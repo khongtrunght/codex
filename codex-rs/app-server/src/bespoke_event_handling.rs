@@ -67,8 +67,8 @@ use codex_core::protocol::TurnDiffEvent;
 use codex_core::review_format::format_review_findings_block;
 use codex_core::review_prompts;
 use codex_protocol::ConversationId;
-use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::ReviewOutputEvent;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::PathBuf;
@@ -699,7 +699,7 @@ pub(crate) async fn apply_bespoke_event_handling(
             )
             .await;
         }
-        EventMsg::PlanUpdate(plan_update_event) => {
+        EventMsg::TodoUpdate(plan_update_event) => {
             handle_turn_plan_update(
                 conversation_id,
                 &event_turn_id,
@@ -736,7 +736,7 @@ async fn handle_turn_diff(
 async fn handle_turn_plan_update(
     conversation_id: ConversationId,
     event_turn_id: &str,
-    plan_update_event: UpdatePlanArgs,
+    plan_update_event: TodoWriteArgs,
     api_version: ApiVersion,
     outgoing: &OutgoingMessageSender,
 ) {
@@ -746,7 +746,7 @@ async fn handle_turn_plan_update(
             turn_id: event_turn_id.to_string(),
             explanation: plan_update_event.explanation,
             plan: plan_update_event
-                .plan
+                .todos
                 .into_iter()
                 .map(TurnPlanStep::from)
                 .collect(),
@@ -1315,8 +1315,8 @@ mod tests {
     use codex_core::protocol::RateLimitWindow;
     use codex_core::protocol::TokenUsage;
     use codex_core::protocol::TokenUsageInfo;
-    use codex_protocol::plan_tool::PlanItemArg;
-    use codex_protocol::plan_tool::StepStatus;
+    use codex_protocol::todo_tool::StepStatus;
+    use codex_protocol::todo_tool::TodoItem;
     use mcp_types::CallToolResult;
     use mcp_types::ContentBlock;
     use mcp_types::TextContent;
@@ -1481,14 +1481,14 @@ mod tests {
     async fn test_handle_turn_plan_update_emits_notification_for_v2() -> Result<()> {
         let (tx, mut rx) = mpsc::channel(CHANNEL_CAPACITY);
         let outgoing = OutgoingMessageSender::new(tx);
-        let update = UpdatePlanArgs {
+        let update = TodoWriteArgs {
             explanation: Some("need plan".to_string()),
-            plan: vec![
-                PlanItemArg {
+            todos: vec![
+                TodoItem {
                     step: "first".to_string(),
                     status: StepStatus::Pending,
                 },
-                PlanItemArg {
+                TodoItem {
                     step: "second".to_string(),
                     status: StepStatus::Completed,
                 },

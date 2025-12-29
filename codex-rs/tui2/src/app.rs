@@ -1712,8 +1712,8 @@ impl App {
                     emit_skill_load_warnings(&self.app_event_tx, &errors);
                 }
                 // Pass PlanUpdate to ChatWidget for display in bottom pane.
-                if let EventMsg::PlanUpdate(ref update) = event.msg {
-                    self.chat_widget.set_plan(Some(update.clone()));
+                if let EventMsg::TodoUpdate(ref update) = event.msg {
+                    self.chat_widget.set_todos(Some(update.clone()));
                 }
                 self.chat_widget.handle_codex_event(event);
             }

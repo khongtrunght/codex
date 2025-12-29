@@ -143,7 +143,7 @@ use codex_core::protocol::SandboxPolicy;
 use codex_file_search::FileMatch;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
-use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::todo_tool::TodoWriteArgs;
 use strum::IntoEnumIterator;
 
 const USER_SHELL_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it locally";
@@ -826,7 +826,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_plan_update(&mut self, update: UpdatePlanArgs) {
+    fn on_plan_update(&mut self, update: TodoWriteArgs) {
         self.add_to_history(history_cell::new_plan_update(update));
     }
 
@@ -2031,7 +2031,7 @@ impl ChatWidget {
                     self.on_interrupted_turn(ev.reason);
                 }
             },
-            EventMsg::PlanUpdate(update) => self.on_plan_update(update),
+            EventMsg::TodoUpdate(update) => self.on_plan_update(update),
             EventMsg::ExecApprovalRequest(ev) => {
                 // For replayed events, synthesize an empty id (these should not occur).
                 self.on_exec_approval_request(id.unwrap_or_default(), ev)

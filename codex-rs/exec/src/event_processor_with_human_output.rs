@@ -35,8 +35,8 @@ use crate::event_processor::CodexStatus;
 use crate::event_processor::EventProcessor;
 use crate::event_processor::handle_last_message;
 use codex_common::create_config_summary_entries;
-use codex_protocol::plan_tool::StepStatus;
-use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::todo_tool::StepStatus;
+use codex_protocol::todo_tool::TodoWriteArgs;
 
 /// This should be configurable. When used in CI, users may not want to impose
 /// a limit so they can see the full transcript.
@@ -508,8 +508,11 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 ts_msg!(self, "model: {}", model);
                 eprintln!();
             }
-            EventMsg::PlanUpdate(plan_update_event) => {
-                let UpdatePlanArgs { explanation, plan } = plan_update_event;
+            EventMsg::TodoUpdate(plan_update_event) => {
+                let TodoWriteArgs {
+                    explanation,
+                    todos: plan,
+                } = plan_update_event;
 
                 // Header
                 ts_msg!(self, "{}", "Plan update".style(self.magenta));

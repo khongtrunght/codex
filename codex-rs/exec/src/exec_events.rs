@@ -116,7 +116,7 @@ pub enum ThreadItemDetails {
     /// Captures a web search request. It starts when the search is kicked off
     /// and completes when results are returned to the agent.
     WebSearch(WebSearchItem),
-    /// Tracks the agent's running to-do list. It starts when the plan is first
+    /// Tracks the agent's running to-do list. It starts when the todos is first
     /// issued, updates as steps change state, and completes when the turn ends.
     TodoList(TodoListItem),
     /// Describes a non-fatal error surfaced as an item.
