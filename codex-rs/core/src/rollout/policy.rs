@@ -97,8 +97,6 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::AgentMessageContentDelta(_)
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
-        | EventMsg::SkillsUpdateAvailable
-        // SubAgentProgress is streaming-only, not persisted
-        | EventMsg::SubAgentProgress(_) => false,
+        | EventMsg::SkillsUpdateAvailable => false,
     }
 }

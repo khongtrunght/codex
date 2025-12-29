@@ -68,7 +68,6 @@ use codex_protocol::ConversationId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::parse_command::ParsedCommand;
-use codex_protocol::protocol::SubagentHistory;
 use codex_protocol::user_input::UserInput;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -1389,7 +1388,6 @@ impl ChatWidget {
         common: ChatWidgetInit,
         conversation: std::sync::Arc<codex_core::CodexConversation>,
         session_configured: codex_core::protocol::SessionConfiguredEvent,
-        subagent_histories: HashMap<String, SubagentHistory>,
     ) -> Self {
         let ChatWidgetInit {
             config,
@@ -1411,15 +1409,8 @@ impl ChatWidget {
         let codex_op_tx =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
 
-        // Reconstruct SubAgentCells from subagent histories
-        let animations_enabled = config.animations;
-        let reconstructed_cells: Vec<Box<dyn history_cell::HistoryCell>> = subagent_histories
-            .into_values()
-            .map(|history| {
-                let cell = history_cell::subagent_cell_from_history(history, animations_enabled);
-                Box::new(cell) as Box<dyn history_cell::HistoryCell>
-            })
-            .collect();
+        // SubAgentCells are now created via replay_initial_messages() from injected events
+        // with source_session_id, which routes them through handle_forwarded_event()
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -1479,11 +1470,6 @@ impl ChatWidget {
         };
 
         widget.prefetch_rate_limits();
-
-        // Add reconstructed subagent cells to history
-        for cell in reconstructed_cells {
-            widget.add_boxed_history(cell);
-        }
 
         widget
     }
@@ -1859,13 +1845,23 @@ impl ChatWidget {
     /// is intentionally conservative: only safe-to-replay items are rendered to
     /// avoid triggering side effects. Event ids are passed as `None` to
     /// distinguish replayed events from live ones.
-    fn replay_initial_messages(&mut self, events: Vec<EventMsg>) {
-        for msg in events {
-            if matches!(msg, EventMsg::SessionConfigured(_)) {
+    ///
+    /// Now accepts full `Event` objects to support routing subagent events
+    /// (those with `source_session_id` set) to `handle_forwarded_event()`.
+    fn replay_initial_messages(&mut self, events: Vec<codex_protocol::protocol::Event>) {
+        for event in events {
+            if matches!(event.msg, EventMsg::SessionConfigured(_)) {
                 continue;
             }
-            // `id: None` indicates a synthetic/fake id coming from replay.
-            self.dispatch_event_msg(None, msg, true);
+
+            // Route events with source_session_id to subagent cells
+            // This reuses the same code path as live sessions
+            if let Some(ref source_id) = event.source_session_id {
+                self.handle_forwarded_event(source_id, &event.msg);
+            } else {
+                // Main session event - `id: None` indicates synthetic/fake id from replay
+                self.dispatch_event_msg(None, event.msg, true);
+            }
         }
     }
 
@@ -2007,8 +2003,7 @@ impl ChatWidget {
             | EventMsg::ItemCompleted(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
-            | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::SubAgentProgress(_) => {}
+            | EventMsg::ReasoningRawContentDelta(_) => {}
             EventMsg::SubAgentBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentEnd(ev) => self.on_subagent_end(ev),
         }

@@ -356,7 +356,6 @@ impl App {
             init,
             conv,
             session_configured,
-            new_conv.subagent_histories,
         );
         self.current_model = model_family.get_model_slug().to_string();
         // Trim transcript up to the selected user message and re-render it.

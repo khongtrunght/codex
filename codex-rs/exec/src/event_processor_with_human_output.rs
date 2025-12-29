@@ -589,7 +589,6 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::UndoCompleted(_)
             | EventMsg::UndoStarted(_)
             | EventMsg::SubAgentBegin(_)
-            | EventMsg::SubAgentProgress(_)
             | EventMsg::SubAgentEnd(_) => {}
         }
         CodexStatus::Running

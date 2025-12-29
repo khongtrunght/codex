@@ -112,13 +112,23 @@ async fn resumed_initial_messages_render_history() {
         history_log_id: 0,
         history_entry_count: 0,
         initial_messages: Some(vec![
-            EventMsg::UserMessage(UserMessageEvent {
-                message: "hello from user".to_string(),
-                images: None,
-            }),
-            EventMsg::AgentMessage(AgentMessageEvent {
-                message: "assistant reply".to_string(),
-            }),
+            Event {
+                id: String::new(),
+                msg: EventMsg::UserMessage(UserMessageEvent {
+                    message: "hello from user".to_string(),
+                    images: None,
+                }),
+                source_session_id: None,
+                parent_session_id: None,
+            },
+            Event {
+                id: String::new(),
+                msg: EventMsg::AgentMessage(AgentMessageEvent {
+                    message: "assistant reply".to_string(),
+                }),
+                source_session_id: None,
+                parent_session_id: None,
+            },
         ]),
         rollout_path: rollout_file.path().to_path_buf(),
     };
@@ -3537,7 +3547,6 @@ async fn subagent_end_completes_cell() {
             success: true,
             output: "Task completed successfully".to_string(),
             duration_ms: 1500,
-            tool_summary: vec![],
             token_usage: Some(SubAgentTokenUsage {
                 input_tokens: 500,
                 output_tokens: 200,

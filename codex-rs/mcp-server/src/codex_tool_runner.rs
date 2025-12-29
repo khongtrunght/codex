@@ -314,7 +314,6 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::ContextCompacted(_)
                     | EventMsg::DeprecationNotice(_)
                     | EventMsg::SubAgentBegin(_)
-                    | EventMsg::SubAgentProgress(_)
                     | EventMsg::SubAgentEnd(_) => {
                         // For now, we do not do anything extra for these
                         // events. Note that

@@ -886,8 +886,9 @@ impl Session {
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
-        // If resuming, include converted initial messages in the payload so UIs can render them immediately.
-        let initial_messages = initial_history.get_event_msgs();
+        // If resuming, include initial events (with subagent events injected with source_session_id)
+        // so UIs can render them immediately and route subagent events to SubAgentCells.
+        let initial_messages = initial_history.get_replay_events();
         let events = std::iter::once(Event {
             id: INITIAL_SUBMIT_ID.to_owned(),
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {

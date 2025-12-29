@@ -1949,13 +1949,20 @@ impl ChatWidget {
     /// is intentionally conservative: only safe-to-replay items are rendered to
     /// avoid triggering side effects. Event ids are passed as `None` to
     /// distinguish replayed events from live ones.
-    fn replay_initial_messages(&mut self, events: Vec<EventMsg>) {
-        for msg in events {
-            if matches!(msg, EventMsg::SessionConfigured(_)) {
+    ///
+    /// Note: The old TUI doesn't support subagent display, so we only process
+    /// main session events (those with source_session_id: None).
+    fn replay_initial_messages(&mut self, events: Vec<codex_protocol::protocol::Event>) {
+        for event in events {
+            // Skip events from subagents - old TUI doesn't support them
+            if event.source_session_id.is_some() {
+                continue;
+            }
+            if matches!(event.msg, EventMsg::SessionConfigured(_)) {
                 continue;
             }
             // `id: None` indicates a synthetic/fake id coming from replay.
-            self.dispatch_event_msg(None, msg, true);
+            self.dispatch_event_msg(None, event.msg, true);
         }
     }
 
@@ -2084,7 +2091,6 @@ impl ChatWidget {
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
             | EventMsg::SubAgentBegin(_)
-            | EventMsg::SubAgentProgress(_)
             | EventMsg::SubAgentEnd(_) => {}
         }
     }

@@ -1711,7 +1711,11 @@ impl CodexMessageProcessor {
                         return;
                     }
                 };
-                thread.turns = initial_messages
+                // Extract EventMsg from Events for turn building (app-server doesn't need source_session_id)
+                let event_msgs: Option<Vec<codex_core::protocol::EventMsg>> = initial_messages
+                    .as_ref()
+                    .map(|events| events.iter().map(|e| e.msg.clone()).collect());
+                thread.turns = event_msgs
                     .as_deref()
                     .map_or_else(Vec::new, build_turns_from_event_msgs);
 
@@ -2326,6 +2330,11 @@ impl CodexMessageProcessor {
                 session_configured,
                 ..
             }) => {
+                // Extract EventMsg from Events for the notification (app-server protocol uses EventMsg)
+                let initial_event_msgs: Option<Vec<codex_core::protocol::EventMsg>> =
+                    session_configured.initial_messages.as_ref().map(|events| {
+                        events.iter().map(|e| e.msg.clone()).collect()
+                    });
                 self.outgoing
                     .send_server_notification(ServerNotification::SessionConfigured(
                         SessionConfiguredNotification {
@@ -2334,14 +2343,12 @@ impl CodexMessageProcessor {
                             reasoning_effort: session_configured.reasoning_effort,
                             history_log_id: session_configured.history_log_id,
                             history_entry_count: session_configured.history_entry_count,
-                            initial_messages: session_configured.initial_messages.clone(),
+                            initial_messages: initial_event_msgs.clone(),
                             rollout_path: session_configured.rollout_path.clone(),
                         },
                     ))
                     .await;
-                let initial_messages = session_configured
-                    .initial_messages
-                    .map(|msgs| msgs.into_iter().collect());
+                let initial_messages = initial_event_msgs;
 
                 // Reply with conversation id + model and initial messages (when present)
                 let response = ResumeConversationResponse {

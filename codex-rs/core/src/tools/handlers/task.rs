@@ -23,7 +23,6 @@ use crate::protocol::EventMsg;
 use crate::protocol::SubAgentBeginEvent;
 use crate::protocol::SubAgentEndEvent;
 use crate::protocol::SubAgentTokenUsage;
-use crate::protocol::SubAgentToolSummary;
 use crate::subagent_prompt::DEFAULT_SUBAGENT_PROMPT;
 use crate::subagent_prompt::augment_system_prompt;
 use crate::tools::context::ToolInvocation;
@@ -180,8 +179,6 @@ impl ToolHandler for TaskHandler {
         // Create a new cancellation token for this sub-agent
         let cancel_token = CancellationToken::new();
 
-        // Track tool calls for progress
-        let tool_summary = Arc::new(Mutex::new(Vec::<SubAgentToolSummary>::new()));
         // Track token usage
         let token_usage = Arc::new(Mutex::new(SubAgentTokenUsage::default()));
 
@@ -194,14 +191,12 @@ impl ToolHandler for TaskHandler {
             cancel_token,
             call_id.clone(),
             task_session_id.clone(),
-            Arc::clone(&tool_summary),
             Arc::clone(&token_usage),
             subagent_persistence_ok,
         )
         .await;
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
-        let final_summary = tool_summary.lock().await.clone();
         let final_token_usage = token_usage.lock().await.clone();
 
         // Emit SubAgentEnd event
@@ -219,7 +214,6 @@ impl ToolHandler for TaskHandler {
                     success,
                     output: output.clone(),
                     duration_ms,
-                    tool_summary: final_summary,
                     token_usage: if final_token_usage.total_tokens > 0 {
                         Some(final_token_usage)
                     } else {
@@ -335,7 +329,6 @@ async fn run_task_subagent(
     cancel_token: CancellationToken,
     _call_id: String,
     session_id: String,
-    tool_summary: Arc<Mutex<Vec<SubAgentToolSummary>>>,
     token_usage: Arc<Mutex<SubAgentTokenUsage>>,
     persistence_ok: bool,
 ) -> Result<String, String> {
@@ -392,7 +385,6 @@ async fn run_task_subagent(
                     | EventMsg::TaskComplete(_)
                     | EventMsg::TurnAborted(_)
                     | EventMsg::SubAgentBegin(_)
-                    | EventMsg::SubAgentProgress(_)
                     | EventMsg::SubAgentEnd(_)
                 );
 
@@ -410,65 +402,6 @@ async fn run_task_subagent(
                 }
 
                 match &event.msg {
-                    // Track command executions for final summary
-                    EventMsg::ExecCommandBegin(cmd) => {
-                        let mut summary = tool_summary.lock().await;
-                        summary.push(SubAgentToolSummary {
-                            tool_name: "shell".to_string(),
-                            title: Some(cmd.command.join(" ")),
-                            status: "running".to_string(),
-                        });
-                    }
-
-                    EventMsg::ExecCommandEnd(cmd) => {
-                        let mut summary = tool_summary.lock().await;
-                        if let Some(last) = summary.last_mut() {
-                            last.status = if cmd.exit_code == 0 {
-                                "completed".to_string()
-                            } else {
-                                "error".to_string()
-                            };
-                        }
-                    }
-
-                    // Track patch applications
-                    EventMsg::PatchApplyBegin(_) => {
-                        let mut summary = tool_summary.lock().await;
-                        summary.push(SubAgentToolSummary {
-                            tool_name: "apply_patch".to_string(),
-                            title: Some("Applying code changes".to_string()),
-                            status: "running".to_string(),
-                        });
-                    }
-
-                    EventMsg::PatchApplyEnd(patch) => {
-                        let mut summary = tool_summary.lock().await;
-                        if let Some(last) = summary.last_mut() {
-                            last.status = if patch.success {
-                                "completed".to_string()
-                            } else {
-                                "error".to_string()
-                            };
-                        }
-                    }
-
-                    // Track MCP tool calls
-                    EventMsg::McpToolCallBegin(mcp) => {
-                        let mut summary = tool_summary.lock().await;
-                        summary.push(SubAgentToolSummary {
-                            tool_name: mcp.invocation.tool.clone(),
-                            title: Some(format!("MCP: {}", mcp.invocation.tool)),
-                            status: "running".to_string(),
-                        });
-                    }
-
-                    EventMsg::McpToolCallEnd(_) => {
-                        let mut summary = tool_summary.lock().await;
-                        if let Some(last) = summary.last_mut() {
-                            last.status = "completed".to_string();
-                        }
-                    }
-
                     // Track token usage
                     EventMsg::TokenCount(tc) => {
                         if let Some(info) = &tc.info {

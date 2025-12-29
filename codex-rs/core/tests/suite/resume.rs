@@ -1,4 +1,5 @@
 use anyhow::Result;
+use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use codex_protocol::user_input::UserInput;
@@ -49,10 +50,10 @@ async fn resume_includes_initial_messages_from_rollout_events() -> Result<()> {
         .expect("expected initial messages to be present for resumed session");
     match initial_messages.as_slice() {
         [
-            EventMsg::UserMessage(first_user),
-            EventMsg::TokenCount(_),
-            EventMsg::AgentMessage(assistant_message),
-            EventMsg::TokenCount(_),
+            Event { msg: EventMsg::UserMessage(first_user), .. },
+            Event { msg: EventMsg::TokenCount(_), .. },
+            Event { msg: EventMsg::AgentMessage(assistant_message), .. },
+            Event { msg: EventMsg::TokenCount(_), .. },
         ] => {
             assert_eq!(first_user.message, "Record some messages");
             assert_eq!(assistant_message.message, "Completed first turn");
@@ -101,12 +102,12 @@ async fn resume_includes_initial_messages_from_reasoning_events() -> Result<()> 
         .expect("expected initial messages to be present for resumed session");
     match initial_messages.as_slice() {
         [
-            EventMsg::UserMessage(first_user),
-            EventMsg::TokenCount(_),
-            EventMsg::AgentReasoning(reasoning),
-            EventMsg::AgentReasoningRawContent(raw),
-            EventMsg::AgentMessage(assistant_message),
-            EventMsg::TokenCount(_),
+            Event { msg: EventMsg::UserMessage(first_user), .. },
+            Event { msg: EventMsg::TokenCount(_), .. },
+            Event { msg: EventMsg::AgentReasoning(reasoning), .. },
+            Event { msg: EventMsg::AgentReasoningRawContent(raw), .. },
+            Event { msg: EventMsg::AgentMessage(assistant_message), .. },
+            Event { msg: EventMsg::TokenCount(_), .. },
         ] => {
             assert_eq!(first_user.message, "Record reasoning messages");
             assert_eq!(reasoning.text, "Summarized step");

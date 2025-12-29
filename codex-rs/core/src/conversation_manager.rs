@@ -23,7 +23,6 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubagentHistory;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,8 +36,6 @@ pub struct NewConversation {
     pub conversation_id: ConversationId,
     pub conversation: Arc<CodexConversation>,
     pub session_configured: SessionConfiguredEvent,
-    /// Subagent histories from resumed session, for TUI reconstruction.
-    pub subagent_histories: HashMap<String, SubagentHistory>,
 }
 
 /// [`ConversationManager`] is responsible for creating conversations and
@@ -134,15 +131,13 @@ impl ConversationManager {
             None, // Main sessions don't have a source_session_id
         )
         .await?;
-        self.finalize_spawn(codex, conversation_id, HashMap::new())
-            .await
+        self.finalize_spawn(codex, conversation_id).await
     }
 
     async fn finalize_spawn(
         &self,
         codex: Codex,
         conversation_id: ConversationId,
-        subagent_histories: HashMap<String, SubagentHistory>,
     ) -> CodexResult<NewConversation> {
         // The first event must be `SessionInitialized`. Validate and forward it
         // to the caller so that they can display it in the conversation
@@ -172,7 +167,6 @@ impl ConversationManager {
             conversation_id,
             conversation,
             session_configured,
-            subagent_histories,
         })
     }
 
@@ -204,9 +198,6 @@ impl ConversationManager {
         initial_history: InitialHistory,
         auth_manager: Arc<AuthManager>,
     ) -> CodexResult<NewConversation> {
-        // Extract subagent histories before consuming initial_history
-        let subagent_histories = initial_history.get_subagent_histories();
-
         let CodexSpawnOk {
             codex,
             conversation_id,
@@ -220,8 +211,7 @@ impl ConversationManager {
             None, // Main sessions don't have a source_session_id
         )
         .await?;
-        self.finalize_spawn(codex, conversation_id, subagent_histories)
-            .await
+        self.finalize_spawn(codex, conversation_id).await
     }
 
     /// Removes the conversation from the manager's internal map, though the
@@ -266,8 +256,7 @@ impl ConversationManager {
         )
         .await?;
 
-        self.finalize_spawn(codex, conversation_id, HashMap::new())
-            .await
+        self.finalize_spawn(codex, conversation_id).await
     }
 
     pub async fn list_models(&self, config: &Config) -> Vec<ModelPreset> {

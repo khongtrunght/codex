@@ -37,7 +37,6 @@ use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::SubAgentTokenUsage;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
-use codex_protocol::protocol::SubagentHistory;
 use image::DynamicImage;
 use image::ImageReader;
 use mcp_types::EmbeddedResourceResource;
@@ -1569,7 +1568,8 @@ impl SubAgentCell {
         };
         self.duration_ms = Some(end_event.duration_ms);
         self.token_usage = end_event.token_usage.clone();
-        self.tool_uses_count = end_event.tool_summary.len();
+        // Tool count is now derived from raw_events instead of tool_summary
+        self.tool_uses_count = self.extract_tool_calls().len();
         self.output = Some(end_event.output.clone());
         self.start_time = None;
     }
@@ -2077,86 +2077,6 @@ pub(crate) fn new_subagent_cell(
         token_usage: None,
         duration_ms: None,
         raw_events: Vec::new(),
-        expanded: false,
-        animations_enabled,
-    }
-}
-
-/// Create a SubAgentCell from SubagentHistory (for session resume).
-/// The cell is marked as completed and stores raw events for render-time processing.
-pub(crate) fn subagent_cell_from_history(
-    history: SubagentHistory,
-    animations_enabled: bool,
-) -> SubAgentCell {
-    use codex_core::protocol::EventMsg;
-    use codex_protocol::models::ResponseItem;
-    use codex_protocol::protocol::RolloutItem;
-
-    let mut begin_event: Option<SubAgentBeginEvent> = None;
-    let mut end_event: Option<SubAgentEndEvent> = None;
-    let mut prompt: Option<String> = None;
-    let mut output: Option<String> = None;
-    let mut tool_count = 0;
-
-    // Extract lifecycle events and count tools
-    for item in &history.history {
-        match item {
-            RolloutItem::EventMsg(ev) => match ev {
-                EventMsg::SubAgentBegin(ev) => {
-                    begin_event = Some(ev.clone());
-                    prompt = ev.prompt.clone();
-                }
-                EventMsg::SubAgentEnd(ev) => {
-                    end_event = Some(ev.clone());
-                    output = Some(ev.output.clone());
-                }
-                _ => {}
-            },
-            RolloutItem::ResponseItem(ResponseItem::FunctionCall { .. })
-            | RolloutItem::ResponseItem(ResponseItem::LocalShellCall { .. }) => {
-                tool_count += 1;
-            }
-            _ => {}
-        }
-    }
-
-    // Build the cell from extracted data
-    let (agent_type, description, resumed) = begin_event
-        .as_ref()
-        .map(|ev| (ev.agent_type.clone(), ev.description.clone(), ev.resumed))
-        .unwrap_or_else(|| {
-            (
-                history.agent_type.clone(),
-                history.description.clone(),
-                true,
-            )
-        });
-
-    let (status, token_usage, duration_ms) = end_event
-        .as_ref()
-        .map(|ev| {
-            let status = if ev.success {
-                SubAgentStatus::Completed
-            } else {
-                SubAgentStatus::Error
-            };
-            (status, ev.token_usage.clone(), Some(ev.duration_ms))
-        })
-        .unwrap_or((SubAgentStatus::Completed, None, None));
-
-    SubAgentCell {
-        session_id: history.session_id,
-        agent_type,
-        description,
-        prompt,
-        output,
-        status,
-        start_time: None,
-        resumed,
-        tool_uses_count: tool_count,
-        token_usage,
-        duration_ms,
-        raw_events: history.history, // Store raw events directly
         expanded: false,
         animations_enabled,
     }
@@ -3458,7 +3378,6 @@ mod tests {
             success: true,
             output: "Found 10 files".to_string(),
             duration_ms: 1500,
-            tool_summary: vec![],
             token_usage: Some(SubAgentTokenUsage {
                 input_tokens: 500,
                 output_tokens: 200,
@@ -3498,7 +3417,6 @@ mod tests {
             success: true,
             output: "Done".to_string(),
             duration_ms: 1000,
-            tool_summary: vec![],
             token_usage: Some(SubAgentTokenUsage {
                 input_tokens: 80000,
                 output_tokens: 21500,
@@ -3583,7 +3501,6 @@ mod tests {
             success: false,
             output: "Task failed".to_string(),
             duration_ms: 500,
-            tool_summary: vec![],
             token_usage: None,
         };
 
@@ -3851,7 +3768,6 @@ mod tests {
             success: true,
             output: "Done".to_string(),
             duration_ms: 1000,
-            tool_summary: vec![],
             token_usage: Some(SubAgentTokenUsage {
                 input_tokens: 5000,
                 output_tokens: 2000,
@@ -3922,7 +3838,6 @@ mod tests {
             success: true,
             output: "Done".to_string(),
             duration_ms: 1000,
-            tool_summary: vec![],
             token_usage: None,
         });
         cell2.complete(&SubAgentEndEvent {
@@ -3931,7 +3846,6 @@ mod tests {
             success: true,
             output: "Done".to_string(),
             duration_ms: 2000,
-            tool_summary: vec![],
             token_usage: None,
         });
 
@@ -3993,7 +3907,6 @@ mod tests {
             success: true,
             output: "Done".to_string(),
             duration_ms: 1000,
-            tool_summary: vec![],
             token_usage: None,
         });
         cell2.complete(&SubAgentEndEvent {
@@ -4002,7 +3915,6 @@ mod tests {
             success: false, // FAILED
             output: "Error".to_string(),
             duration_ms: 500,
-            tool_summary: vec![],
             token_usage: None,
         });
 
@@ -4053,7 +3965,6 @@ mod tests {
             success: true,
             output: "Done".to_string(),
             duration_ms: 1000,
-            tool_summary: vec![],
             token_usage: None,
         });
 
@@ -4104,87 +4015,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn subagent_cell_from_history_shows_patch_apply_begin() {
-        use codex_core::protocol::EventMsg;
-        use codex_core::protocol::PatchApplyBeginEvent;
-        use codex_core::protocol::SubAgentBeginEvent;
-        use codex_core::protocol::SubAgentEndEvent;
-        use codex_protocol::protocol::FileChange;
-        use codex_protocol::protocol::RolloutItem;
-        use codex_protocol::protocol::SubagentHistory;
-        use std::collections::HashMap;
-        use std::path::PathBuf;
-
-        // Create a history with PatchApplyBegin event (as would be loaded from rollout file)
-        let mut changes = HashMap::new();
-        changes.insert(
-            PathBuf::from("/test/file.txt"),
-            FileChange::Add {
-                content: "Hello".to_string(),
-            },
-        );
-
-        let history = SubagentHistory {
-            session_id: "sess-1".to_string(),
-            parent_session_id: None,
-            agent_type: "general".to_string(),
-            description: "Write to file".to_string(),
-            rollout_path: PathBuf::from("/test/rollout.jsonl"),
-            history: vec![
-                RolloutItem::EventMsg(EventMsg::SubAgentBegin(SubAgentBeginEvent {
-                    call_id: "call-1".to_string(),
-                    session_id: "sess-1".to_string(),
-                    agent_type: "general".to_string(),
-                    description: "Write to file".to_string(),
-                    prompt: Some("Write Hello to file".to_string()),
-                    resumed: false,
-                })),
-                RolloutItem::EventMsg(EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
-                    call_id: "patch-call-1".to_string(),
-                    turn_id: "turn-1".to_string(),
-                    auto_approved: true,
-                    changes,
-                })),
-                RolloutItem::EventMsg(EventMsg::SubAgentEnd(SubAgentEndEvent {
-                    call_id: "call-1".to_string(),
-                    session_id: "sess-1".to_string(),
-                    success: true,
-                    output: "Done".to_string(),
-                    duration_ms: 500,
-                    tool_summary: vec![],
-                    token_usage: None,
-                })),
-            ],
-        };
-
-        let cell = subagent_cell_from_history(history, false);
-
-        // Verify raw_events contains the PatchApplyBegin
-        assert_eq!(cell.raw_events().len(), 3);
-
-        // Verify extract_tool_calls finds the patch tool
-        let tool_calls = cell.extract_tool_calls();
-        assert_eq!(
-            tool_calls.len(),
-            1,
-            "Should have 1 tool call from PatchApplyBegin: {:?}",
-            tool_calls
-        );
-        assert_eq!(tool_calls[0].tool_name, "patch");
-        assert!(
-            tool_calls[0].title.as_ref().unwrap().contains("file.txt"),
-            "Title should contain filename: {:?}",
-            tool_calls[0].title
-        );
-
-        // Verify verbose mode shows the tool
-        let lines = cell.display_lines_verbose(80, true);
-        let rendered = render_lines(&lines);
-        assert!(
-            rendered.iter().any(|l| l.contains("patch")),
-            "Verbose mode should show tool name 'patch': {:?}",
-            rendered
-        );
-    }
 }

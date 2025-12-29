@@ -513,7 +513,7 @@ impl SandboxPolicy {
 }
 
 /// Event Queue Entry - events from agent with session tree context
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct Event {
     /// Submission `id` that this event is correlated with.
     pub id: String,
@@ -523,11 +523,13 @@ pub struct Event {
     /// None = main/root session (implicit identity)
     /// Some("task-xxx") = sub-agent session
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub source_session_id: Option<String>,
     /// Lineage: Which session spawned the source session.
     /// None = root session (no parent) OR spawned directly by root
     /// Some("task-xxx") = spawned by that parent sub-agent session
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub parent_session_id: Option<String>,
 }
 
@@ -556,9 +558,6 @@ pub enum EventMsg {
 
     /// A sub-agent task (via Task tool) has begun execution.
     SubAgentBegin(SubAgentBeginEvent),
-
-    /// Progress update from a running sub-agent task.
-    SubAgentProgress(SubAgentProgressEvent),
 
     /// A sub-agent task has completed.
     SubAgentEnd(SubAgentEndEvent),
@@ -874,53 +873,13 @@ pub struct SubAgentBeginEvent {
     pub description: String,
     /// The detailed prompt given to the sub-agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub prompt: Option<String>,
     /// Unique session ID for this sub-agent task.
     pub session_id: String,
     /// Whether this is resuming a previous session.
     #[serde(default)]
     pub resumed: bool,
-}
-
-/// Summary of a tool call made by a sub-agent.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct SubAgentToolSummary {
-    /// Name of the tool that was called.
-    pub tool_name: String,
-    /// Short title or description of the tool call.
-    pub title: Option<String>,
-    /// Status of the tool call: "running", "completed", or "error".
-    pub status: String,
-}
-
-/// Incremental update types for streaming sub-agent progress
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "snake_case")]
-#[ts(tag = "type")]
-pub enum SubAgentProgressUpdate {
-    /// A tool execution has started
-    ToolBegin {
-        tool_name: String,
-        title: Option<String>,
-    },
-    /// A tool execution has completed
-    ToolEnd {
-        tool_name: String,
-        /// Status: "completed" or "error"
-        status: String,
-        error_message: Option<String>,
-    },
-    /// Incremental token usage update
-    TokenDelta {
-        #[ts(type = "number")]
-        input_tokens: u64,
-        #[ts(type = "number")]
-        output_tokens: u64,
-    },
-    /// Status message update
-    Status { message: String },
-    /// Agent is producing text output (streaming)
-    TextDelta { text: String },
 }
 
 /// Token usage statistics for a sub-agent task.
@@ -937,28 +896,6 @@ pub struct SubAgentTokenUsage {
     pub total_tokens: u64,
 }
 
-/// Progress update from a running sub-agent task.
-/// Emitted periodically during execution to stream progress to UI.
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct SubAgentProgressEvent {
-    /// The tool call ID that spawned this sub-agent (links to parent's tool_use).
-    pub call_id: String,
-    /// The sub-agent session ID.
-    pub session_id: String,
-    /// The incremental update(s) in this progress event.
-    /// Can contain multiple updates batched together.
-    #[serde(default)]
-    pub updates: Vec<SubAgentProgressUpdate>,
-    /// Cumulative tool count so far.
-    #[serde(default)]
-    #[ts(type = "number")]
-    pub tool_count: usize,
-    /// Cumulative token usage so far.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub cumulative_tokens: Option<SubAgentTokenUsage>,
-}
-
 /// Emitted when a sub-agent task completes.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct SubAgentEndEvent {
@@ -973,10 +910,8 @@ pub struct SubAgentEndEvent {
     /// Duration of the task in milliseconds.
     #[ts(type = "number")]
     pub duration_ms: u64,
-    /// Summary of all tool calls made by the sub-agent.
-    #[serde(default)]
-    pub tool_summary: Vec<SubAgentToolSummary>,
     /// Token usage statistics for this sub-agent task.
+    /// Tool summary is now derived from raw_events/rollout file instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub token_usage: Option<SubAgentTokenUsage>,
@@ -1405,6 +1340,79 @@ impl InitialHistory {
         match self {
             InitialHistory::Resumed(resumed) => resumed.subagent_histories.clone(),
             InitialHistory::New | InitialHistory::Forked(_) => HashMap::new(),
+        }
+    }
+
+    /// Get events for replay, with subagent events injected with source_session_id.
+    ///
+    /// This returns full `Event` objects (not just `EventMsg`) so that:
+    /// - Main session events have `source_session_id: None`
+    /// - Subagent events have `source_session_id: Some(subagent_session_id)`
+    ///
+    /// This allows the TUI to route subagent events to the appropriate
+    /// `SubAgentCell` via `handle_forwarded_event()`, reusing the same
+    /// code path as live sessions.
+    pub fn get_replay_events(&self) -> Option<Vec<Event>> {
+        match self {
+            InitialHistory::New => None,
+            InitialHistory::Resumed(resumed) => {
+                let mut events = Vec::new();
+
+                for item in &resumed.history {
+                    if let RolloutItem::EventMsg(ev) = item {
+                        // Main session event
+                        events.push(Event {
+                            id: String::new(),
+                            msg: ev.clone(),
+                            source_session_id: None,
+                            parent_session_id: None,
+                        });
+
+                        // If this is SubAgentBegin, inject the subagent's events
+                        if let EventMsg::SubAgentBegin(begin) = ev
+                            && let Some(history) = resumed.subagent_histories.get(&begin.session_id) {
+                                // Inject subagent events with source_session_id set
+                                for subagent_item in &history.history {
+                                    if let RolloutItem::EventMsg(subagent_ev) = subagent_item {
+                                        // Skip SubAgentBegin/SubAgentEnd from subagent files
+                                        // (they're metadata, not forwarded events)
+                                        if matches!(
+                                            subagent_ev,
+                                            EventMsg::SubAgentBegin(_) | EventMsg::SubAgentEnd(_)
+                                        ) {
+                                            continue;
+                                        }
+                                        events.push(Event {
+                                            id: String::new(),
+                                            msg: subagent_ev.clone(),
+                                            source_session_id: Some(begin.session_id.clone()),
+                                            parent_session_id: history.parent_session_id.clone(),
+                                        });
+                                    }
+                                }
+                            }
+                    }
+                }
+
+                Some(events)
+            }
+            InitialHistory::Forked(items) => {
+                // Forked sessions don't have subagent histories
+                Some(
+                    items
+                        .iter()
+                        .filter_map(|ri| match ri {
+                            RolloutItem::EventMsg(ev) => Some(Event {
+                                id: String::new(),
+                                msg: ev.clone(),
+                                source_session_id: None,
+                                parent_session_id: None,
+                            }),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            }
         }
     }
 }
@@ -1997,10 +2005,12 @@ pub struct SessionConfiguredEvent {
     /// Current number of entries in the history log.
     pub history_entry_count: usize,
 
-    /// Optional initial messages (as events) for resumed sessions.
+    /// Optional initial messages (as full events) for resumed sessions.
     /// When present, UIs can use these to seed the history.
+    /// Uses full `Event` objects to support routing subagent events
+    /// (those with `source_session_id` set) to appropriate SubAgentCells.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub initial_messages: Option<Vec<EventMsg>>,
+    pub initial_messages: Option<Vec<Event>>,
 
     pub rollout_path: PathBuf,
 }
@@ -2237,13 +2247,10 @@ mod tests {
         Ok(())
     }
 
-    // Session tree tests for parent_session_id and SubAgentProgressUpdate
+    // Session tree tests for parent_session_id
     mod session_tree_tests {
         use super::Event;
         use super::EventMsg;
-        use super::SubAgentProgressEvent;
-        use super::SubAgentProgressUpdate;
-        use super::SubAgentTokenUsage;
         use super::TaskStartedEvent;
 
         #[test]
@@ -2312,154 +2319,6 @@ mod tests {
             let event: Event = serde_json::from_str(json).unwrap();
             assert_eq!(event.source_session_id, None);
             assert_eq!(event.parent_session_id, None);
-        }
-
-        #[test]
-        fn test_progress_update_tool_begin_variant() {
-            let update = SubAgentProgressUpdate::ToolBegin {
-                tool_name: "shell".to_string(),
-                title: Some("ls -la".to_string()),
-            };
-
-            let json = serde_json::to_string(&update).unwrap();
-            assert!(json.contains("tool_begin"));
-            assert!(json.contains("shell"));
-            assert!(json.contains("ls -la"));
-
-            let deserialized: SubAgentProgressUpdate = serde_json::from_str(&json).unwrap();
-            match deserialized {
-                SubAgentProgressUpdate::ToolBegin { tool_name, title } => {
-                    assert_eq!(tool_name, "shell");
-                    assert_eq!(title, Some("ls -la".to_string()));
-                }
-                _ => panic!("Expected ToolBegin variant"),
-            }
-        }
-
-        #[test]
-        fn test_progress_update_tool_end_variant() {
-            let update = SubAgentProgressUpdate::ToolEnd {
-                tool_name: "shell".to_string(),
-                status: "completed".to_string(),
-                error_message: None,
-            };
-
-            let json = serde_json::to_string(&update).unwrap();
-            assert!(json.contains("tool_end"));
-            assert!(json.contains("completed"));
-
-            let deserialized: SubAgentProgressUpdate = serde_json::from_str(&json).unwrap();
-            match deserialized {
-                SubAgentProgressUpdate::ToolEnd {
-                    tool_name,
-                    status,
-                    error_message,
-                } => {
-                    assert_eq!(tool_name, "shell");
-                    assert_eq!(status, "completed");
-                    assert!(error_message.is_none());
-                }
-                _ => panic!("Expected ToolEnd variant"),
-            }
-        }
-
-        #[test]
-        fn test_progress_update_token_delta_variant() {
-            let update = SubAgentProgressUpdate::TokenDelta {
-                input_tokens: 100,
-                output_tokens: 50,
-            };
-
-            let json = serde_json::to_string(&update).unwrap();
-            assert!(json.contains("token_delta"));
-            assert!(json.contains("100"));
-            assert!(json.contains("50"));
-
-            let deserialized: SubAgentProgressUpdate = serde_json::from_str(&json).unwrap();
-            match deserialized {
-                SubAgentProgressUpdate::TokenDelta {
-                    input_tokens,
-                    output_tokens,
-                } => {
-                    assert_eq!(input_tokens, 100);
-                    assert_eq!(output_tokens, 50);
-                }
-                _ => panic!("Expected TokenDelta variant"),
-            }
-        }
-
-        #[test]
-        fn test_progress_update_status_variant() {
-            let update = SubAgentProgressUpdate::Status {
-                message: "Searching files...".to_string(),
-            };
-
-            let json = serde_json::to_string(&update).unwrap();
-            assert!(json.contains("status"));
-            assert!(json.contains("Searching files..."));
-        }
-
-        #[test]
-        fn test_progress_update_text_delta_variant() {
-            let update = SubAgentProgressUpdate::TextDelta {
-                text: "Hello world".to_string(),
-            };
-
-            let json = serde_json::to_string(&update).unwrap();
-            assert!(json.contains("text_delta"));
-            assert!(json.contains("Hello world"));
-        }
-
-        #[test]
-        fn test_subagent_progress_event_with_updates() {
-            let progress = SubAgentProgressEvent {
-                call_id: "call-123".to_string(),
-                session_id: "task-abc".to_string(),
-                updates: vec![
-                    SubAgentProgressUpdate::ToolBegin {
-                        tool_name: "shell".to_string(),
-                        title: Some("ls".to_string()),
-                    },
-                    SubAgentProgressUpdate::TokenDelta {
-                        input_tokens: 100,
-                        output_tokens: 50,
-                    },
-                ],
-                tool_count: 1,
-                cumulative_tokens: Some(SubAgentTokenUsage {
-                    input_tokens: 100,
-                    output_tokens: 50,
-                    total_tokens: 150,
-                }),
-            };
-
-            let json = serde_json::to_string(&progress).unwrap();
-            assert!(json.contains("tool_begin"));
-            assert!(json.contains("token_delta"));
-            assert!(json.contains("cumulative_tokens"));
-
-            let deserialized: SubAgentProgressEvent = serde_json::from_str(&json).unwrap();
-            assert_eq!(deserialized.call_id, "call-123");
-            assert_eq!(deserialized.session_id, "task-abc");
-            assert_eq!(deserialized.updates.len(), 2);
-            assert_eq!(deserialized.tool_count, 1);
-            assert!(deserialized.cumulative_tokens.is_some());
-        }
-
-        #[test]
-        fn test_subagent_progress_event_default_fields() {
-            // Test that default fields work correctly for deserialization
-            let json = r#"{
-                "call_id": "call-456",
-                "session_id": "task-xyz"
-            }"#;
-
-            let progress: SubAgentProgressEvent = serde_json::from_str(json).unwrap();
-            assert_eq!(progress.call_id, "call-456");
-            assert_eq!(progress.session_id, "task-xyz");
-            assert!(progress.updates.is_empty());
-            assert_eq!(progress.tool_count, 0);
-            assert!(progress.cumulative_tokens.is_none());
         }
     }
 }
