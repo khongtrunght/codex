@@ -5,9 +5,11 @@ use crate::key_hint::KeyBinding;
 use crate::render::line_utils::prefix_lines;
 use crate::status::format_tokens_compact;
 use crate::ui_consts::FOOTER_INDENT_COLS;
+use codex_protocol::permission_mode::PermissionMode;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -15,7 +17,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct FooterProps {
+pub(crate) struct FooterProps<'a> {
     pub(crate) mode: FooterMode,
     pub(crate) esc_backtrack_hint: bool,
     pub(crate) use_shift_enter_hint: bool,
@@ -25,6 +27,29 @@ pub(crate) struct FooterProps {
     pub(crate) transcript_scrolled: bool,
     pub(crate) transcript_selection_active: bool,
     pub(crate) transcript_scroll_position: Option<(usize, usize)>,
+    /// Permission mode display info (icon, name, color)
+    pub(crate) permission_mode_display: Option<PermissionModeDisplay<'a>>,
+}
+
+/// Display info for permission mode indicator
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PermissionModeDisplay<'a> {
+    pub(crate) icon: &'a str,
+    pub(crate) name: &'a str,
+    pub(crate) color: Color,
+}
+
+impl PermissionModeDisplay<'_> {
+    pub(crate) fn from_mode(mode: &PermissionMode) -> PermissionModeDisplay<'static> {
+        let (icon, name, color) = match mode {
+            PermissionMode::Default => ("", "Default", Color::Reset),
+            PermissionMode::AcceptEdits => ("⏵⏵", "Accept Edits", Color::Yellow),
+            PermissionMode::Plan { .. } => ("⏸", "Plan Mode", Color::Cyan),
+            PermissionMode::BypassPermissions => ("⏵⏵", "Bypass", Color::Red),
+            PermissionMode::DontAsk => ("⏵⏵", "Don't Ask", Color::Red),
+        };
+        PermissionModeDisplay { icon, name, color }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,11 +90,11 @@ pub(crate) fn reset_mode_after_activity(current: FooterMode) -> FooterMode {
     }
 }
 
-pub(crate) fn footer_height(props: FooterProps) -> u16 {
+pub(crate) fn footer_height(props: FooterProps<'_>) -> u16 {
     footer_lines(props).len() as u16
 }
 
-pub(crate) fn render_footer(area: Rect, buf: &mut Buffer, props: FooterProps) {
+pub(crate) fn render_footer(area: Rect, buf: &mut Buffer, props: FooterProps<'_>) {
     Paragraph::new(prefix_lines(
         footer_lines(props),
         " ".repeat(FOOTER_INDENT_COLS).into(),
@@ -78,7 +103,7 @@ pub(crate) fn render_footer(area: Rect, buf: &mut Buffer, props: FooterProps) {
     .render(area, buf);
 }
 
-fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
+fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
     // Show the context indicator on the left, appended after the primary hint
     // (e.g., "? for shortcuts"). Keep it visible even when typing (i.e., when
     // the shortcut hint is hidden). Hide it only for the multi-line
@@ -88,10 +113,26 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
             is_task_running: props.is_task_running,
         })],
         FooterMode::ShortcutSummary => {
-            let mut line = context_window_line(
+            let mut line = Line::from("");
+
+            // Show permission mode indicator (only if not Default)
+            if let Some(perm_display) = props.permission_mode_display {
+                if !perm_display.icon.is_empty() {
+                    line.push_span(Span::styled(
+                        format!("{} {} ", perm_display.icon, perm_display.name),
+                        ratatui::style::Style::default().fg(perm_display.color),
+                    ));
+                    line.push_span("· ".dim());
+                }
+            }
+
+            // Context window info
+            let context_line = context_window_line(
                 props.context_window_percent,
                 props.context_window_used_tokens,
             );
+            line.spans.extend(context_line.spans);
+
             line.push_span(" · ".dim());
             line.extend(vec![
                 key_hint::plain(KeyCode::Char('?')).into(),
@@ -480,6 +521,7 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
             },
         );
 
@@ -495,6 +537,7 @@ mod tests {
                 transcript_scrolled: true,
                 transcript_selection_active: true,
                 transcript_scroll_position: Some((3, 42)),
+                permission_mode_display: None,
             },
         );
 
@@ -510,6 +553,7 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
             },
         );
 
@@ -525,6 +569,7 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
             },
         );
 
@@ -540,6 +585,7 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
             },
         );
 
@@ -555,6 +601,7 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
             },
         );
 
@@ -570,6 +617,7 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
             },
         );
 
@@ -585,6 +633,7 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
             },
         );
 
@@ -600,6 +649,48 @@ mod tests {
                 transcript_scrolled: false,
                 transcript_selection_active: false,
                 transcript_scroll_position: None,
+                permission_mode_display: None,
+            },
+        );
+
+        // Test with permission mode indicators
+        snapshot_footer(
+            "footer_shortcuts_plan_mode",
+            FooterProps {
+                mode: FooterMode::ShortcutSummary,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: false,
+                context_window_percent: Some(85),
+                context_window_used_tokens: None,
+                transcript_scrolled: false,
+                transcript_selection_active: false,
+                transcript_scroll_position: None,
+                permission_mode_display: Some(PermissionModeDisplay {
+                    icon: "⏸",
+                    name: "Plan Mode",
+                    color: Color::Cyan,
+                }),
+            },
+        );
+
+        snapshot_footer(
+            "footer_shortcuts_accept_edits_mode",
+            FooterProps {
+                mode: FooterMode::ShortcutSummary,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: false,
+                context_window_percent: None,
+                context_window_used_tokens: None,
+                transcript_scrolled: false,
+                transcript_selection_active: false,
+                transcript_scroll_position: None,
+                permission_mode_display: Some(PermissionModeDisplay {
+                    icon: "⏵⏵",
+                    name: "Accept Edits",
+                    color: Color::Yellow,
+                }),
             },
         );
     }

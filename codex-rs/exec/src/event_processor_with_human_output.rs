@@ -592,7 +592,9 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::UndoCompleted(_)
             | EventMsg::UndoStarted(_)
             | EventMsg::SubAgentBegin(_)
-            | EventMsg::SubAgentEnd(_) => {}
+            | EventMsg::SubAgentEnd(_)
+            | EventMsg::EnteredPlanMode(_)
+            | EventMsg::ExitedPlanMode(_) => {}
         }
         CodexStatus::Running
     }

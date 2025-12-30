@@ -1,6 +1,7 @@
 //! Write tool handler - writes content to files.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -32,6 +33,46 @@ pub struct WriteFileHandler;
 impl ToolHandler for WriteFileHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    /// Determines if this write operation should wait for the tool gate.
+    ///
+    /// In plan mode:
+    /// - Plan file writes: auto-allowed (returns false)
+    /// - Other file writes: requires gate (returns true)
+    ///
+    /// Outside plan mode:
+    /// - All writes are auto-allowed (returns false) - preserves existing behavior
+    async fn is_mutating(&self, invocation: &ToolInvocation) -> bool {
+        // Check if we're in plan mode
+        if !invocation.session.is_planning().await {
+            // Not in plan mode - preserve existing behavior (no gate wait)
+            return false;
+        }
+
+        // In plan mode - check if writing to plan file
+        let file_path = match &invocation.payload {
+            ToolPayload::Function { arguments } => serde_json::from_str::<WriteFileArgs>(arguments)
+                .ok()
+                .map(|args| {
+                    let path = PathBuf::from(&args.file_path);
+                    invocation
+                        .turn
+                        .resolve_path(Some(path.to_string_lossy().to_string()))
+                }),
+            _ => None,
+        };
+
+        if let Some(path) = file_path {
+            // Check if this is the plan file for the current session
+            if invocation.session.is_plan_file_path(&path).await {
+                // Writing to plan file - auto-allow
+                return false;
+            }
+        }
+
+        // In plan mode but writing to non-plan file - wait for approval
+        true
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

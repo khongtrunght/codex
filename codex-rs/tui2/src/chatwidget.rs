@@ -452,6 +452,14 @@ impl ChatWidget {
         self.bottom_pane.set_skills(skills);
     }
 
+    /// Update the permission mode display in the footer.
+    pub(crate) fn set_permission_mode(
+        &mut self,
+        mode: codex_protocol::permission_mode::PermissionMode,
+    ) {
+        self.bottom_pane.set_permission_mode(mode);
+    }
+
     /// Update the current todos for display in the bottom pane.
     pub(crate) fn set_todos(&mut self, todos: Option<codex_protocol::todo_tool::TodoWriteArgs>) {
         self.bottom_pane.set_todos(todos);
@@ -2006,6 +2014,8 @@ impl ChatWidget {
             | EventMsg::ReasoningRawContentDelta(_) => {}
             EventMsg::SubAgentBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentEnd(ev) => self.on_subagent_end(ev),
+            // Plan mode events - not handled in tui2 for now
+            EventMsg::EnteredPlanMode(_) | EventMsg::ExitedPlanMode(_) => {}
         }
     }
 

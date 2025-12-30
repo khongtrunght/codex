@@ -46,7 +46,9 @@ use codex_core::protocol::ListSkillsResponseEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::SessionSource;
 use codex_core::protocol::SkillErrorInfo;
+use codex_core::plan_file::resolve_plan_file_path;
 use codex_core::protocol::TokenUsage;
+use codex_protocol::permission_mode::PermissionMode;
 use codex_core::terminal::terminal_info;
 use codex_protocol::ConversationId;
 use codex_protocol::openai_models::ModelPreset;
@@ -357,6 +359,11 @@ pub(crate) struct App {
 
     // One-shot suppression of the next world-writable scan after user confirmation.
     skip_world_writable_scan_once: bool,
+
+    /// Current permission mode for the session.
+    current_permission_mode: PermissionMode,
+    /// Whether bypass permissions mode is available (requires CLI flag).
+    is_bypass_available: bool,
 }
 
 /// Content-relative selection within the inline transcript viewport.
@@ -529,6 +536,8 @@ impl App {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
+            current_permission_mode: PermissionMode::Default,
+            is_bypass_available: false,
         };
 
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
@@ -1958,6 +1967,16 @@ impl App {
             AppEvent::SkipNextWorldWritableScan => {
                 self.skip_world_writable_scan_once = true;
             }
+            AppEvent::UpdatePermissionMode(mode) => {
+                // Update the permission mode in the app state
+                // TODO: Store permission mode and update UI display
+                tracing::debug!(?mode, "Permission mode updated");
+            }
+            AppEvent::CyclePermissionMode => {
+                // Cycle to the next permission mode (shift+tab)
+                // TODO: Implement mode cycling with is_bypass_available check
+                tracing::debug!("Cycle permission mode requested");
+            }
             AppEvent::UpdateFullAccessWarningAcknowledged(ack) => {
                 self.chat_widget.set_full_access_warning_acknowledged(ack);
             }
@@ -2110,6 +2129,40 @@ impl App {
         self.config.model_reasoning_effort = effort;
     }
 
+    /// Cycle to the next permission mode (triggered by Shift+Tab).
+    async fn cycle_permission_mode(&mut self, tui: &mut tui::Tui) {
+        // Get the session ID for plan file path resolution
+        let session_id = self
+            .chat_widget
+            .conversation_id()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let next_mode = self.current_permission_mode.next_mode(
+            self.is_bypass_available,
+            || {
+                // Lazily resolve plan file path when transitioning to Plan mode
+                resolve_plan_file_path(&session_id, None)
+                    .to_string_lossy()
+                    .to_string()
+            },
+        );
+        self.current_permission_mode = next_mode.clone();
+
+        // Update the chat widget's footer indicator
+        self.chat_widget.set_permission_mode(next_mode.clone());
+
+        // Log the mode change
+        tracing::info!(
+            mode = ?next_mode,
+            display_name = next_mode.display_name(),
+            "Permission mode cycled"
+        );
+
+        // Request a frame redraw to update the UI
+        tui.frame_requester().schedule_frame();
+    }
+
     async fn handle_key_event(&mut self, tui: &mut tui::Tui, key_event: KeyEvent) {
         match key_event {
             KeyEvent {
@@ -2157,6 +2210,14 @@ impl App {
                 ..
             } => {
                 self.copy_transcript_selection(tui);
+            }
+            // Shift+Tab cycles permission modes
+            KeyEvent {
+                code: KeyCode::BackTab,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                self.cycle_permission_mode(tui).await;
             }
             KeyEvent {
                 code: KeyCode::PageUp,
@@ -2352,6 +2413,8 @@ mod tests {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
+            current_permission_mode: PermissionMode::Default,
+            is_bypass_available: false,
         }
     }
 
@@ -2398,6 +2461,8 @@ mod tests {
                 pending_update_action: None,
                 suppress_shutdown_complete: false,
                 skip_world_writable_scan_once: false,
+                current_permission_mode: PermissionMode::Default,
+                is_bypass_available: false,
             },
             rx,
             op_rx,

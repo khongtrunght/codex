@@ -35,6 +35,8 @@ use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
 use codex_core::protocol::ExecCommandSource;
 use codex_core::protocol::ExitedReviewModeEvent;
+use codex_protocol::permission_mode::EnteredPlanModeEvent;
+use codex_protocol::permission_mode::ExitedPlanModeEvent;
 use codex_core::protocol::ListCustomPromptsResponseEvent;
 use codex_core::protocol::ListSkillsResponseEvent;
 use codex_core::protocol::McpListToolsResponseEvent;
@@ -350,6 +352,10 @@ pub(crate) struct ChatWidget {
     pending_notification: Option<Notification>,
     // Simple review mode flag; used to adjust layout and banners.
     is_review_mode: bool,
+    // Simple plan mode flag; used to show plan mode status banner.
+    is_plan_mode: bool,
+    // Path to plan file when in plan mode.
+    plan_file_path: Option<String>,
     // Snapshot of token usage to restore after review mode exits.
     pre_review_token_info: Option<Option<TokenUsageInfo>>,
     // Whether to add a final message separator after the last message
@@ -1464,6 +1470,8 @@ impl ChatWidget {
             suppress_session_configured_redraw: false,
             pending_notification: None,
             is_review_mode: false,
+            is_plan_mode: false,
+            plan_file_path: None,
             pre_review_token_info: None,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
@@ -1550,6 +1558,8 @@ impl ChatWidget {
             suppress_session_configured_redraw: true,
             pending_notification: None,
             is_review_mode: false,
+            is_plan_mode: false,
+            plan_file_path: None,
             pre_review_token_info: None,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
@@ -2083,6 +2093,8 @@ impl ChatWidget {
                 self.on_entered_review_mode(review_request)
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
+            EventMsg::EnteredPlanMode(ev) => self.on_entered_plan_mode(ev),
+            EventMsg::ExitedPlanMode(ev) => self.on_exited_plan_mode(ev),
             EventMsg::ContextCompacted(_) => self.on_agent_message("Context compacted".to_owned()),
             EventMsg::RawResponseItem(_)
             | EventMsg::ItemStarted(_)
@@ -2141,6 +2153,28 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_review_status_line(
             "<< Code review finished >>".to_string(),
         ));
+        self.request_redraw();
+    }
+
+    fn on_entered_plan_mode(&mut self, ev: EnteredPlanModeEvent) {
+        // Enter plan mode and show a status banner
+        self.is_plan_mode = true;
+        self.plan_file_path = Some(ev.plan_file_path.clone());
+        let banner = format!(">> Plan mode started. Plan file: {} <<", ev.plan_file_path);
+        self.add_to_history(history_cell::new_review_status_line(banner));
+        self.request_redraw();
+    }
+
+    fn on_exited_plan_mode(&mut self, ev: ExitedPlanModeEvent) {
+        // Exit plan mode and show the final plan
+        self.is_plan_mode = false;
+        self.plan_file_path = None;
+        // Show exit banner with plan summary
+        let banner = format!(
+            "<< Plan mode finished. Plan saved to: {} >>",
+            ev.plan_file_path
+        );
+        self.add_to_history(history_cell::new_review_status_line(banner));
         self.request_redraw();
     }
 

@@ -40,6 +40,9 @@ pub const READ_MCP_RESOURCE_TOOL_NAME: &str = "read_mcp_resource";
 pub const TODO_WRITE_TOOL_NAME: &str = "todo_write";
 pub const BASH_OUTPUT_TOOL_NAME: &str = "bash_output";
 pub const KILL_SHELL_TOOL_NAME: &str = "kill_shell";
+pub const ENTER_PLAN_MODE_TOOL_NAME: &str = "enter_plan_mode";
+pub const EXIT_PLAN_MODE_TOOL_NAME: &str = "exit_plan_mode";
+pub const ASK_USER_QUESTION_TOOL_NAME: &str = "ask_user_question";
 
 pub trait ApplyToolConfig {
     fn apply_tool_config(
@@ -84,6 +87,20 @@ impl ApplyToolConfig for &str {
             .replace("{glob_tool}", GLOB_TOOL_NAME)
             .replace("{grep_tool}", GREP_FILES_TOOL_NAME)
             .replace("{read_tool}", READ_FILE_TOOL_NAME)
+            // Plan mode tool placeholders
+            .replace("{enter_plan_mode_tool}", ENTER_PLAN_MODE_TOOL_NAME)
+            .replace("{exit_plan_mode_tool}", EXIT_PLAN_MODE_TOOL_NAME)
+            .replace("{ask_user_question_tool}", ASK_USER_QUESTION_TOOL_NAME)
+    }
+}
+
+impl ApplyToolConfig for String {
+    fn apply_tool_config(
+        &self,
+        edit_tool: Option<EditToolType>,
+        shell_tool: ConfigShellToolType,
+    ) -> String {
+        self.as_str().apply_tool_config(edit_tool, shell_tool)
     }
 }
 
@@ -1533,6 +1550,39 @@ fn sanitize_json_schema(value: &mut JsonValue) {
     }
 }
 
+/// Creates the EnterPlanMode tool.
+/// This tool transitions the session into plan mode for complex tasks
+/// requiring exploration and design.
+fn create_enter_plan_mode_tool() -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: ENTER_PLAN_MODE_TOOL_NAME.to_string(),
+        description:
+            "Requests permission to enter plan mode for complex tasks requiring exploration and design."
+                .to_string(),
+        strict: true,
+        parameters: JsonSchema::Object {
+            properties: BTreeMap::new(),
+            required: Some(vec![]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+/// Creates the ExitPlanMode tool.
+/// This tool exits plan mode and presents the plan for user approval.
+fn create_exit_plan_mode_tool() -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: EXIT_PLAN_MODE_TOOL_NAME.to_string(),
+        description: "Prompts the user to exit plan mode and start coding.".to_string(),
+        strict: true,
+        parameters: JsonSchema::Object {
+            properties: BTreeMap::new(),
+            required: Some(vec![]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 /// Builds the tool registry builder while collecting tool specs for later serialization.
 pub(crate) fn build_specs(
     config: &ToolsConfig,
@@ -1633,6 +1683,22 @@ pub(crate) fn build_specs(
 
     builder.push_spec(TODO_WRITE_TOOL.clone());
     builder.register_handler(TODO_WRITE_TOOL_NAME, todo_write_handler);
+
+    // Plan mode tools (only for main session, not sub-agents)
+    // Sub-agent filtering will remove these automatically via BLOCKED_FROM_SUBAGENTS
+    {
+        use crate::tools::handlers::EnterPlanModeHandler;
+        use crate::tools::handlers::ExitPlanModeHandler;
+
+        let enter_plan_mode_handler = Arc::new(EnterPlanModeHandler);
+        let exit_plan_mode_handler = Arc::new(ExitPlanModeHandler);
+
+        builder.push_spec(create_enter_plan_mode_tool());
+        builder.register_handler(ENTER_PLAN_MODE_TOOL_NAME, enter_plan_mode_handler);
+
+        builder.push_spec(create_exit_plan_mode_tool());
+        builder.register_handler(EXIT_PLAN_MODE_TOOL_NAME, exit_plan_mode_handler);
+    }
 
     // Edit tools based on edit_tool_type
     if let Some(edit_tool_type) = &config.edit_tool_type {
@@ -1879,6 +1945,8 @@ mod tests {
             create_read_mcp_resource_tool(),
             create_glob_tool(),
             TODO_WRITE_TOOL.clone(),
+            create_enter_plan_mode_tool(),
+            create_exit_plan_mode_tool(),
             create_apply_patch_freeform_tool(),
             ToolSpec::WebSearch {},
             create_view_image_tool(),
@@ -1925,6 +1993,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "apply_patch",
                 "view_image",
             ],
@@ -1943,6 +2013,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "apply_patch",
                 "view_image",
             ],
@@ -1964,6 +2036,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -1986,6 +2060,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2006,6 +2082,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "view_image",
             ],
         );
@@ -2023,6 +2101,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "apply_patch",
                 "view_image",
             ],
@@ -2042,6 +2122,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "view_image",
             ],
         );
@@ -2059,6 +2141,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "apply_patch",
                 "view_image",
             ],
@@ -2078,6 +2162,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "apply_patch",
                 "view_image",
             ],
@@ -2100,6 +2186,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "web_search",
                 "view_image",
             ],
@@ -2121,6 +2209,8 @@ mod tests {
                 "read_mcp_resource",
                 "glob",
                 "todo_write",
+                "enter_plan_mode",
+                "exit_plan_mode",
                 "write_file",
                 "edit_file",
                 "view_image",

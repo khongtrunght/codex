@@ -677,6 +677,12 @@ pub enum EventMsg {
     /// Exited review mode with an optional final result to apply.
     ExitedReviewMode(ExitedReviewModeEvent),
 
+    /// Entered plan mode for exploration and design.
+    EnteredPlanMode(crate::permission_mode::EnteredPlanModeEvent),
+
+    /// Exited plan mode with the final plan.
+    ExitedPlanMode(crate::permission_mode::ExitedPlanModeEvent),
+
     RawResponseItem(RawResponseItemEvent),
 
     ItemStarted(ItemStartedEvent),

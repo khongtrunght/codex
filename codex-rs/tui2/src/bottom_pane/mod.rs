@@ -51,6 +51,7 @@ pub(crate) enum CancellationEvent {
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 use codex_protocol::custom_prompts::CustomPrompt;
+use codex_protocol::permission_mode::PermissionMode;
 use codex_protocol::todo_tool::StepStatus;
 use codex_protocol::todo_tool::TodoWriteArgs;
 use ratatui::style::Stylize;
@@ -146,6 +147,11 @@ impl BottomPane {
 
     pub fn set_skills(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.composer.set_skill_mentions(skills);
+        self.request_redraw();
+    }
+
+    pub fn set_permission_mode(&mut self, mode: PermissionMode) {
+        self.composer.set_permission_mode(mode);
         self.request_redraw();
     }
 

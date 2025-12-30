@@ -2,6 +2,8 @@ pub mod apply_patch;
 mod bash;
 mod bash_output;
 mod edit_file;
+mod enter_plan_mode;
+mod exit_plan_mode;
 mod glob;
 mod grep_files;
 mod kill_shell;
@@ -18,6 +20,8 @@ mod view_image;
 mod write_file;
 
 pub use todo_write::TODO_WRITE_TOOL;
+pub use enter_plan_mode::EnterPlanModeHandler;
+pub use exit_plan_mode::ExitPlanModeHandler;
 
 pub use apply_patch::ApplyPatchHandler;
 pub use bash::BashHandler;

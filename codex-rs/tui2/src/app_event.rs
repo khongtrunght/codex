@@ -6,6 +6,7 @@ use codex_core::protocol::Event;
 use codex_core::protocol::RateLimitSnapshot;
 use codex_file_search::FileMatch;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::permission_mode::PermissionMode;
 
 use crate::bottom_pane::ApprovalRequest;
 use crate::history_cell::HistoryCell;
@@ -116,6 +117,13 @@ pub(crate) enum AppEvent {
 
     /// Update the current sandbox policy in the running app and widget.
     UpdateSandboxPolicy(SandboxPolicy),
+
+    /// Update the current permission mode in the running app and widget.
+    /// This is the unified permission mode from the permission context.
+    UpdatePermissionMode(PermissionMode),
+
+    /// Cycle to the next permission mode (triggered by shift+tab).
+    CyclePermissionMode,
 
     /// Update whether the full access warning prompt has been acknowledged.
     UpdateFullAccessWarningAcknowledged(bool),

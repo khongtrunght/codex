@@ -986,6 +986,88 @@ impl Session {
         self.conversation_id
     }
 
+    /// Check if the session is currently in plan mode.
+    pub(crate) async fn is_planning(&self) -> bool {
+        let state = self.state.lock().await;
+        state.is_planning()
+    }
+
+    /// Check if the session has exited plan mode previously.
+    pub(crate) async fn has_exited_plan_mode(&self) -> bool {
+        let state = self.state.lock().await;
+        state.has_exited_plan_mode()
+    }
+
+    /// Check if a given path is the plan file for the current session.
+    /// Returns true only if in plan mode and the path matches the plan file.
+    pub(crate) async fn is_plan_file_path(&self, path: &std::path::Path) -> bool {
+        let state = self.state.lock().await;
+        crate::plan_file::is_plan_file_path(path, &state)
+    }
+
+    // Unified Permission Context methods
+
+    /// Enter plan mode with the given plan file path (unified API).
+    pub(crate) async fn enter_plan_mode_unified(&self, plan_file_path: String) {
+        let mut state = self.state.lock().await;
+        state.enter_plan_mode(plan_file_path);
+    }
+
+    /// Exit plan mode and return to default mode (unified API).
+    pub(crate) async fn exit_plan_mode_unified(&self) {
+        let mut state = self.state.lock().await;
+        state.exit_plan_mode();
+    }
+
+    /// Get the current permission mode.
+    pub(crate) async fn permission_mode(
+        &self,
+    ) -> codex_protocol::permission_mode::PermissionMode {
+        let state = self.state.lock().await;
+        state.permission_mode().clone()
+    }
+
+    /// Set the permission mode.
+    pub(crate) async fn set_permission_mode(
+        &self,
+        mode: codex_protocol::permission_mode::PermissionMode,
+    ) {
+        let mut state = self.state.lock().await;
+        state.set_permission_mode(mode);
+    }
+
+    /// Check if in plan mode (unified check via permission context).
+    pub(crate) async fn is_in_plan_mode(&self) -> bool {
+        let state = self.state.lock().await;
+        state.is_in_plan_mode()
+    }
+
+    /// Get the plan file path from the permission context.
+    pub(crate) async fn get_plan_file_path_unified(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        state.get_plan_file_path().map(|s| s.to_string())
+    }
+
+    /// Get a clone of the permission context.
+    pub(crate) async fn get_permission_context(
+        &self,
+    ) -> codex_protocol::permission_context::PermissionContext {
+        let state = self.state.lock().await;
+        state.permission_context().clone()
+    }
+
+    /// Check if bypass permissions mode is available.
+    pub(crate) async fn is_bypass_available(&self) -> bool {
+        let state = self.state.lock().await;
+        state.is_bypass_available()
+    }
+
+    /// Set whether bypass permissions mode is available.
+    pub(crate) async fn set_bypass_available(&self, available: bool) {
+        let mut state = self.state.lock().await;
+        state.set_bypass_available(available);
+    }
+
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
         let turn_context = self.new_default_turn().await;
         match conversation_history {
