@@ -134,6 +134,7 @@ use crate::skills::build_skill_injections;
 use crate::state::ActiveTurn;
 use crate::state::SessionServices;
 use crate::state::SessionState;
+use codex_protocol::permission_context::PermissionContext;
 use crate::tasks::GhostSnapshotTask;
 use crate::tasks::ReviewTask;
 use crate::tasks::SessionTask;
@@ -500,6 +501,8 @@ pub(crate) struct TurnContext {
     pub(crate) user_instructions: Option<String>,
     pub(crate) approval_policy: AskForApproval,
     pub(crate) sandbox_policy: SandboxPolicy,
+    /// Permission context for unified permission checking.
+    pub(crate) permission_context: PermissionContext,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
@@ -650,6 +653,7 @@ impl Session {
         model_family: ModelFamily,
         conversation_id: ConversationId,
         sub_id: String,
+        permission_context: PermissionContext,
     ) -> TurnContext {
         let otel_manager = otel_manager.clone().with_model(
             session_configuration.model.as_str(),
@@ -701,6 +705,7 @@ impl Session {
             user_instructions: session_configuration.user_instructions.clone(),
             approval_policy: session_configuration.approval_policy.value(),
             sandbox_policy: session_configuration.sandbox_policy.get().clone(),
+            permission_context,
             shell_environment_policy: per_turn_config.shell_environment_policy.clone(),
             tools_config,
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),
@@ -1219,6 +1224,13 @@ impl Session {
             .models_manager
             .construct_model_family(session_configuration.model.as_str(), &per_turn_config)
             .await;
+
+        // Get permission context from session state
+        let permission_context = {
+            let state = self.state.lock().await;
+            state.permission_context().clone()
+        };
+
         let mut turn_context: TurnContext = Self::make_turn_context(
             Some(Arc::clone(&self.services.auth_manager)),
             &self.services.otel_manager,
@@ -1228,6 +1240,7 @@ impl Session {
             model_family,
             self.conversation_id,
             sub_id,
+            permission_context,
         );
         if let Some(final_schema) = final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
@@ -2509,6 +2522,7 @@ async fn spawn_review_thread(
         compact_prompt: parent_turn_context.compact_prompt.clone(),
         approval_policy: parent_turn_context.approval_policy,
         sandbox_policy: parent_turn_context.sandbox_policy.clone(),
+        permission_context: parent_turn_context.permission_context.clone(),
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
         cwd: parent_turn_context.cwd.clone(),
         final_output_json_schema: None,
@@ -3525,6 +3539,7 @@ mod tests {
             model_family,
             conversation_id,
             "turn_id".to_string(),
+            PermissionContext::default(),
         );
 
         let session = Session {
@@ -3618,6 +3633,7 @@ mod tests {
             model_family,
             conversation_id,
             "turn_id".to_string(),
+            PermissionContext::default(),
         ));
 
         let session = Arc::new(Session {

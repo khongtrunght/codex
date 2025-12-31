@@ -131,7 +131,7 @@ impl PermissionContext {
 
         rules
             .values()
-            .flat_map(|v| v.iter().map(|s| s.as_str()))
+            .flat_map(|v| v.iter().map(String::as_str))
             .collect()
     }
 
