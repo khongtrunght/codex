@@ -122,6 +122,8 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
         "read_mcp_resource",
         "glob",
         "todo_write",
+        "enter_plan_mode",
+        "exit_plan_mode",
         "apply_patch",
         "view_image",
         "task",
