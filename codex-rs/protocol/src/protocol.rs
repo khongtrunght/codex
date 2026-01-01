@@ -42,6 +42,7 @@ pub use crate::approvals::ApplyPatchApprovalRequestEvent;
 pub use crate::approvals::ElicitationAction;
 pub use crate::approvals::ExecApprovalRequestEvent;
 pub use crate::approvals::ExecPolicyAmendment;
+pub use crate::approvals::ToolApprovalRequestEvent;
 
 /// Open/close tags for special user-input blocks. Used across crates to avoid
 /// duplicated hardcoded strings.
@@ -625,6 +626,9 @@ pub enum EventMsg {
     ElicitationRequest(ElicitationRequestEvent),
 
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
+
+    /// Generic tool approval request from permission system.
+    ToolApprovalRequest(ToolApprovalRequestEvent),
 
     /// Notification advising the user that something they are using has been
     /// deprecated and should be phased out.

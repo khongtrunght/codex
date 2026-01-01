@@ -134,7 +134,6 @@ use crate::skills::build_skill_injections;
 use crate::state::ActiveTurn;
 use crate::state::SessionServices;
 use crate::state::SessionState;
-use codex_protocol::permission_context::PermissionContext;
 use crate::tasks::GhostSnapshotTask;
 use crate::tasks::ReviewTask;
 use crate::tasks::SessionTask;
@@ -501,8 +500,6 @@ pub(crate) struct TurnContext {
     pub(crate) user_instructions: Option<String>,
     pub(crate) approval_policy: AskForApproval,
     pub(crate) sandbox_policy: SandboxPolicy,
-    /// Permission context for unified permission checking.
-    pub(crate) permission_context: PermissionContext,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
@@ -643,7 +640,6 @@ impl Session {
         per_turn_config
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn make_turn_context(
         auth_manager: Option<Arc<AuthManager>>,
         otel_manager: &OtelManager,
@@ -653,7 +649,6 @@ impl Session {
         model_family: ModelFamily,
         conversation_id: ConversationId,
         sub_id: String,
-        permission_context: PermissionContext,
     ) -> TurnContext {
         let otel_manager = otel_manager.clone().with_model(
             session_configuration.model.as_str(),
@@ -705,7 +700,6 @@ impl Session {
             user_instructions: session_configuration.user_instructions.clone(),
             approval_policy: session_configuration.approval_policy.value(),
             sandbox_policy: session_configuration.sandbox_policy.get().clone(),
-            permission_context,
             shell_environment_policy: per_turn_config.shell_environment_policy.clone(),
             tools_config,
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),
@@ -1225,12 +1219,6 @@ impl Session {
             .construct_model_family(session_configuration.model.as_str(), &per_turn_config)
             .await;
 
-        // Get permission context from session state
-        let permission_context = {
-            let state = self.state.lock().await;
-            state.permission_context().clone()
-        };
-
         let mut turn_context: TurnContext = Self::make_turn_context(
             Some(Arc::clone(&self.services.auth_manager)),
             &self.services.otel_manager,
@@ -1240,7 +1228,6 @@ impl Session {
             model_family,
             self.conversation_id,
             sub_id,
-            permission_context,
         );
         if let Some(final_schema) = final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
@@ -1477,6 +1464,49 @@ impl Session {
         });
         self.send_event(turn_context, event).await;
         rx_approve
+    }
+
+    /// Request user approval for a generic tool operation.
+    ///
+    /// This is used by the permission system when check_permission() returns Ask
+    /// for tools that don't have specialized approval flows.
+    pub async fn request_tool_approval(
+        &self,
+        turn_context: &TurnContext,
+        call_id: String,
+        tool_name: String,
+        input: String,
+        reason: Option<String>,
+    ) -> ReviewDecision {
+        use crate::protocol::ToolApprovalRequestEvent;
+
+        let sub_id = turn_context.sub_id.clone();
+        // Add the tx_approve callback to the map before sending the request.
+        let (tx_approve, rx_approve) = oneshot::channel();
+        let event_id = sub_id.clone();
+        let prev_entry = {
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.insert_pending_approval(sub_id, tx_approve)
+                }
+                None => None,
+            }
+        };
+        if prev_entry.is_some() {
+            warn!("Overwriting existing pending approval for sub_id: {event_id}");
+        }
+
+        let event = EventMsg::ToolApprovalRequest(ToolApprovalRequestEvent {
+            call_id,
+            turn_id: turn_context.sub_id.clone(),
+            tool_name,
+            input,
+            reason,
+        });
+        self.send_event(turn_context, event).await;
+        rx_approve.await.unwrap_or_default()
     }
 
     pub async fn notify_approval(&self, sub_id: &str, decision: ReviewDecision) {
@@ -2522,7 +2552,6 @@ async fn spawn_review_thread(
         compact_prompt: parent_turn_context.compact_prompt.clone(),
         approval_policy: parent_turn_context.approval_policy,
         sandbox_policy: parent_turn_context.sandbox_policy.clone(),
-        permission_context: parent_turn_context.permission_context.clone(),
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
         cwd: parent_turn_context.cwd.clone(),
         final_output_json_schema: None,
@@ -3539,7 +3568,6 @@ mod tests {
             model_family,
             conversation_id,
             "turn_id".to_string(),
-            PermissionContext::default(),
         );
 
         let session = Session {
@@ -3633,7 +3661,6 @@ mod tests {
             model_family,
             conversation_id,
             "turn_id".to_string(),
-            PermissionContext::default(),
         ));
 
         let session = Arc::new(Session {

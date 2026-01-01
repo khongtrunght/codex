@@ -5,10 +5,12 @@
 //! approach before making any changes.
 
 use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
 use codex_protocol::permission_mode::EnteredPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
 
 use crate::function_tool::FunctionCallError;
+use crate::permissions::ToolPermissionResult;
 use crate::plan_file::resolve_plan_file_path;
 use crate::plan_mode_attachment::generate_plan_mode_attachment;
 use crate::tools::context::ToolInvocation;
@@ -23,6 +25,15 @@ pub struct EnterPlanModeHandler;
 impl ToolHandler for EnterPlanModeHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    async fn check_permissions(
+        &self,
+        _invocation: &ToolInvocation,
+        _permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // EnterPlanMode is handled by mode check - passthrough to allow existing approval flow
+        ToolPermissionResult::passthrough()
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

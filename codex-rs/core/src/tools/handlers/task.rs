@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
+use codex_protocol::user_input::UserInput;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -19,6 +21,7 @@ use crate::codex::TurnContext;
 use crate::codex_delegate::run_codex_conversation_one_shot;
 use crate::config::Config;
 use crate::function_tool::FunctionCallError;
+use crate::permissions::ToolPermissionResult;
 use crate::protocol::EventMsg;
 use crate::protocol::SubAgentBeginEvent;
 use crate::protocol::SubAgentEndEvent;
@@ -30,7 +33,6 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
-use codex_protocol::user_input::UserInput;
 
 /// Handler for the `task` tool that spawns sub-agents.
 pub struct TaskHandler;
@@ -55,6 +57,16 @@ struct TaskParams {
 impl ToolHandler for TaskHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    async fn check_permissions(
+        &self,
+        _invocation: &ToolInvocation,
+        _permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // Task spawning follows parent's permission context
+        // Subagents get DontAsk mode automatically through handle_dont_ask_mode
+        ToolPermissionResult::passthrough()
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

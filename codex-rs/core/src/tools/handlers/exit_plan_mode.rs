@@ -4,10 +4,12 @@
 //! The plan is read from the plan file that was written during plan mode.
 
 use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
 use codex_protocol::permission_mode::ExitedPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
 
 use crate::function_tool::FunctionCallError;
+use crate::permissions::ToolPermissionResult;
 use crate::plan_file::extract_plan_from_file;
 use crate::plan_file::resolve_plan_file_path;
 use crate::tools::context::ToolInvocation;
@@ -22,6 +24,15 @@ pub struct ExitPlanModeHandler;
 impl ToolHandler for ExitPlanModeHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    async fn check_permissions(
+        &self,
+        _invocation: &ToolInvocation,
+        _permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // ExitPlanMode is handled by mode check - passthrough to allow existing approval flow
+        ToolPermissionResult::passthrough()
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

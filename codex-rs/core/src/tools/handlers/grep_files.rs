@@ -2,11 +2,14 @@ use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
 use serde::Deserialize;
 use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::function_tool::FunctionCallError;
+use crate::permissions::evaluate_file_read_permission;
+use crate::permissions::ToolPermissionResult;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -38,6 +41,26 @@ struct GrepFilesArgs {
 impl ToolHandler for GrepFilesHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    async fn check_permissions(
+        &self,
+        invocation: &ToolInvocation,
+        permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // Extract path from arguments (defaults to cwd if not specified)
+        let path = match &invocation.payload {
+            ToolPayload::Function { arguments } => {
+                match serde_json::from_str::<GrepFilesArgs>(arguments) {
+                    Ok(args) => args.path.unwrap_or_else(|| ".".to_string()),
+                    Err(_) => return ToolPermissionResult::passthrough(),
+                }
+            }
+            _ => return ToolPermissionResult::passthrough(),
+        };
+
+        // Evaluate permission using file read helper
+        evaluate_file_read_permission(&path, permission_context, Some(&invocation.turn.cwd))
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

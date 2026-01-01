@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
+
 use crate::apply_patch;
-use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
+use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::client_common::tools::FreeformTool;
 use crate::client_common::tools::FreeformToolFormat;
 use crate::client_common::tools::ResponsesApiTool;
@@ -11,6 +14,7 @@ use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
+use crate::permissions::ToolPermissionResult;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -25,7 +29,6 @@ use crate::tools::runtimes::apply_patch::ApplyPatchRuntime;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::spec::ApplyPatchToolArgs;
 use crate::tools::spec::JsonSchema;
-use async_trait::async_trait;
 
 pub struct ApplyPatchHandler;
 
@@ -42,6 +45,16 @@ impl ToolHandler for ApplyPatchHandler {
             payload,
             ToolPayload::Function { .. } | ToolPayload::Custom { .. }
         )
+    }
+
+    async fn check_permissions(
+        &self,
+        _invocation: &ToolInvocation,
+        _permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // ApplyPatch has complex file extraction logic - passthrough to existing approval flow
+        // The approval orchestrator will handle the permission check for affected files
+        ToolPermissionResult::passthrough()
     }
 
     async fn is_mutating(&self, _invocation: &ToolInvocation) -> bool {

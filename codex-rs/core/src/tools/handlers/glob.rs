@@ -1,13 +1,17 @@
 //! Glob tool handler - finds files matching glob patterns.
 
-use async_trait::async_trait;
-use ignore::WalkBuilder;
-use ignore::overrides::OverrideBuilder;
-use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
+use ignore::overrides::OverrideBuilder;
+use ignore::WalkBuilder;
+use serde::Deserialize;
+
 use crate::function_tool::FunctionCallError;
+use crate::permissions::evaluate_file_read_permission;
+use crate::permissions::ToolPermissionResult;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -29,6 +33,26 @@ pub struct GlobHandler;
 impl ToolHandler for GlobHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    async fn check_permissions(
+        &self,
+        invocation: &ToolInvocation,
+        permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // Extract path from arguments (defaults to "." if not specified)
+        let path = match &invocation.payload {
+            ToolPayload::Function { arguments } => {
+                match serde_json::from_str::<GlobArgs>(arguments) {
+                    Ok(args) => args.path.unwrap_or_else(|| ".".to_string()),
+                    Err(_) => return ToolPermissionResult::passthrough(),
+                }
+            }
+            _ => return ToolPermissionResult::passthrough(),
+        };
+
+        // Evaluate permission using file read helper
+        evaluate_file_read_permission(&path, permission_context, Some(&invocation.turn.cwd))
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

@@ -5,11 +5,14 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
 use codex_utils_string::take_bytes_at_char_boundary;
 use serde::Deserialize;
 use tokio::fs;
 
 use crate::function_tool::FunctionCallError;
+use crate::permissions::evaluate_file_read_permission;
+use crate::permissions::ToolPermissionResult;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -48,6 +51,26 @@ struct ListDirArgs {
 impl ToolHandler for ListDirHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    async fn check_permissions(
+        &self,
+        invocation: &ToolInvocation,
+        permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // Extract dir_path from arguments
+        let dir_path = match &invocation.payload {
+            ToolPayload::Function { arguments } => {
+                match serde_json::from_str::<ListDirArgs>(arguments) {
+                    Ok(args) => args.dir_path,
+                    Err(_) => return ToolPermissionResult::passthrough(),
+                }
+            }
+            _ => return ToolPermissionResult::passthrough(),
+        };
+
+        // Evaluate permission using file read helper
+        evaluate_file_read_permission(&dir_path, permission_context, Some(&invocation.turn.cwd))
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

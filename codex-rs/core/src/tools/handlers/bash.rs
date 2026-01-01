@@ -3,15 +3,19 @@
 //! Foreground mode: Uses ShellHandler::run_exec_like() for synchronous execution
 //! Background mode: Uses UnifiedExecSessionManager for PTY session with process ID
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use codex_protocol::models::BashToolCallParams;
-use std::sync::Arc;
+use codex_protocol::permission_context::PermissionContext;
 
 use crate::codex::TurnContext;
 use crate::exec::ExecParams;
 use crate::exec_env::create_env;
 use crate::function_tool::FunctionCallError;
 use crate::is_safe_command::is_known_safe_command;
+use crate::permissions::evaluate_bash_permission;
+use crate::permissions::ToolPermissionResult;
 use crate::sandboxing::SandboxPermissions;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -128,6 +132,29 @@ impl ToolHandler for BashHandler {
 
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
+    }
+
+    async fn check_permissions(
+        &self,
+        invocation: &ToolInvocation,
+        permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // Extract command from arguments
+        let ToolPayload::Function { arguments } = &invocation.payload else {
+            return ToolPermissionResult::passthrough();
+        };
+
+        let params: BashToolCallParams = match serde_json::from_str(arguments) {
+            Ok(p) => p,
+            Err(_) => return ToolPermissionResult::passthrough(),
+        };
+
+        // Get the shell to derive the actual command args
+        let shell = invocation.session.user_shell();
+        let command_args = shell.derive_exec_args(&params.command, true);
+
+        // Evaluate permission using bash helper
+        evaluate_bash_permission(&params.command, &command_args, permission_context)
     }
 
     async fn is_mutating(&self, invocation: &ToolInvocation) -> bool {

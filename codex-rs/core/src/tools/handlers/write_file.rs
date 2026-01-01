@@ -2,16 +2,18 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use codex_protocol::permission_context::PermissionContext;
 use serde::Deserialize;
 use tokio::fs;
-
-use std::time::Duration;
 
 use crate::exec::ExecToolCallOutput;
 use crate::exec::StreamOutput;
 use crate::function_tool::FunctionCallError;
+use crate::permissions::evaluate_file_write_permission;
+use crate::permissions::ToolPermissionResult;
 use crate::protocol::FileChange;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -33,6 +35,26 @@ pub struct WriteFileHandler;
 impl ToolHandler for WriteFileHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
+    }
+
+    async fn check_permissions(
+        &self,
+        invocation: &ToolInvocation,
+        permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // Extract file_path from arguments
+        let file_path = match &invocation.payload {
+            ToolPayload::Function { arguments } => {
+                match serde_json::from_str::<WriteFileArgs>(arguments) {
+                    Ok(args) => args.file_path,
+                    Err(_) => return ToolPermissionResult::passthrough(),
+                }
+            }
+            _ => return ToolPermissionResult::passthrough(),
+        };
+
+        // Evaluate permission using file write helper
+        evaluate_file_write_permission(&file_path, permission_context, "Write")
     }
 
     /// Determines if this write operation should wait for the tool gate.

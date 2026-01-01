@@ -4,11 +4,16 @@ use std::time::Duration;
 
 use crate::client_common::tools::ToolSpec;
 use crate::function_tool::FunctionCallError;
+use crate::permissions::PermissionBehavior;
+use crate::permissions::ToolPermissionResult;
+use crate::permissions::evaluate_mode_permission;
+use crate::permissions::handle_dont_ask_mode;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use async_trait::async_trait;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::permission_context::PermissionContext;
 use codex_utils_readiness::Readiness;
 use tracing::warn;
 
@@ -32,6 +37,35 @@ pub trait ToolHandler: Send + Sync {
 
     async fn is_mutating(&self, _invocation: &ToolInvocation) -> bool {
         false
+    }
+
+    /// Tool-specific permission check (Claude Code pattern).
+    ///
+    /// Each tool implements its own permission logic, extracting relevant input
+    /// from the invocation payload. This is the only permission check method -
+    /// tools are responsible for:
+    /// 1. Extracting their input (file_path, command, etc.)
+    /// 2. Checking against rules if needed
+    /// 3. Returning Allow/Deny/Ask/Passthrough
+    ///
+    /// # Arguments
+    ///
+    /// * `invocation` - The tool invocation context (contains parsed payload)
+    /// * `permission_context` - Current permission context (mode, rules, etc.)
+    ///
+    /// # Returns
+    ///
+    /// * `Allow` - Proceed directly to execution
+    /// * `Deny` - Return error immediately
+    /// * `Ask` - Need user approval (will be converted to Deny in DontAsk mode)
+    /// * `Passthrough` - Continue to next check (default behavior)
+    async fn check_permissions(
+        &self,
+        _invocation: &ToolInvocation,
+        _permission_context: &PermissionContext,
+    ) -> ToolPermissionResult {
+        // Default: passthrough (tool doesn't implement custom permission logic)
+        ToolPermissionResult::passthrough()
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError>;
@@ -98,6 +132,44 @@ impl ToolRegistry {
             return Err(FunctionCallError::Fatal(message));
         }
 
+        // Permission check: Chained checks following Claude Code pattern
+        // 1. Mode-based checks (BypassPermissions, AcceptEdits, etc.)
+        // 2. Tool-specific checks (handler.check_permissions - extracts own input)
+        // 3. DontAsk mode handling (converts Ask to Deny for subagents)
+        let permission_context = invocation.session.get_permission_context().await;
+
+        // Chain of permission checks - first non-passthrough result wins
+        let perm_result = self
+            .evaluate_permission_chain(&handler, &invocation, &permission_context, &tool_name)
+            .await;
+
+        // Handle the final permission result
+        match perm_result.behavior {
+            PermissionBehavior::Deny => {
+                let message = perm_result
+                    .message
+                    .unwrap_or_else(|| format!("Permission denied for tool: {tool_name}"));
+                otel.tool_result(
+                    tool_name.as_ref(),
+                    &call_id_owned,
+                    log_payload.as_ref(),
+                    Duration::ZERO,
+                    false,
+                    &message,
+                );
+                return Err(FunctionCallError::Denied(message));
+            }
+            PermissionBehavior::Allow => {
+                // Proceed directly to execution
+            }
+            PermissionBehavior::Ask | PermissionBehavior::Passthrough => {
+                // Fall through to existing tool-specific approval handling
+                // This maintains backward compatibility with existing tests and approval flows.
+                // The individual tool handlers (shell, apply_patch, etc.) will handle
+                // their own approval logic via ToolOrchestrator or direct approval requests.
+            }
+        }
+
         let output_cell = tokio::sync::Mutex::new(None);
 
         let result = otel
@@ -140,6 +212,41 @@ impl ToolRegistry {
             }
             Err(err) => Err(err),
         }
+    }
+
+    /// Evaluate the permission chain following Claude Code pattern.
+    ///
+    /// The chain is evaluated in order, and the first non-passthrough result wins:
+    /// 1. Mode-based checks (BypassPermissions, AcceptEdits)
+    /// 2. Tool-specific checks (handler.check_permissions - tool extracts its own input)
+    /// 3. DontAsk mode handling (converts Ask to Deny for subagents)
+    ///
+    /// Note: Rule-based checks are handled WITHIN each tool's check_permissions().
+    /// This is the Claude Code pattern - each tool knows its input structure.
+    async fn evaluate_permission_chain(
+        &self,
+        handler: &Arc<dyn ToolHandler>,
+        invocation: &ToolInvocation,
+        permission_context: &PermissionContext,
+        tool_name: &str,
+    ) -> ToolPermissionResult {
+        // 1. Mode-based checks (BypassPermissions, AcceptEdits)
+        let mode_result = evaluate_mode_permission(permission_context, tool_name);
+        if mode_result.stops_chain() {
+            return handle_dont_ask_mode(permission_context, tool_name, mode_result);
+        }
+
+        // 2. Tool-specific checks (includes rule matching for that tool's input)
+        let tool_result = handler
+            .check_permissions(invocation, permission_context)
+            .await;
+        if tool_result.stops_chain() {
+            return handle_dont_ask_mode(permission_context, tool_name, tool_result);
+        }
+
+        // 3. All checks passed through - default to passthrough
+        // This allows existing tool-specific approval flows to continue
+        ToolPermissionResult::passthrough()
     }
 }
 
