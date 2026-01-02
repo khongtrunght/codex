@@ -1,25 +1,23 @@
 //! Write tool handler - writes content to files.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::Duration;
 
 use async_trait::async_trait;
-use codex_protocol::permission_context::PermissionContext;
 use serde::Deserialize;
 use tokio::fs;
+
+use std::time::Duration;
 
 use crate::exec::ExecToolCallOutput;
 use crate::exec::StreamOutput;
 use crate::function_tool::FunctionCallError;
-use crate::permissions::evaluate_file_write_permission;
-use crate::permissions::ToolPermissionResult;
 use crate::protocol::FileChange;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
+use crate::tools::plan_mode_restriction::check_plan_mode_write;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
@@ -35,66 +33,6 @@ pub struct WriteFileHandler;
 impl ToolHandler for WriteFileHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
-    }
-
-    async fn check_permissions(
-        &self,
-        invocation: &ToolInvocation,
-        permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // Extract file_path from arguments
-        let file_path = match &invocation.payload {
-            ToolPayload::Function { arguments } => {
-                match serde_json::from_str::<WriteFileArgs>(arguments) {
-                    Ok(args) => args.file_path,
-                    Err(_) => return ToolPermissionResult::passthrough(),
-                }
-            }
-            _ => return ToolPermissionResult::passthrough(),
-        };
-
-        // Evaluate permission using file write helper
-        evaluate_file_write_permission(&file_path, permission_context, "Write")
-    }
-
-    /// Determines if this write operation should wait for the tool gate.
-    ///
-    /// In plan mode:
-    /// - Plan file writes: auto-allowed (returns false)
-    /// - Other file writes: requires gate (returns true)
-    ///
-    /// Outside plan mode:
-    /// - All writes are auto-allowed (returns false) - preserves existing behavior
-    async fn is_mutating(&self, invocation: &ToolInvocation) -> bool {
-        // Check if we're in plan mode
-        if !invocation.session.is_planning().await {
-            // Not in plan mode - preserve existing behavior (no gate wait)
-            return false;
-        }
-
-        // In plan mode - check if writing to plan file
-        let file_path = match &invocation.payload {
-            ToolPayload::Function { arguments } => serde_json::from_str::<WriteFileArgs>(arguments)
-                .ok()
-                .map(|args| {
-                    let path = PathBuf::from(&args.file_path);
-                    invocation
-                        .turn
-                        .resolve_path(Some(path.to_string_lossy().to_string()))
-                }),
-            _ => None,
-        };
-
-        if let Some(path) = file_path {
-            // Check if this is the plan file for the current session
-            if invocation.session.is_plan_file_path(&path).await {
-                // Writing to plan file - auto-allow
-                return false;
-            }
-        }
-
-        // In plan mode but writing to non-plan file - wait for approval
-        true
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
@@ -131,6 +69,11 @@ impl ToolHandler for WriteFileHandler {
 
         // Resolve the path relative to turn cwd
         let path = turn.resolve_path(Some(file_path.to_string()));
+
+        // Check plan mode write restriction
+        if let Err(msg) = check_plan_mode_write(&session, &path).await {
+            return Err(FunctionCallError::RespondToModel(msg));
+        }
 
         // Check if file exists - if it does, require it to have been read first
         // Also capture original content for diff display

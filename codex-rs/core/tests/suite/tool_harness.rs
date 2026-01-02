@@ -122,7 +122,7 @@ async fn todo_write_tool_emits_plan_update_event() -> anyhow::Result<()> {
     let call_id = "plan-tool-call";
     let plan_args = json!({
         "explanation": "Tool harness check",
-        "plan": [
+        "todos": [
             {"step": "Inspect workspace", "status": "in_progress"},
             {"step": "Report results", "status": "pending"},
         ],

@@ -1,12 +1,8 @@
 use async_trait::async_trait;
-use codex_protocol::permission_context::PermissionContext;
-use codex_protocol::user_input::UserInput;
 use serde::Deserialize;
 use tokio::fs;
 
 use crate::function_tool::FunctionCallError;
-use crate::permissions::evaluate_file_read_permission;
-use crate::permissions::ToolPermissionResult;
 use crate::protocol::EventMsg;
 use crate::protocol::ViewImageToolCallEvent;
 use crate::tools::context::ToolInvocation;
@@ -14,6 +10,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use codex_protocol::user_input::UserInput;
 
 pub struct ViewImageHandler;
 
@@ -26,26 +23,6 @@ struct ViewImageArgs {
 impl ToolHandler for ViewImageHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
-    }
-
-    async fn check_permissions(
-        &self,
-        invocation: &ToolInvocation,
-        permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // Extract path from arguments
-        let path = match &invocation.payload {
-            ToolPayload::Function { arguments } => {
-                match serde_json::from_str::<ViewImageArgs>(arguments) {
-                    Ok(args) => args.path,
-                    Err(_) => return ToolPermissionResult::passthrough(),
-                }
-            }
-            _ => return ToolPermissionResult::passthrough(),
-        };
-
-        // Evaluate permission using file read helper
-        evaluate_file_read_permission(&path, permission_context, Some(&invocation.turn.cwd))
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

@@ -2,15 +2,8 @@
 //!
 //! Implements blocking sets and agent-specific tool restrictions to prevent
 //! infinite sub-agent nesting and enforce read-only agents.
-//!
-//! Also provides permission-aware tool filtering using the unified permission context.
 
 use std::collections::HashSet;
-
-use codex_protocol::permission_context::PermissionContext;
-use codex_protocol::permission_mode::PermissionMode;
-
-use crate::permissions::{check_permission, PermissionCheckResult};
 
 /// Tools blocked from ALL sub-agents (prevents infinite nesting).
 /// These tools are never available to sub-agents regardless of configuration.
@@ -28,56 +21,6 @@ pub struct SubAgentToolFilter {
     /// If None, all tools are allowed (except blocked ones).
     /// If Some, only listed tools are allowed.
     pub allowed_tools: Option<Vec<String>>,
-}
-
-/// Check if a tool operation is allowed based on the permission context.
-///
-/// This function evaluates the tool operation against the permission context
-/// and returns whether it should be auto-allowed, auto-denied, or needs approval.
-pub fn check_tool_permission(
-    permission_ctx: &PermissionContext,
-    tool_name: &str,
-    input: &str,
-) -> PermissionCheckResult {
-    check_permission(permission_ctx, tool_name, input)
-}
-
-/// Determine if a file operation should be blocked based on permission mode.
-///
-/// In plan mode, only the plan file can be written to.
-/// Returns Some(reason) if blocked, None if allowed.
-pub fn check_plan_mode_write_restriction(
-    permission_ctx: &PermissionContext,
-    tool_name: &str,
-    file_path: &str,
-) -> Option<String> {
-    // Only check restrictions for write tools in plan mode
-    if let PermissionMode::Plan { plan_file_path } = &permission_ctx.mode {
-        if is_write_tool(tool_name) {
-            // Check if writing to plan file (allow) or other file (block)
-            if !file_path.ends_with(plan_file_path) && file_path != plan_file_path {
-                return Some(format!(
-                    "In Plan Mode, only the plan file ({}) can be modified. Attempted to modify: {}",
-                    plan_file_path, file_path
-                ));
-            }
-        }
-    }
-    None
-}
-
-/// Check if a tool is a write tool (modifies files).
-fn is_write_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "Edit"
-            | "edit_file"
-            | "str_replace_editor"
-            | "Write"
-            | "write_file"
-            | "create_file"
-            | "NotebookEdit"
-    )
 }
 
 impl SubAgentToolFilter {

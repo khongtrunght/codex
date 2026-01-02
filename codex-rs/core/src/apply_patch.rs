@@ -5,6 +5,7 @@ use crate::protocol::FileChange;
 use crate::protocol::ReviewDecision;
 use crate::safety::SafetyCheck;
 use crate::safety::assess_patch_safety;
+use crate::tools::plan_mode_restriction::check_plan_mode_write;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
 use std::collections::HashMap;
@@ -39,6 +40,15 @@ pub(crate) async fn apply_patch(
     call_id: &str,
     action: ApplyPatchAction,
 ) -> InternalApplyPatchInvocation {
+    // Check plan mode write restriction for all files in the patch
+    for (path, _change) in action.changes() {
+        if let Err(msg) = check_plan_mode_write(sess, path).await {
+            return InternalApplyPatchInvocation::Output(Err(
+                FunctionCallError::RespondToModel(msg),
+            ));
+        }
+    }
+
     match assess_patch_safety(
         &action,
         turn_context.approval_policy,

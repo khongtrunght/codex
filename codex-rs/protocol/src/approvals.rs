@@ -94,21 +94,32 @@ pub struct ApplyPatchApprovalRequestEvent {
     pub grant_root: Option<PathBuf>,
 }
 
-/// Generic tool approval request event for permission system.
-/// Used when check_permission() returns Ask for tools that don't have
-/// specialized approval events (like ExecApprovalRequestEvent for shell commands).
+/// Approval request event for entering plan mode.
+/// Sent before transitioning to plan mode to get user confirmation.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct ToolApprovalRequestEvent {
+#[serde(rename_all = "camelCase")]
+pub struct EnterPlanModeApprovalRequestEvent {
     /// Identifier for the associated tool call.
     pub call_id: String,
     /// Turn ID that this tool call belongs to.
     #[serde(default)]
     pub turn_id: String,
-    /// The name of the tool being invoked.
-    pub tool_name: String,
-    /// The permission-relevant input (e.g., file path, command).
-    pub input: String,
-    /// Optional human-readable reason for the approval request.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+    /// Path where the plan file will be created.
+    pub plan_file_path: PathBuf,
+}
+
+/// Approval request event for exiting plan mode.
+/// Sent before transitioning out of plan mode to get user approval of the plan.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitPlanModeApprovalRequestEvent {
+    /// Identifier for the associated tool call.
+    pub call_id: String,
+    /// Turn ID that this tool call belongs to.
+    #[serde(default)]
+    pub turn_id: String,
+    /// The plan content for user review.
+    pub plan: String,
+    /// Path to the plan file.
+    pub plan_file_path: PathBuf,
 }

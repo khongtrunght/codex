@@ -1,8 +1,5 @@
 use crate::function_tool::FunctionCallError;
 use crate::is_safe_command::is_known_safe_command;
-use crate::permissions::evaluate_bash_permission;
-use crate::permissions::ToolPermissionResult;
-use codex_protocol::permission_context::PermissionContext;
 use crate::protocol::EventMsg;
 use crate::protocol::ExecCommandSource;
 use crate::protocol::TerminalInteractionEvent;
@@ -97,31 +94,6 @@ impl ToolHandler for UnifiedExecHandler {
         };
         let command = get_command(&params, invocation.session.user_shell());
         !is_known_safe_command(&command)
-    }
-
-    async fn check_permissions(
-        &self,
-        invocation: &ToolInvocation,
-        permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // Only exec_command needs permission check (not write_stdin)
-        if invocation.tool_name != "exec_command" {
-            return ToolPermissionResult::passthrough();
-        }
-
-        let ToolPayload::Function { arguments } = &invocation.payload else {
-            return ToolPermissionResult::passthrough();
-        };
-
-        let Ok(args) = serde_json::from_str::<ExecCommandArgs>(arguments) else {
-            return ToolPermissionResult::passthrough();
-        };
-
-        // Get the shell command as a Vec<String>
-        let command_args = get_command(&args, invocation.session.user_shell());
-
-        // Use the original command string for rule matching
-        evaluate_bash_permission(&args.cmd, &command_args, permission_context)
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

@@ -4,19 +4,22 @@
 //! The plan is read from the plan file that was written during plan mode.
 
 use async_trait::async_trait;
-use codex_protocol::permission_context::PermissionContext;
 use codex_protocol::permission_mode::ExitedPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
 
 use crate::function_tool::FunctionCallError;
-use crate::permissions::ToolPermissionResult;
 use crate::plan_file::extract_plan_from_file;
 use crate::plan_file::resolve_plan_file_path;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use crate::tools::runtimes::plan_mode::ExitPlanModeRequest;
+use crate::tools::runtimes::plan_mode::ExitPlanModeRuntime;
+use crate::tools::sandboxing::ToolCtx;
+use crate::tools::sandboxing::ToolError;
 
 pub struct ExitPlanModeHandler;
 
@@ -26,19 +29,12 @@ impl ToolHandler for ExitPlanModeHandler {
         ToolKind::Function
     }
 
-    async fn check_permissions(
-        &self,
-        _invocation: &ToolInvocation,
-        _permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // ExitPlanMode is handled by mode check - passthrough to allow existing approval flow
-        ToolPermissionResult::passthrough()
-    }
-
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
         let ToolInvocation {
             session,
             turn,
+            call_id,
+            tool_name,
             payload,
             ..
         } = invocation;
@@ -70,6 +66,46 @@ impl ToolHandler for ExitPlanModeHandler {
                 ))
             })?;
 
+        // Create request with plan content for approval UI display
+        let req = ExitPlanModeRequest {
+            session_id: session_id.clone(),
+            plan_content: Some(plan_content.clone()),
+            plan_file_path: plan_file_path.clone(),
+        };
+
+        let mut orchestrator = ToolOrchestrator::new();
+        let mut runtime = ExitPlanModeRuntime::new();
+        let tool_ctx = ToolCtx {
+            session: session.as_ref(),
+            turn: turn.as_ref(),
+            call_id: call_id.clone(),
+            tool_name: tool_name.clone(),
+        };
+
+        // Run through orchestrator - this handles approval via Approvable trait
+        let result = orchestrator
+            .run(&mut runtime, &req, &tool_ctx, &turn, turn.approval_policy)
+            .await;
+
+        // Handle rejection
+        match result {
+            Ok(_) => {}
+            Err(ToolError::Rejected(reason)) => {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "ExitPlanMode was rejected: {}",
+                    reason
+                )));
+            }
+            Err(ToolError::Codex(e)) => {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "ExitPlanMode failed: {}",
+                    e
+                )));
+            }
+        }
+
+        // Approval granted - proceed with exiting plan mode
+
         // Exit plan mode using unified API (also syncs legacy fields and sets has_exited flag)
         session.exit_plan_mode_unified().await;
 
@@ -85,7 +121,6 @@ impl ToolHandler for ExitPlanModeHandler {
             .await;
 
         // Build response with plan data
-        // The actual approval message is generated after user approval
         let response = serde_json::json!({
             "plan": plan_content,
             "isAgent": is_agent,

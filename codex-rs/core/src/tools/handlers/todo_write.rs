@@ -1,24 +1,19 @@
-use std::collections::BTreeMap;
-use std::sync::LazyLock;
-
-use async_trait::async_trait;
-use codex_protocol::permission_context::PermissionContext;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::todo_tool::TodoWriteArgs;
-
 use crate::client_common::tools::ResponsesApiTool;
 use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
-use crate::permissions::ToolPermissionReason;
-use crate::permissions::ToolPermissionResult;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::spec::JsonSchema;
+use async_trait::async_trait;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::todo_tool::TodoWriteArgs;
+use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 pub struct TodoWriteHandler;
 
@@ -69,15 +64,6 @@ At most one step can be in_progress at a time.
 impl ToolHandler for TodoWriteHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
-    }
-
-    async fn check_permissions(
-        &self,
-        _invocation: &ToolInvocation,
-        _permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // TODO writes are always allowed (internal state management)
-        ToolPermissionResult::allow(ToolPermissionReason::Safe)
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

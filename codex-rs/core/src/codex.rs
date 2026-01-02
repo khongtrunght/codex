@@ -1466,22 +1466,17 @@ impl Session {
         rx_approve
     }
 
-    /// Request user approval for a generic tool operation.
-    ///
-    /// This is used by the permission system when check_permission() returns Ask
-    /// for tools that don't have specialized approval flows.
-    pub async fn request_tool_approval(
+    /// Request user approval to enter plan mode.
+    /// Emits EnterPlanModeApprovalRequestEvent and waits for user decision.
+    pub async fn request_enter_plan_mode_approval(
         &self,
         turn_context: &TurnContext,
         call_id: String,
-        tool_name: String,
-        input: String,
-        reason: Option<String>,
+        plan_file_path: PathBuf,
     ) -> ReviewDecision {
-        use crate::protocol::ToolApprovalRequestEvent;
+        use crate::protocol::EnterPlanModeApprovalRequestEvent;
 
         let sub_id = turn_context.sub_id.clone();
-        // Add the tx_approve callback to the map before sending the request.
         let (tx_approve, rx_approve) = oneshot::channel();
         let event_id = sub_id.clone();
         let prev_entry = {
@@ -1498,12 +1493,48 @@ impl Session {
             warn!("Overwriting existing pending approval for sub_id: {event_id}");
         }
 
-        let event = EventMsg::ToolApprovalRequest(ToolApprovalRequestEvent {
+        let event = EventMsg::EnterPlanModeApprovalRequest(EnterPlanModeApprovalRequestEvent {
             call_id,
             turn_id: turn_context.sub_id.clone(),
-            tool_name,
-            input,
-            reason,
+            plan_file_path,
+        });
+        self.send_event(turn_context, event).await;
+        rx_approve.await.unwrap_or_default()
+    }
+
+    /// Request user approval to exit plan mode with the plan content.
+    /// Emits ExitPlanModeApprovalRequestEvent and waits for user decision.
+    pub async fn request_exit_plan_mode_approval(
+        &self,
+        turn_context: &TurnContext,
+        call_id: String,
+        plan: String,
+        plan_file_path: PathBuf,
+    ) -> ReviewDecision {
+        use crate::protocol::ExitPlanModeApprovalRequestEvent;
+
+        let sub_id = turn_context.sub_id.clone();
+        let (tx_approve, rx_approve) = oneshot::channel();
+        let event_id = sub_id.clone();
+        let prev_entry = {
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.insert_pending_approval(sub_id, tx_approve)
+                }
+                None => None,
+            }
+        };
+        if prev_entry.is_some() {
+            warn!("Overwriting existing pending approval for sub_id: {event_id}");
+        }
+
+        let event = EventMsg::ExitPlanModeApprovalRequest(ExitPlanModeApprovalRequestEvent {
+            call_id,
+            turn_id: turn_context.sub_id.clone(),
+            plan,
+            plan_file_path,
         });
         self.send_event(turn_context, event).await;
         rx_approve.await.unwrap_or_default()

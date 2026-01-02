@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_protocol::models::ShellToolCallParams;
-use codex_protocol::permission_context::PermissionContext;
+use std::sync::Arc;
 
 use crate::codex::TurnContext;
 use crate::exec::ExecParams;
@@ -11,8 +9,6 @@ use crate::exec_env::create_env;
 use crate::exec_policy::create_exec_approval_requirement_for_command;
 use crate::function_tool::FunctionCallError;
 use crate::is_safe_command::is_known_safe_command;
-use crate::permissions::evaluate_shell_permission;
-use crate::permissions::ToolPermissionResult;
 use crate::protocol::ExecCommandSource;
 use crate::shell::Shell;
 use crate::tools::context::ToolInvocation;
@@ -85,27 +81,6 @@ impl ToolHandler for ShellHandler {
         )
     }
 
-    async fn check_permissions(
-        &self,
-        invocation: &ToolInvocation,
-        permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // Extract command based on payload type
-        let command: Vec<String> = match &invocation.payload {
-            ToolPayload::Function { arguments } => {
-                match serde_json::from_str::<ShellToolCallParams>(arguments) {
-                    Ok(params) => params.command.clone(),
-                    Err(_) => return ToolPermissionResult::passthrough(),
-                }
-            }
-            ToolPayload::LocalShell { params } => params.command.clone(),
-            _ => return ToolPermissionResult::passthrough(),
-        };
-
-        let command_str = command.join(" ");
-        evaluate_shell_permission(&command_str, &command, permission_context)
-    }
-
     async fn is_mutating(&self, invocation: &ToolInvocation) -> bool {
         match &invocation.payload {
             ToolPayload::Function { arguments } => {
@@ -176,27 +151,6 @@ impl ToolHandler for ShellCommandHandler {
 
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         matches!(payload, ToolPayload::Function { .. })
-    }
-
-    async fn check_permissions(
-        &self,
-        invocation: &ToolInvocation,
-        permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        let ToolPayload::Function { arguments } = &invocation.payload else {
-            return ToolPermissionResult::passthrough();
-        };
-
-        let params: ShellCommandToolCallParams = match serde_json::from_str(arguments) {
-            Ok(p) => p,
-            Err(_) => return ToolPermissionResult::passthrough(),
-        };
-
-        // Get the shell to derive the actual command args
-        let shell = invocation.session.user_shell();
-        let command_args = Self::base_command(shell.as_ref(), &params.command, params.login);
-
-        evaluate_shell_permission(&params.command, &command_args, permission_context)
     }
 
     async fn is_mutating(&self, invocation: &ToolInvocation) -> bool {

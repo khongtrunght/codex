@@ -40,9 +40,10 @@ use ts_rs::TS;
 
 pub use crate::approvals::ApplyPatchApprovalRequestEvent;
 pub use crate::approvals::ElicitationAction;
+pub use crate::approvals::EnterPlanModeApprovalRequestEvent;
 pub use crate::approvals::ExecApprovalRequestEvent;
 pub use crate::approvals::ExecPolicyAmendment;
-pub use crate::approvals::ToolApprovalRequestEvent;
+pub use crate::approvals::ExitPlanModeApprovalRequestEvent;
 
 /// Open/close tags for special user-input blocks. Used across crates to avoid
 /// duplicated hardcoded strings.
@@ -627,8 +628,11 @@ pub enum EventMsg {
 
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
 
-    /// Generic tool approval request from permission system.
-    ToolApprovalRequest(ToolApprovalRequestEvent),
+    /// Request user approval to enter plan mode.
+    EnterPlanModeApprovalRequest(EnterPlanModeApprovalRequestEvent),
+
+    /// Request user approval to exit plan mode (includes plan for review).
+    ExitPlanModeApprovalRequest(ExitPlanModeApprovalRequestEvent),
 
     /// Notification advising the user that something they are using has been
     /// deprecated and should be phased out.

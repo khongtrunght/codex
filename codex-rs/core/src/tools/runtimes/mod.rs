@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub mod apply_patch;
+pub mod plan_mode;
 pub mod shell;
 pub mod unified_exec;
 

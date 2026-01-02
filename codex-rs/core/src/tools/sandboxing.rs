@@ -184,6 +184,13 @@ pub(crate) trait Approvable<Req> {
         None
     }
 
+    /// Override to force approval even in bypass mode (e.g., `dangerously_skip_permissions`).
+    /// Used by plan mode tools that must always require user consent.
+    /// Defaults to `false` (respect bypass mode).
+    fn ignore_bypass_mode(&self) -> bool {
+        false
+    }
+
     /// Decide we can request an approval for no-sandbox execution.
     fn wants_no_sandbox_approval(&self, policy: AskForApproval) -> bool {
         !matches!(policy, AskForApproval::Never | AskForApproval::OnRequest)

@@ -1,10 +1,7 @@
 use async_trait::async_trait;
-use codex_protocol::permission_context::PermissionContext;
 
 use crate::function_tool::FunctionCallError;
 use crate::mcp_tool_call::handle_mcp_tool_call;
-use crate::permissions::evaluate_rules_permission;
-use crate::permissions::ToolPermissionResult;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -17,22 +14,6 @@ pub struct McpHandler;
 impl ToolHandler for McpHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Mcp
-    }
-
-    async fn check_permissions(
-        &self,
-        invocation: &ToolInvocation,
-        permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // Extract MCP server and tool from payload
-        let (server, tool) = match &invocation.payload {
-            ToolPayload::Mcp { server, tool, .. } => (server.clone(), tool.clone()),
-            _ => return ToolPermissionResult::passthrough(),
-        };
-
-        // Check MCP-specific rules: "mcp:server:tool" or just tool name
-        let mcp_input = format!("{}:{}", server, tool);
-        evaluate_rules_permission(permission_context, "Mcp", &mcp_input)
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {

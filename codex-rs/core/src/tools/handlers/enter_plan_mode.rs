@@ -5,19 +5,22 @@
 //! approach before making any changes.
 
 use async_trait::async_trait;
-use codex_protocol::permission_context::PermissionContext;
 use codex_protocol::permission_mode::EnteredPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
 
 use crate::function_tool::FunctionCallError;
-use crate::permissions::ToolPermissionResult;
 use crate::plan_file::resolve_plan_file_path;
 use crate::plan_mode_attachment::generate_plan_mode_attachment;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use crate::tools::runtimes::plan_mode::EnterPlanModeRequest;
+use crate::tools::runtimes::plan_mode::EnterPlanModeRuntime;
+use crate::tools::sandboxing::ToolCtx;
+use crate::tools::sandboxing::ToolError;
 
 pub struct EnterPlanModeHandler;
 
@@ -27,19 +30,12 @@ impl ToolHandler for EnterPlanModeHandler {
         ToolKind::Function
     }
 
-    async fn check_permissions(
-        &self,
-        _invocation: &ToolInvocation,
-        _permission_context: &PermissionContext,
-    ) -> ToolPermissionResult {
-        // EnterPlanMode is handled by mode check - passthrough to allow existing approval flow
-        ToolPermissionResult::passthrough()
-    }
-
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
         let ToolInvocation {
             session,
             turn,
+            call_id,
+            tool_name,
             payload,
             ..
         } = invocation;
@@ -71,9 +67,49 @@ impl ToolHandler for EnterPlanModeHandler {
             ));
         }
 
-        // Resolve plan file path
+        // Resolve plan file path before approval so we can show it in the approval UI
         let plan_file_path = resolve_plan_file_path(&session_id, None);
         let path_str = plan_file_path.to_string_lossy().to_string();
+
+        // Create request and run through orchestrator for approval
+        let req = EnterPlanModeRequest {
+            session_id: session_id.clone(),
+            plan_file_path: plan_file_path.clone(),
+        };
+
+        let mut orchestrator = ToolOrchestrator::new();
+        let mut runtime = EnterPlanModeRuntime::new();
+        let tool_ctx = ToolCtx {
+            session: session.as_ref(),
+            turn: turn.as_ref(),
+            call_id: call_id.clone(),
+            tool_name: tool_name.clone(),
+        };
+
+        // Run through orchestrator - this handles approval via Approvable trait
+        let result = orchestrator
+            .run(&mut runtime, &req, &tool_ctx, &turn, turn.approval_policy)
+            .await;
+
+        // Handle rejection
+        match result {
+            Ok(_) => {}
+            Err(ToolError::Rejected(reason)) => {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "EnterPlanMode was rejected: {}",
+                    reason
+                )));
+            }
+            Err(ToolError::Codex(e)) => {
+                return Err(FunctionCallError::RespondToModel(format!(
+                    "EnterPlanMode failed: {}",
+                    e
+                )));
+            }
+        }
+
+        // Approval granted - proceed with entering plan mode
+        // (path_str was already resolved before approval request)
 
         // Enter plan mode using unified API (also syncs with legacy fields)
         session.enter_plan_mode_unified(path_str.clone()).await;
