@@ -202,6 +202,11 @@ async fn forward_events(
                     } => {}
                     Event {
                         id: _,
+                        msg: EventMsg::TokenCount(_),
+                        ..
+                    } => {}
+                    Event {
+                        id: _,
                         msg: EventMsg::SessionConfigured(_),
                         ..
                     } => {}

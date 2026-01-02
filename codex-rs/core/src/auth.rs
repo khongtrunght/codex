@@ -675,7 +675,6 @@ mod tests {
     use crate::auth::storage::get_auth_file;
     use crate::config::Config;
     use crate::config::ConfigBuilder;
-    use crate::token_data::IdTokenInfo;
     use crate::token_data::KnownPlan as InternalKnownPlan;
     use crate::token_data::PlanType as InternalPlanType;
     use codex_protocol::account::PlanType as AccountPlanType;
