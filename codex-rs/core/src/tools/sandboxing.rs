@@ -187,6 +187,7 @@ pub(crate) trait Approvable<Req> {
     /// Override to force approval even in bypass mode (e.g., `dangerously_skip_permissions`).
     /// Used by plan mode tools that must always require user consent.
     /// Defaults to `false` (respect bypass mode).
+    #[allow(dead_code)]
     fn ignore_bypass_mode(&self) -> bool {
         false
     }

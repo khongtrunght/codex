@@ -3,14 +3,17 @@
 //! Enters plan mode for complex tasks requiring exploration and design.
 //! Plan mode allows the model to explore the codebase and design an implementation
 //! approach before making any changes.
+//!
+//! Note: Plan mode instructions are injected automatically at the start of each
+//! task when in plan mode (see run_task in codex.rs). This handler only sets
+//! the mode and emits events.
 
 use async_trait::async_trait;
-use codex_protocol::session_mode::EnteredPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::session_mode::EnteredPlanModeEvent;
 
 use crate::function_tool::FunctionCallError;
 use crate::plan_file::resolve_plan_file_path;
-use crate::plan_mode_attachment::generate_plan_mode_attachment;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -96,14 +99,12 @@ impl ToolHandler for EnterPlanModeHandler {
             Ok(_) => {}
             Err(ToolError::Rejected(reason)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "EnterPlanMode was rejected: {}",
-                    reason
+                    "EnterPlanMode was rejected: {reason}"
                 )));
             }
             Err(ToolError::Codex(e)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "EnterPlanMode failed: {}",
-                    e
+                    "EnterPlanMode failed: {e}"
                 )));
             }
         }
@@ -114,20 +115,9 @@ impl ToolHandler for EnterPlanModeHandler {
         // Enter plan mode using unified API (also syncs with legacy fields)
         session.enter_plan_mode_unified(path_str.clone()).await;
 
-        // Generate and record plan mode instructions
-        let plan_mode_instructions = generate_plan_mode_attachment(
-            &session_id,
-            &path_str,
-            turn.tools_config.edit_tool_type.clone(),
-            turn.tools_config.shell_type.clone(),
-        );
-
-        // Record the plan mode instructions as a conversation item
-        // This will be included in subsequent turns for the model
-        let plan_mode_item = codex_protocol::models::ResponseItem::from(plan_mode_instructions);
-        session
-            .record_conversation_items(&turn, &[plan_mode_item])
-            .await;
+        // Note: Plan mode instructions are NOT injected here.
+        // They are injected automatically at the start of the next task
+        // (see run_task in codex.rs) to avoid double injection.
 
         // Emit plan mode entered event for TUI
         session
@@ -139,10 +129,8 @@ impl ToolHandler for EnterPlanModeHandler {
             )
             .await;
 
-        // Match Claude Code's exact message
         let message = format!(
-            "Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.\n\nYour plan file is at: {}",
-            path_str
+            "Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.\n\nYour plan file is at: {path_str}",
         );
 
         Ok(ToolOutput::Function {

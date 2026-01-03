@@ -40,7 +40,6 @@ pub async fn ensure_plans_dir() -> std::io::Result<()> {
 }
 
 /// Generate or retrieve a unique slug for the session.
-/// Matches Claude Code's NB5 function.
 pub fn get_or_create_slug(session_id: &str) -> String {
     let mut cache = PLAN_SLUG_CACHE.lock().unwrap();
 
@@ -71,7 +70,6 @@ pub fn set_slug(session_id: &str, slug: &str) {
 }
 
 /// Resolve the plan file path for a session.
-/// Matches Claude Code's resolvePlanFilePath function.
 pub fn resolve_plan_file_path(session_id: &str, agent_id: Option<&str>) -> PathBuf {
     let slug = get_or_create_slug(session_id);
     let plans_dir = get_plans_dir();
@@ -89,14 +87,12 @@ pub fn resolve_plan_file_path(session_id: &str, agent_id: Option<&str>) -> PathB
 }
 
 /// Read plan content from file.
-/// Matches Claude Code's extractPlanFromContext function.
 pub async fn extract_plan_from_file(session_id: &str, agent_id: Option<&str>) -> Option<String> {
     let path = resolve_plan_file_path(session_id, agent_id);
     fs::read_to_string(&path).await.ok()
 }
 
 /// Check if a given path is the plan file for the current session.
-/// Matches Claude Code's pK9 function.
 pub(crate) fn is_plan_file_path(path: &Path, session_state: &SessionState) -> bool {
     // Use the unified permission mode API
     if let Some(plan_file_path) = session_state.plan_file_path() {

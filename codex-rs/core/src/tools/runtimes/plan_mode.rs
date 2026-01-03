@@ -38,6 +38,7 @@ pub struct EnterPlanModeRequest {
 
 /// Output from entering plan mode (just a confirmation).
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct EnterPlanModeOutput {
     pub success: bool,
 }
@@ -140,6 +141,7 @@ pub struct ExitPlanModeRequest {
 
 /// Output from exiting plan mode.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct ExitPlanModeOutput {
     pub success: bool,
 }

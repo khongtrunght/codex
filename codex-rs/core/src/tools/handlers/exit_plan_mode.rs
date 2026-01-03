@@ -56,7 +56,7 @@ impl ToolHandler for ExitPlanModeHandler {
         let plan_file_path = resolve_plan_file_path(&session_id, None);
         let path_str = plan_file_path.to_string_lossy().to_string();
 
-        // Read plan from file (matches Claude Code's extractPlanFromContext)
+        // Read plan from file
         let plan_content = extract_plan_from_file(&session_id, None)
             .await
             .ok_or_else(|| {
@@ -136,7 +136,6 @@ impl ToolHandler for ExitPlanModeHandler {
 }
 
 /// Generate the tool result message after user approval.
-/// Matches Claude Code's mapToolResultToToolResultBlockParam.
 #[allow(dead_code)]
 pub fn generate_approval_message(is_agent: bool, plan_content: &str, file_path: &str) -> String {
     if is_agent {

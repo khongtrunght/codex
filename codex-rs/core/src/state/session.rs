@@ -123,6 +123,22 @@ impl SessionState {
     pub(crate) fn get_plan_file_path(&self) -> Option<&str> {
         self.plan_file_path()
     }
+
+    /// Check if plan mode has been exited (for reentry detection).
+    pub(crate) fn has_exited_plan_mode(&self) -> bool {
+        self.mode_context.has_exited_plan_mode
+    }
+
+    /// Reset the has_exited_plan_mode flag after generating reentry attachment.
+    pub(crate) fn reset_has_exited_plan_mode(&mut self) {
+        self.mode_context.has_exited_plan_mode = false;
+    }
+
+    /// Get the current session mode.
+    #[allow(dead_code)]
+    pub(crate) fn current_mode(&self) -> &SessionMode {
+        &self.mode_context.mode
+    }
 }
 
 // Sometimes new snapshots don't include credits or plan information.

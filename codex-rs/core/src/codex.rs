@@ -94,6 +94,9 @@ use crate::exec_policy::ExecPolicyUpdateError;
 use crate::mcp::auth::compute_auth_statuses;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_provider_info::CHAT_WIRE_API_DEPRECATION_SUMMARY;
+use crate::plan_file::resolve_plan_file_path;
+use crate::plan_mode_attachment::collect_plan_mode_attachments;
+use crate::plan_mode_attachment::PlanModeAttachmentConfig;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageContentDeltaEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
@@ -1019,6 +1022,19 @@ impl Session {
         state
             .get_plan_file_path()
             .map(std::string::ToString::to_string)
+    }
+
+    /// Check if plan mode has been exited (for reentry detection).
+    pub(crate) async fn has_exited_plan_mode(&self) -> bool {
+        let state = self.state.lock().await;
+        state.has_exited_plan_mode()
+    }
+
+    /// Reset the has_exited_plan_mode flag after generating reentry attachment.
+    /// This should be called after plan mode reentry instructions have been injected.
+    pub(crate) async fn reset_has_exited_plan_mode(&self) {
+        let mut state = self.state.lock().await;
+        state.reset_has_exited_plan_mode();
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -2659,6 +2675,12 @@ pub(crate) async fn run_task(
             .await;
     }
 
+    // Note: Plan mode attachments are injected INSIDE the loop on each turn iteration.
+    // They are added transiently to turn_input, NOT recorded to permanent history.
+    // This allows:
+    // 1. Re-evaluating plan mode state on each turn (detecting mode changes mid-task)
+    // 2. Proper cleanup when exiting plan mode
+
     sess.maybe_start_ghost_snapshot(Arc::clone(&turn_context), cancellation_token.child_token())
         .await;
     let mut last_agent_message: Option<String> = None;
@@ -2678,11 +2700,55 @@ pub(crate) async fn run_task(
             .collect::<Vec<ResponseItem>>();
 
         // Construct the input that we will send to the model.
-        let turn_input: Vec<ResponseItem> = {
+        let mut turn_input: Vec<ResponseItem> = {
             sess.record_conversation_items(&turn_context, &pending_input)
                 .await;
             sess.clone_history().await.get_history_for_prompt()
         };
+
+        // Inject plan mode attachments transiently on each turn iteration.
+        // Unlike skill_items, these are NOT recorded to permanent history - they're added
+        // directly to turn_input so they're re-evaluated on each turn.
+        if sess.is_in_plan_mode().await {
+            let session_id = sess.conversation_id.to_string();
+            let plan_file_path = sess
+                .get_plan_file_path_unified()
+                .await
+                .unwrap_or_else(|| {
+                    resolve_plan_file_path(&session_id, None)
+                        .to_string_lossy()
+                        .to_string()
+                });
+            let has_exited = sess.has_exited_plan_mode().await;
+            let is_subagent = sess.source_session_id().is_some();
+
+            let config = PlanModeAttachmentConfig {
+                session_id,
+                plan_file_path,
+                is_subagent,
+                has_exited_plan_mode: has_exited,
+                edit_tool: turn_context.tools_config.edit_tool_type.clone(),
+                shell_tool: turn_context.tools_config.shell_type.clone(),
+            };
+
+            let plan_mode_items = collect_plan_mode_attachments(&config);
+            if !plan_mode_items.is_empty() {
+                // Add to turn_input transiently (not recorded to history)
+                turn_input.extend(plan_mode_items.clone());
+
+                // Reset the has_exited_plan_mode flag after injecting reentry attachment
+                if has_exited {
+                    sess.reset_has_exited_plan_mode().await;
+                }
+
+                debug!(
+                    plan_mode_items = plan_mode_items.len(),
+                    has_exited,
+                    is_subagent,
+                    "Injected plan mode attachments (transient)"
+                );
+            }
+        }
 
         let turn_input_messages = turn_input
             .iter()
