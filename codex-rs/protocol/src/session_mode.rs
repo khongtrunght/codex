@@ -95,6 +95,10 @@ impl SessionMode {
 pub struct EnteredPlanModeEvent {
     /// Path to the plan file.
     pub plan_file_path: String,
+    /// Memorable slug for the plan file (e.g., "atomic-marinating-pumpkin").
+    /// Used to restore the plan file path on session resume.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_slug: Option<String>,
 }
 
 /// Event emitted when exiting plan mode.

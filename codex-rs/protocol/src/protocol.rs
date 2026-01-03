@@ -1504,6 +1504,10 @@ pub struct SessionMeta {
     #[serde(default)]
     pub source: SessionSource,
     pub model_provider: Option<String>,
+    /// Plan slug for memorable plan file naming (e.g., "atomic-marinating-pumpkin").
+    /// Persisted so resumed sessions use the same plan file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_slug: Option<String>,
 }
 
 impl Default for SessionMeta {
@@ -1517,6 +1521,7 @@ impl Default for SessionMeta {
             instructions: None,
             source: SessionSource::default(),
             model_provider: None,
+            plan_slug: None,
         }
     }
 }

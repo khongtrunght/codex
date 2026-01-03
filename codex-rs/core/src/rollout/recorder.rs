@@ -174,6 +174,7 @@ impl RolloutRecorder {
                         instructions,
                         source,
                         model_provider: Some(config.model_provider_id.clone()),
+                        plan_slug: None, // Slug is set when plan mode is entered
                     }),
                 )
             }

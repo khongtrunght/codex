@@ -13,7 +13,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::session_mode::EnteredPlanModeEvent;
 
 use crate::function_tool::FunctionCallError;
-use crate::plan_file::resolve_plan_file_path;
+use crate::plan_file::{generate_unique_slug, resolve_plan_file_path_with_slug};
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -53,8 +53,6 @@ impl ToolHandler for EnterPlanModeHandler {
             }
         }
 
-        let session_id = session.conversation_id().to_string();
-
         // Check if this is being called from a sub-agent context
         // Sub-agents have a source_session_id that differs from their conversation_id
         if session.source_session_id().is_some() {
@@ -70,9 +68,15 @@ impl ToolHandler for EnterPlanModeHandler {
             ));
         }
 
-        // Resolve plan file path before approval so we can show it in the approval UI
-        let plan_file_path = resolve_plan_file_path(&session_id, None);
+        // Get or create slug from session state (persisted across plan mode entries)
+        let slug = session
+            .get_or_create_plan_slug(generate_unique_slug)
+            .await;
+
+        // Resolve plan file path using the slug
+        let plan_file_path = resolve_plan_file_path_with_slug(&slug, None);
         let path_str = plan_file_path.to_string_lossy().to_string();
+        let session_id = session.conversation_id().to_string();
 
         // Create request and run through orchestrator for approval
         let req = EnterPlanModeRequest {
@@ -119,12 +123,13 @@ impl ToolHandler for EnterPlanModeHandler {
         // They are injected automatically at the start of the next task
         // (see run_task in codex.rs) to avoid double injection.
 
-        // Emit plan mode entered event for TUI
+        // Emit plan mode entered event for TUI (includes slug for resume)
         session
             .send_event(
                 &turn,
                 EventMsg::EnteredPlanMode(EnteredPlanModeEvent {
                     plan_file_path: path_str.clone(),
+                    plan_slug: Some(slug),
                 }),
             )
             .await;

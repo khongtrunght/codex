@@ -94,9 +94,6 @@ use crate::exec_policy::ExecPolicyUpdateError;
 use crate::mcp::auth::compute_auth_statuses;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_provider_info::CHAT_WIRE_API_DEPRECATION_SUMMARY;
-use crate::plan_file::resolve_plan_file_path;
-use crate::plan_mode_attachment::collect_plan_mode_attachments;
-use crate::plan_mode_attachment::PlanModeAttachmentConfig;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageContentDeltaEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
@@ -874,6 +871,7 @@ impl Session {
             skills_manager,
             agent_type_registry,
             codex_home: config.codex_home.clone(),
+            attachments: crate::attachments::default_registry(),
         };
 
         let sess = Arc::new(Session {
@@ -1037,6 +1035,27 @@ impl Session {
         state.reset_has_exited_plan_mode();
     }
 
+    /// Get the plan slug if set.
+    pub(crate) async fn get_plan_slug(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        state.plan_slug().map(str::to_string)
+    }
+
+    /// Set the plan slug.
+    pub(crate) async fn set_plan_slug(&self, slug: String) {
+        let mut state = self.state.lock().await;
+        state.set_plan_slug(slug);
+    }
+
+    /// Get or create a plan slug using the provided generator.
+    pub(crate) async fn get_or_create_plan_slug<F>(&self, generate: F) -> String
+    where
+        F: FnOnce() -> String,
+    {
+        let mut state = self.state.lock().await;
+        state.get_or_create_plan_slug(generate).to_string()
+    }
+
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
         let turn_context = self.new_default_turn().await;
         match conversation_history {
@@ -1076,6 +1095,19 @@ impl Session {
                             }),
                         )
                             .await;
+                    }
+                }
+
+                // Restore plan slug from EnteredPlanModeEvent if present
+                if let InitialHistory::Resumed(_) = conversation_history {
+                    for item in &rollout_items {
+                        if let RolloutItem::EventMsg(EventMsg::EnteredPlanMode(event)) = item {
+                            if let Some(ref slug) = event.plan_slug {
+                                self.set_plan_slug(slug.clone()).await;
+                                tracing::info!("Restored plan slug from session: {slug}");
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -2706,35 +2738,31 @@ pub(crate) async fn run_task(
             sess.clone_history().await.get_history_for_prompt()
         };
 
-        // Inject plan mode attachments transiently on each turn iteration.
+        // Inject attachments transiently on each turn iteration.
         // Unlike skill_items, these are NOT recorded to permanent history - they're added
         // directly to turn_input so they're re-evaluated on each turn.
-        if sess.is_in_plan_mode().await {
-            let session_id = sess.conversation_id.to_string();
-            let plan_file_path = sess
-                .get_plan_file_path_unified()
-                .await
-                .unwrap_or_else(|| {
-                    resolve_plan_file_path(&session_id, None)
-                        .to_string_lossy()
-                        .to_string()
-                });
-            let has_exited = sess.has_exited_plan_mode().await;
-            let is_subagent = sess.source_session_id().is_some();
-
-            let config = PlanModeAttachmentConfig {
-                session_id,
-                plan_file_path,
-                is_subagent,
-                has_exited_plan_mode: has_exited,
+        {
+            let tools_config = crate::attachments::ToolsConfig {
                 edit_tool: turn_context.tools_config.edit_tool_type.clone(),
-                shell_tool: turn_context.tools_config.shell_type.clone(),
+                shell_tool: turn_context.tools_config.shell_type,
             };
 
-            let plan_mode_items = collect_plan_mode_attachments(&config);
-            if !plan_mode_items.is_empty() {
+            let attachments = sess
+                .services
+                .attachments
+                .collect_all(&sess, &turn_context)
+                .await;
+
+            if !attachments.is_empty() {
+                let has_exited = sess.has_exited_plan_mode().await;
+
+                let attachment_items: Vec<ResponseItem> = attachments
+                    .into_iter()
+                    .flat_map(|a| a.into_response_items(&tools_config))
+                    .collect();
+
                 // Add to turn_input transiently (not recorded to history)
-                turn_input.extend(plan_mode_items.clone());
+                turn_input.extend(attachment_items.clone());
 
                 // Reset the has_exited_plan_mode flag after injecting reentry attachment
                 if has_exited {
@@ -2742,10 +2770,8 @@ pub(crate) async fn run_task(
                 }
 
                 debug!(
-                    plan_mode_items = plan_mode_items.len(),
-                    has_exited,
-                    is_subagent,
-                    "Injected plan mode attachments (transient)"
+                    attachment_items = attachment_items.len(),
+                    "Injected attachments (transient)"
                 );
             }
         }
@@ -3617,6 +3643,7 @@ mod tests {
             skills_manager,
             agent_type_registry,
             codex_home: config.codex_home.clone(),
+            attachments: crate::attachments::default_registry(),
         };
 
         let turn_context = Session::make_turn_context(
@@ -3710,6 +3737,7 @@ mod tests {
             skills_manager,
             agent_type_registry,
             codex_home: config.codex_home.clone(),
+            attachments: crate::attachments::default_registry(),
         };
 
         let turn_context = Arc::new(Session::make_turn_context(

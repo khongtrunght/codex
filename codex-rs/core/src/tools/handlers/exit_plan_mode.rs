@@ -8,8 +8,7 @@ use codex_protocol::session_mode::ExitedPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
 
 use crate::function_tool::FunctionCallError;
-use crate::plan_file::extract_plan_from_file;
-use crate::plan_file::resolve_plan_file_path;
+use crate::plan_file::{extract_plan_from_file_with_slug, resolve_plan_file_path_with_slug};
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -52,12 +51,19 @@ impl ToolHandler for ExitPlanModeHandler {
         let session_id = session.conversation_id().to_string();
         let is_agent = session.source_session_id().is_some();
 
-        // Get plan file path
-        let plan_file_path = resolve_plan_file_path(&session_id, None);
+        // Get slug from session state (was set when entering plan mode)
+        let slug = session.get_plan_slug().await.ok_or_else(|| {
+            FunctionCallError::RespondToModel(
+                "Cannot exit plan mode: no plan slug found. Was plan mode entered?".to_string(),
+            )
+        })?;
+
+        // Resolve plan file path using the slug
+        let plan_file_path = resolve_plan_file_path_with_slug(&slug, None);
         let path_str = plan_file_path.to_string_lossy().to_string();
 
         // Read plan from file
-        let plan_content = extract_plan_from_file(&session_id, None)
+        let plan_content = extract_plan_from_file_with_slug(&slug, None)
             .await
             .ok_or_else(|| {
                 FunctionCallError::RespondToModel(format!(

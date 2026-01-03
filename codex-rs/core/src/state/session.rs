@@ -139,6 +139,24 @@ impl SessionState {
     pub(crate) fn current_mode(&self) -> &SessionMode {
         &self.mode_context.mode
     }
+
+    /// Get the plan slug if set.
+    pub(crate) fn plan_slug(&self) -> Option<&str> {
+        self.mode_context.plan_slug()
+    }
+
+    /// Set the plan slug.
+    pub(crate) fn set_plan_slug(&mut self, slug: String) {
+        self.mode_context.set_plan_slug(slug);
+    }
+
+    /// Get or create a plan slug using the provided generator.
+    pub(crate) fn get_or_create_plan_slug<F>(&mut self, generate: F) -> &str
+    where
+        F: FnOnce() -> String,
+    {
+        self.mode_context.get_or_create_plan_slug(generate)
+    }
 }
 
 // Sometimes new snapshots don't include credits or plan information.

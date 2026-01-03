@@ -8,6 +8,7 @@
 pub mod agent_types;
 pub mod api_bridge;
 mod apply_patch;
+mod attachments;
 pub mod auth;
 pub mod bash;
 mod client;
@@ -44,7 +45,7 @@ mod model_provider_info;
 pub mod parse_command;
 pub mod path_utils;
 pub mod plan_file;
-pub(crate) mod plan_mode_attachment;
+mod plan_slug;
 pub mod powershell;
 pub mod sandboxing;
 mod stream_events_utils;
