@@ -28,7 +28,7 @@ use super::footer::footer_height;
 use super::footer::render_footer;
 use super::footer::reset_mode_after_activity;
 use super::footer::toggle_shortcut_mode;
-use codex_protocol::permission_mode::PermissionMode;
+use crate::tui_display_mode::TuiDisplayMode;
 use super::paste_burst::CharDecision;
 use super::paste_burst::PasteBurst;
 use super::skill_popup::SkillPopup;
@@ -125,8 +125,8 @@ pub(crate) struct ChatComposer {
     transcript_scroll_position: Option<(usize, usize)>,
     skills: Option<Vec<SkillMetadata>>,
     dismissed_skill_popup_token: Option<String>,
-    /// Current permission mode for visual indicator
-    permission_mode: PermissionMode,
+    /// Current TUI display mode for visual indicator
+    display_mode: TuiDisplayMode,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -178,7 +178,7 @@ impl ChatComposer {
             transcript_scroll_position: None,
             skills: None,
             dismissed_skill_popup_token: None,
-            permission_mode: PermissionMode::Default,
+            display_mode: TuiDisplayMode::Default,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -189,8 +189,8 @@ impl ChatComposer {
         self.skills = skills;
     }
 
-    pub fn set_permission_mode(&mut self, mode: PermissionMode) {
-        self.permission_mode = mode;
+    pub fn set_display_mode(&mut self, mode: TuiDisplayMode) {
+        self.display_mode = mode;
     }
 
     fn layout_areas(&self, area: Rect) -> [Rect; 3] {
@@ -1539,11 +1539,11 @@ impl ChatComposer {
     }
 
     fn footer_props(&self) -> FooterProps<'_> {
-        // Only show permission mode indicator if not in Default mode
-        let permission_mode_display = if matches!(self.permission_mode, PermissionMode::Default) {
+        // Only show display mode indicator if not in Default mode
+        let permission_mode_display = if matches!(self.display_mode, TuiDisplayMode::Default) {
             None
         } else {
-            Some(PermissionModeDisplay::from_mode(&self.permission_mode))
+            Some(PermissionModeDisplay::from_display_mode(&self.display_mode))
         };
 
         FooterProps {

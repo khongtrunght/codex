@@ -38,18 +38,3 @@ pub async fn check_plan_mode_write(session: &Session, file_path: &Path) -> Resul
         file_path.display()
     ))
 }
-
-/// Check if a tool name is a write tool.
-pub fn is_write_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "Edit"
-            | "edit_file"
-            | "str_replace_editor"
-            | "Write"
-            | "write_file"
-            | "create_file"
-            | "NotebookEdit"
-            | "apply_patch"
-    )
-}

@@ -329,6 +329,7 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() -> an
             model: Some("o3".to_string()),
             effort: Some(Some(ReasoningEffort::High)),
             summary: Some(ReasoningSummary::Detailed),
+            session_mode: None,
         })
         .await?;
 
@@ -408,6 +409,7 @@ async fn override_before_first_turn_emits_environment_context() -> anyhow::Resul
             model: None,
             effort: None,
             summary: None,
+            session_mode: None,
         })
         .await?;
 

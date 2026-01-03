@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use crate::ConversationId;
 use crate::approvals::ElicitationRequestEvent;
+use crate::session_mode::SessionMode;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::custom_prompts::CustomPrompt;
 use crate::items::TurnItem;
@@ -141,6 +142,10 @@ pub enum Op {
         /// Updated reasoning summary preference (honored only for reasoning-capable models).
         #[serde(skip_serializing_if = "Option::is_none")]
         summary: Option<ReasoningSummaryConfig>,
+
+        /// Updated session mode (workflow state: Default, Plan, DontAsk).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_mode: Option<SessionMode>,
     },
 
     /// Approve a command execution
@@ -686,10 +691,10 @@ pub enum EventMsg {
     ExitedReviewMode(ExitedReviewModeEvent),
 
     /// Entered plan mode for exploration and design.
-    EnteredPlanMode(crate::permission_mode::EnteredPlanModeEvent),
+    EnteredPlanMode(crate::session_mode::EnteredPlanModeEvent),
 
     /// Exited plan mode with the final plan.
-    ExitedPlanMode(crate::permission_mode::ExitedPlanModeEvent),
+    ExitedPlanMode(crate::session_mode::ExitedPlanModeEvent),
 
     RawResponseItem(RawResponseItemEvent),
 

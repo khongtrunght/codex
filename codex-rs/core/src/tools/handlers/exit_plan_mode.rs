@@ -4,7 +4,7 @@
 //! The plan is read from the plan file that was written during plan mode.
 
 use async_trait::async_trait;
-use codex_protocol::permission_mode::ExitedPlanModeEvent;
+use codex_protocol::session_mode::ExitedPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
 
 use crate::function_tool::FunctionCallError;

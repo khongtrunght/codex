@@ -35,8 +35,8 @@ use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
 use codex_core::protocol::ExecCommandSource;
 use codex_core::protocol::ExitedReviewModeEvent;
-use codex_protocol::permission_mode::EnteredPlanModeEvent;
-use codex_protocol::permission_mode::ExitedPlanModeEvent;
+use codex_protocol::session_mode::EnteredPlanModeEvent;
+use codex_protocol::session_mode::ExitedPlanModeEvent;
 use codex_core::protocol::ListCustomPromptsResponseEvent;
 use codex_core::protocol::ListSkillsResponseEvent;
 use codex_core::protocol::McpListToolsResponseEvent;
@@ -2103,7 +2103,9 @@ impl ChatWidget {
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
             | EventMsg::SubAgentBegin(_)
-            | EventMsg::SubAgentEnd(_) => {}
+            | EventMsg::SubAgentEnd(_)
+            | EventMsg::EnterPlanModeApprovalRequest(_)
+            | EventMsg::ExitPlanModeApprovalRequest(_) => {}
         }
     }
 
@@ -2360,6 +2362,7 @@ impl ChatWidget {
                 model: Some(switch_model.clone()),
                 effort: Some(Some(default_effort)),
                 summary: None,
+                session_mode: None,
             }));
             tx.send(AppEvent::UpdateModel(switch_model.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(Some(default_effort)));
@@ -2580,6 +2583,7 @@ impl ChatWidget {
                 model: Some(model_for_action.clone()),
                 effort: Some(effort_for_action),
                 summary: None,
+                session_mode: None,
             }));
             tx.send(AppEvent::UpdateModel(model_for_action.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
@@ -2751,6 +2755,7 @@ impl ChatWidget {
                 model: Some(model.clone()),
                 effort: Some(effort),
                 summary: None,
+                session_mode: None,
             }));
         self.app_event_tx.send(AppEvent::UpdateModel(model.clone()));
         self.app_event_tx
@@ -2881,6 +2886,7 @@ impl ChatWidget {
                 model: None,
                 effort: None,
                 summary: None,
+                session_mode: None,
             }));
             tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
             tx.send(AppEvent::UpdateSandboxPolicy(sandbox_clone));

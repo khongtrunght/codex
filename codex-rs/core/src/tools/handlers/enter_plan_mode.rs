@@ -5,7 +5,7 @@
 //! approach before making any changes.
 
 use async_trait::async_trait;
-use codex_protocol::permission_mode::EnteredPlanModeEvent;
+use codex_protocol::session_mode::EnteredPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
 
 use crate::function_tool::FunctionCallError;

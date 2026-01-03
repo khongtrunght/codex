@@ -48,7 +48,7 @@ use codex_core::protocol::SessionSource;
 use codex_core::protocol::SkillErrorInfo;
 use codex_core::plan_file::resolve_plan_file_path;
 use codex_core::protocol::TokenUsage;
-use codex_protocol::permission_mode::PermissionMode;
+use crate::tui_display_mode::TuiDisplayMode;
 use codex_core::terminal::terminal_info;
 use codex_protocol::ConversationId;
 use codex_protocol::openai_models::ModelPreset;
@@ -360,10 +360,15 @@ pub(crate) struct App {
     // One-shot suppression of the next world-writable scan after user confirmation.
     skip_world_writable_scan_once: bool,
 
-    /// Current permission mode for the session.
-    current_permission_mode: PermissionMode,
-    /// Whether bypass permissions mode is available (requires CLI flag).
+    /// Current TUI display mode for the session.
+    current_display_mode: TuiDisplayMode,
+    /// Whether bypass mode is available (requires CLI flag).
     is_bypass_available: bool,
+
+    /// Initial approval policy from config (for restoring when cycling back to Default).
+    initial_approval_policy: codex_core::protocol::AskForApproval,
+    /// Initial sandbox policy from config (for restoring when cycling back to Default).
+    initial_sandbox_policy: codex_core::protocol::SandboxPolicy,
 }
 
 /// Content-relative selection within the inline transcript viewport.
@@ -510,6 +515,16 @@ impl App {
             },
         );
 
+        // Bypass mode is available if the user started with --sandbox danger-full-access
+        let is_bypass_available = matches!(
+            config.sandbox_policy.get(),
+            codex_core::protocol::SandboxPolicy::DangerFullAccess
+        );
+
+        // Store initial policies for restoring when cycling back to Default mode
+        let initial_approval_policy = config.approval_policy.get().clone();
+        let initial_sandbox_policy = config.sandbox_policy.get().clone();
+
         let mut app = Self {
             server: conversation_manager.clone(),
             app_event_tx,
@@ -536,8 +551,10 @@ impl App {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
-            current_permission_mode: PermissionMode::Default,
-            is_bypass_available: false,
+            current_display_mode: TuiDisplayMode::Default,
+            is_bypass_available,
+            initial_approval_policy,
+            initial_sandbox_policy,
         };
 
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
@@ -1840,6 +1857,7 @@ impl App {
                                         model: None,
                                         effort: None,
                                         summary: None,
+                                        session_mode: None,
                                     },
                                 ));
                                 self.app_event_tx
@@ -1966,16 +1984,6 @@ impl App {
             }
             AppEvent::SkipNextWorldWritableScan => {
                 self.skip_world_writable_scan_once = true;
-            }
-            AppEvent::UpdatePermissionMode(mode) => {
-                // Update the permission mode in the app state
-                // TODO: Store permission mode and update UI display
-                tracing::debug!(?mode, "Permission mode updated");
-            }
-            AppEvent::CyclePermissionMode => {
-                // Cycle to the next permission mode (shift+tab)
-                // TODO: Implement mode cycling with is_bypass_available check
-                tracing::debug!("Cycle permission mode requested");
             }
             AppEvent::UpdateFullAccessWarningAcknowledged(ack) => {
                 self.chat_widget.set_full_access_warning_acknowledged(ack);
@@ -2129,8 +2137,8 @@ impl App {
         self.config.model_reasoning_effort = effort;
     }
 
-    /// Cycle to the next permission mode (triggered by Shift+Tab).
-    async fn cycle_permission_mode(&mut self, tui: &mut tui::Tui) {
+    /// Cycle to the next TUI display mode (triggered by Shift+Tab).
+    async fn cycle_display_mode(&mut self, tui: &mut tui::Tui) {
         // Get the session ID for plan file path resolution
         let session_id = self
             .chat_widget
@@ -2138,7 +2146,7 @@ impl App {
             .map(|id| id.to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let next_mode = self.current_permission_mode.next_mode(
+        let next_mode = self.current_display_mode.next_mode(
             self.is_bypass_available,
             || {
                 // Lazily resolve plan file path when transitioning to Plan mode
@@ -2147,16 +2155,73 @@ impl App {
                     .to_string()
             },
         );
-        self.current_permission_mode = next_mode.clone();
+
+        // Determine approval, sandbox, and session mode changes based on the new mode
+        let (approval_policy, sandbox_policy, session_mode) = match &next_mode {
+            TuiDisplayMode::Default => {
+                // Restore initial policies and default session mode
+                (
+                    Some(self.initial_approval_policy.clone()),
+                    Some(self.initial_sandbox_policy.clone()),
+                    Some(codex_protocol::session_mode::SessionMode::Default),
+                )
+            }
+            TuiDisplayMode::AcceptEdits => {
+                // AcceptEdits uses OnFailure approval (auto-approve in sandbox)
+                (
+                    Some(codex_core::protocol::AskForApproval::OnFailure),
+                    None, // Keep current sandbox policy
+                    Some(codex_protocol::session_mode::SessionMode::Default),
+                )
+            }
+            TuiDisplayMode::Plan { plan_file_path } => {
+                // Plan mode sets the session mode to Plan
+                (
+                    None, // Keep current approval policy
+                    None, // Keep current sandbox policy
+                    Some(codex_protocol::session_mode::SessionMode::Plan {
+                        plan_file_path: plan_file_path.clone(),
+                    }),
+                )
+            }
+            TuiDisplayMode::Bypass => {
+                // Bypass uses Never approval and DangerFullAccess sandbox
+                (
+                    Some(codex_core::protocol::AskForApproval::Never),
+                    Some(codex_core::protocol::SandboxPolicy::DangerFullAccess),
+                    Some(codex_protocol::session_mode::SessionMode::Default),
+                )
+            }
+        };
+
+        // Send Op::OverrideTurnContext to the backend
+        self.app_event_tx.send(AppEvent::CodexOp(
+            Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy,
+                sandbox_policy,
+                model: None,
+                effort: None,
+                summary: None,
+                session_mode,
+            },
+        ));
+
+        tracing::debug!(
+            ?next_mode,
+            "Sent OverrideTurnContext for display mode change"
+        );
+
+        self.current_display_mode = next_mode.clone();
 
         // Update the chat widget's footer indicator
-        self.chat_widget.set_permission_mode(next_mode.clone());
+        self.chat_widget.set_display_mode(next_mode.clone());
 
         // Log the mode change
         tracing::info!(
             mode = ?next_mode,
             display_name = next_mode.display_name(),
-            "Permission mode cycled"
+            "TUI display mode cycled"
         );
 
         // Request a frame redraw to update the UI
@@ -2211,13 +2276,13 @@ impl App {
             } => {
                 self.copy_transcript_selection(tui);
             }
-            // Shift+Tab cycles permission modes
+            // Shift+Tab cycles TUI display modes
             KeyEvent {
                 code: KeyCode::BackTab,
                 kind: KeyEventKind::Press,
                 ..
             } => {
-                self.cycle_permission_mode(tui).await;
+                self.cycle_display_mode(tui).await;
             }
             KeyEvent {
                 code: KeyCode::PageUp,
@@ -2387,6 +2452,8 @@ mod tests {
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
 
+        let initial_approval_policy = config.approval_policy.get().clone();
+        let initial_sandbox_policy = config.sandbox_policy.get().clone();
         App {
             server,
             app_event_tx,
@@ -2413,8 +2480,10 @@ mod tests {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
-            current_permission_mode: PermissionMode::Default,
+            current_display_mode: TuiDisplayMode::Default,
             is_bypass_available: false,
+            initial_approval_policy,
+            initial_sandbox_policy,
         }
     }
 
@@ -2434,6 +2503,8 @@ mod tests {
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let file_search = FileSearchManager::new(config.cwd.clone(), app_event_tx.clone());
 
+        let initial_approval_policy = config.approval_policy.get().clone();
+        let initial_sandbox_policy = config.sandbox_policy.get().clone();
         (
             App {
                 server,
@@ -2461,8 +2532,10 @@ mod tests {
                 pending_update_action: None,
                 suppress_shutdown_complete: false,
                 skip_world_writable_scan_once: false,
-                current_permission_mode: PermissionMode::Default,
+                current_display_mode: TuiDisplayMode::Default,
                 is_bypass_available: false,
+                initial_approval_policy,
+                initial_sandbox_policy,
             },
             rx,
             op_rx,

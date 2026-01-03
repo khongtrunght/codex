@@ -184,6 +184,7 @@ impl Approvable<ExitPlanModeRequest> for ExitPlanModeRuntime {
         })
     }
 
+    /// Force approval even in bypass mode.
     fn ignore_bypass_mode(&self) -> bool {
         true
     }

@@ -1,12 +1,10 @@
 //! Write tool handler - writes content to files.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use tokio::fs;
-
-use std::time::Duration;
 
 use crate::exec::ExecToolCallOutput;
 use crate::exec::StreamOutput;
@@ -17,9 +15,14 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
+use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::plan_mode_restriction::check_plan_mode_write;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use crate::tools::runtimes::write_file::WriteFileRequest;
+use crate::tools::runtimes::write_file::WriteFileRuntime;
+use crate::tools::sandboxing::ToolCtx;
+use crate::tools::sandboxing::ToolError;
 
 #[derive(Deserialize)]
 struct WriteFileArgs {
@@ -41,8 +44,8 @@ impl ToolHandler for WriteFileHandler {
             turn,
             tracker,
             call_id,
+            tool_name,
             payload,
-            ..
         } = invocation;
 
         let arguments = match payload {
@@ -85,47 +88,38 @@ impl ToolHandler for WriteFileHandler {
                 )));
             }
             // Read original content for diff generation
-            fs::read_to_string(&path).await.ok()
+            tokio::fs::read_to_string(&path).await.ok()
         } else {
             None
         };
 
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent()
-            && !parent.exists()
-        {
-            fs::create_dir_all(parent).await.map_err(|e| {
-                FunctionCallError::RespondToModel(format!(
-                    "failed to create parent directories for {}: {e}",
-                    path.display()
-                ))
-            })?;
-        }
+        // Create the request and run through orchestrator
+        let req = WriteFileRequest {
+            file_path: path.clone(),
+            content: args.content.clone(),
+        };
 
-        // Write the content
-        fs::write(&path, &args.content).await.map_err(|e| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to write file {}: {e}",
-                path.display()
-            ))
-        })?;
+        let mut orchestrator = ToolOrchestrator::new();
+        let mut runtime = WriteFileRuntime::new();
+        let tool_ctx = ToolCtx {
+            session: session.as_ref(),
+            turn: turn.as_ref(),
+            call_id: call_id.clone(),
+            tool_name: tool_name.to_string(),
+        };
 
-        // Emit diff events for TUI display using ToolEmitter pattern
-        let change = match original_content {
+        // Emit begin event for TUI display
+        let change = match &original_content {
             Some(old) => {
-                // File was overwritten - show diff
-                let unified_diff = diffy::create_patch(&old, &args.content).to_string();
+                let unified_diff = diffy::create_patch(old, &args.content).to_string();
                 FileChange::Update {
                     unified_diff,
                     move_path: None,
                 }
             }
-            None => {
-                // New file was created - show as added
-                FileChange::Add {
-                    content: args.content.clone(),
-                }
-            }
+            None => FileChange::Add {
+                content: args.content.clone(),
+            },
         };
 
         let changes: HashMap<std::path::PathBuf, FileChange> =
@@ -136,39 +130,60 @@ impl ToolHandler for WriteFileHandler {
             ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
         emitter.begin(event_ctx).await;
 
-        // Create success output and emit end event
-        let lines = args.content.lines().count();
-        let bytes = args.content.len();
-        let success_msg = format!(
-            "Successfully wrote {} lines ({} bytes) to {}",
-            lines,
-            bytes,
-            path.display()
-        );
-        let exec_output = ExecToolCallOutput {
-            exit_code: 0,
-            stdout: StreamOutput::new(success_msg.clone()),
-            stderr: StreamOutput::new(String::new()),
-            aggregated_output: StreamOutput::new(success_msg),
-            duration: Duration::ZERO,
-            timed_out: false,
-        };
-        let event_ctx =
-            ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
-        let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
+        // Run through the orchestrator
+        let result = orchestrator
+            .run(&mut runtime, &req, &tool_ctx, &turn, turn.approval_policy)
+            .await;
 
-        // Track that this file was written (mark as read so subsequent writes are allowed)
-        turn.mark_file_read(&path);
+        // Handle result and emit end event
+        match result {
+            Ok(output) => {
+                // Build final change for event emission
+                let final_change = if output.is_new_file {
+                    FileChange::Add {
+                        content: output.new_content.clone(),
+                    }
+                } else {
+                    let old = output.original_content.as_deref().unwrap_or("");
+                    let unified_diff = diffy::create_patch(old, &output.new_content).to_string();
+                    FileChange::Update {
+                        unified_diff,
+                        move_path: None,
+                    }
+                };
 
-        Ok(ToolOutput::Function {
-            content: format!(
-                "Successfully wrote {} lines ({} bytes) to {}",
-                lines,
-                bytes,
-                path.display()
-            ),
-            content_items: None,
-            success: Some(true),
-        })
+                let final_changes: HashMap<std::path::PathBuf, FileChange> =
+                    [(path.clone(), final_change)].into_iter().collect();
+
+                let emitter = ToolEmitter::apply_patch(final_changes, true);
+                let exec_output = ExecToolCallOutput {
+                    exit_code: 0,
+                    stdout: StreamOutput::new(output.message.clone()),
+                    stderr: StreamOutput::new(String::new()),
+                    aggregated_output: StreamOutput::new(output.message.clone()),
+                    duration: Duration::ZERO,
+                    timed_out: false,
+                };
+                let event_ctx =
+                    ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
+                let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
+
+                // Track that this file was written (mark as read so subsequent writes are allowed)
+                turn.mark_file_read(&path);
+
+                Ok(ToolOutput::Function {
+                    content: format!(
+                        "Successfully wrote {} lines ({} bytes) to {}",
+                        output.lines, output.bytes, path.display()
+                    ),
+                    content_items: None,
+                    success: Some(true),
+                })
+            }
+            Err(ToolError::Rejected(msg)) => Err(FunctionCallError::RespondToModel(msg)),
+            Err(ToolError::Codex(err)) => {
+                Err(FunctionCallError::RespondToModel(format!("write failed: {err}")))
+            }
+        }
     }
 }

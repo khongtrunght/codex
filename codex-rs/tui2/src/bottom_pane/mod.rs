@@ -51,7 +51,7 @@ pub(crate) enum CancellationEvent {
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 use codex_protocol::custom_prompts::CustomPrompt;
-use codex_protocol::permission_mode::PermissionMode;
+use crate::tui_display_mode::TuiDisplayMode;
 use codex_protocol::todo_tool::StepStatus;
 use codex_protocol::todo_tool::TodoWriteArgs;
 use ratatui::style::Stylize;
@@ -150,8 +150,8 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    pub fn set_permission_mode(&mut self, mode: PermissionMode) {
-        self.composer.set_permission_mode(mode);
+    pub fn set_display_mode(&mut self, mode: TuiDisplayMode) {
+        self.composer.set_display_mode(mode);
         self.request_redraw();
     }
 

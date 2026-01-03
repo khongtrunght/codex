@@ -4,8 +4,8 @@ use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::render::line_utils::prefix_lines;
 use crate::status::format_tokens_compact;
+use crate::tui_display_mode::TuiDisplayMode;
 use crate::ui_consts::FOOTER_INDENT_COLS;
-use codex_protocol::permission_mode::PermissionMode;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -40,15 +40,12 @@ pub(crate) struct PermissionModeDisplay<'a> {
 }
 
 impl PermissionModeDisplay<'_> {
-    pub(crate) fn from_mode(mode: &PermissionMode) -> PermissionModeDisplay<'static> {
-        let (icon, name, color) = match mode {
-            PermissionMode::Default => ("", "Default", Color::Reset),
-            PermissionMode::AcceptEdits => ("⏵⏵", "Accept Edits", Color::Yellow),
-            PermissionMode::Plan { .. } => ("⏸", "Plan Mode", Color::Cyan),
-            PermissionMode::BypassPermissions => ("⏵⏵", "Bypass", Color::Red),
-            PermissionMode::DontAsk => ("⏵⏵", "Don't Ask", Color::Red),
-        };
-        PermissionModeDisplay { icon, name, color }
+    pub(crate) fn from_display_mode(mode: &TuiDisplayMode) -> PermissionModeDisplay<'static> {
+        PermissionModeDisplay {
+            icon: mode.icon(),
+            name: mode.display_name(),
+            color: mode.color(),
+        }
     }
 }
 

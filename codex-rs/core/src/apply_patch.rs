@@ -41,11 +41,11 @@ pub(crate) async fn apply_patch(
     action: ApplyPatchAction,
 ) -> InternalApplyPatchInvocation {
     // Check plan mode write restriction for all files in the patch
-    for (path, _change) in action.changes() {
+    for path in action.changes().keys() {
         if let Err(msg) = check_plan_mode_write(sess, path).await {
-            return InternalApplyPatchInvocation::Output(Err(
-                FunctionCallError::RespondToModel(msg),
-            ));
+            return InternalApplyPatchInvocation::Output(Err(FunctionCallError::RespondToModel(
+                msg,
+            )));
         }
     }
 

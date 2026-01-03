@@ -833,6 +833,7 @@ impl App {
                                         model: None,
                                         effort: None,
                                         summary: None,
+                                        session_mode: None,
                                     },
                                 ));
                                 self.app_event_tx

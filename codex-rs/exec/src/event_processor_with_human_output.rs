@@ -594,7 +594,9 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::SubAgentBegin(_)
             | EventMsg::SubAgentEnd(_)
             | EventMsg::EnteredPlanMode(_)
-            | EventMsg::ExitedPlanMode(_) => {}
+            | EventMsg::ExitedPlanMode(_)
+            | EventMsg::EnterPlanModeApprovalRequest(_)
+            | EventMsg::ExitPlanModeApprovalRequest(_) => {}
         }
         CodexStatus::Running
     }

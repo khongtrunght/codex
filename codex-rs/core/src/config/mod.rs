@@ -58,7 +58,6 @@ use toml_edit::DocumentMut;
 
 mod constraint;
 pub mod edit;
-pub mod permissions;
 pub mod profile;
 pub mod service;
 pub mod types;

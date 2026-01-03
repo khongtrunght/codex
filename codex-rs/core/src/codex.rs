@@ -626,6 +626,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) reasoning_effort: Option<Option<ReasoningEffortConfig>>,
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
+    pub(crate) session_mode: Option<codex_protocol::session_mode::SessionMode>,
 }
 
 impl Session {
@@ -985,18 +986,6 @@ impl Session {
         self.conversation_id
     }
 
-    /// Check if the session is currently in plan mode.
-    pub(crate) async fn is_planning(&self) -> bool {
-        let state = self.state.lock().await;
-        state.is_planning()
-    }
-
-    /// Check if the session has exited plan mode previously.
-    pub(crate) async fn has_exited_plan_mode(&self) -> bool {
-        let state = self.state.lock().await;
-        state.has_exited_plan_mode()
-    }
-
     /// Check if a given path is the plan file for the current session.
     /// Returns true only if in plan mode and the path matches the plan file.
     pub(crate) async fn is_plan_file_path(&self, path: &std::path::Path) -> bool {
@@ -1018,53 +1007,18 @@ impl Session {
         state.exit_plan_mode();
     }
 
-    /// Get the current permission mode.
-    pub(crate) async fn permission_mode(
-        &self,
-    ) -> codex_protocol::permission_mode::PermissionMode {
-        let state = self.state.lock().await;
-        state.permission_mode().clone()
-    }
-
-    /// Set the permission mode.
-    pub(crate) async fn set_permission_mode(
-        &self,
-        mode: codex_protocol::permission_mode::PermissionMode,
-    ) {
-        let mut state = self.state.lock().await;
-        state.set_permission_mode(mode);
-    }
-
-    /// Check if in plan mode (unified check via permission context).
+    /// Check if in plan mode.
     pub(crate) async fn is_in_plan_mode(&self) -> bool {
         let state = self.state.lock().await;
         state.is_in_plan_mode()
     }
 
-    /// Get the plan file path from the permission context.
+    /// Get the plan file path from the mode context.
     pub(crate) async fn get_plan_file_path_unified(&self) -> Option<String> {
         let state = self.state.lock().await;
-        state.get_plan_file_path().map(|s| s.to_string())
-    }
-
-    /// Get a clone of the permission context.
-    pub(crate) async fn get_permission_context(
-        &self,
-    ) -> codex_protocol::permission_context::PermissionContext {
-        let state = self.state.lock().await;
-        state.permission_context().clone()
-    }
-
-    /// Check if bypass permissions mode is available.
-    pub(crate) async fn is_bypass_available(&self) -> bool {
-        let state = self.state.lock().await;
-        state.is_bypass_available()
-    }
-
-    /// Set whether bypass permissions mode is available.
-    pub(crate) async fn set_bypass_available(&self, available: bool) {
-        let mut state = self.state.lock().await;
-        state.set_bypass_available(available);
+        state
+            .get_plan_file_path()
+            .map(std::string::ToString::to_string)
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -1136,6 +1090,12 @@ impl Session {
         match state.session_configuration.apply(&updates) {
             Ok(updated) => {
                 state.session_configuration = updated;
+
+                // Apply session mode change if provided
+                if let Some(mode) = updates.session_mode {
+                    state.set_session_mode(mode);
+                }
+
                 Ok(())
             }
             Err(err) => {
@@ -2017,6 +1977,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 model,
                 effort,
                 summary,
+                session_mode,
             } => {
                 handlers::override_turn_context(
                     &sess,
@@ -2028,6 +1989,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                         model,
                         reasoning_effort: effort,
                         reasoning_summary: summary,
+                        session_mode,
                         ..Default::default()
                     },
                 )
@@ -2183,6 +2145,7 @@ mod handlers {
                     reasoning_effort: Some(effort),
                     reasoning_summary: Some(summary),
                     final_output_json_schema: Some(final_output_json_schema),
+                    session_mode: None,
                 },
             ),
             Op::UserInput { items } => (items, SessionSettingsUpdate::default()),

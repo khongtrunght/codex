@@ -1,8 +1,8 @@
 //! Session-wide mutable state.
 
 use codex_protocol::models::ResponseItem;
-use codex_protocol::permission_context::PermissionContext;
-use codex_protocol::permission_mode::PermissionMode;
+use codex_protocol::session_mode::SessionMode;
+use codex_protocol::session_mode_context::SessionModeContext;
 
 use crate::codex::SessionConfiguration;
 use crate::context_manager::ContextManager;
@@ -16,8 +16,8 @@ pub(crate) struct SessionState {
     pub(crate) session_configuration: SessionConfiguration,
     pub(crate) history: ContextManager,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
-    /// Unified permission context (includes mode, rules, and flags).
-    pub(crate) permission_context: PermissionContext,
+    /// Session mode context (workflow state, not permissions).
+    pub(crate) mode_context: SessionModeContext,
 }
 
 impl SessionState {
@@ -28,21 +28,7 @@ impl SessionState {
             session_configuration,
             history,
             latest_rate_limits: None,
-            permission_context: PermissionContext::default(),
-        }
-    }
-
-    /// Create a new session state for a subagent (inherits rules, uses DontAsk mode).
-    pub(crate) fn for_subagent(
-        session_configuration: SessionConfiguration,
-        parent_permission_context: &PermissionContext,
-    ) -> Self {
-        let history = ContextManager::new();
-        Self {
-            session_configuration,
-            history,
-            latest_rate_limits: None,
-            permission_context: PermissionContext::for_subagent(parent_permission_context),
+            mode_context: SessionModeContext::default(),
         }
     }
 
@@ -101,45 +87,26 @@ impl SessionState {
         self.history.get_total_token_usage()
     }
 
-    // Permission context helpers
+    // Mode context helpers
 
-    /// Get the current permission context.
-    pub(crate) fn permission_context(&self) -> &PermissionContext {
-        &self.permission_context
-    }
-
-    /// Get a mutable reference to the permission context.
-    pub(crate) fn permission_context_mut(&mut self) -> &mut PermissionContext {
-        &mut self.permission_context
-    }
-
-    /// Get the current permission mode.
-    pub(crate) fn permission_mode(&self) -> &PermissionMode {
-        &self.permission_context.mode
-    }
-
-    /// Set the permission mode.
-    pub(crate) fn set_permission_mode(&mut self, mode: PermissionMode) {
-        // Track plan mode exit in permission context
-        if self.permission_context.mode.is_planning() && !mode.is_planning() {
-            self.permission_context.has_exited_plan_mode = true;
-        }
-        self.permission_context.mode = mode;
+    /// Set the session mode.
+    pub(crate) fn set_session_mode(&mut self, mode: SessionMode) {
+        self.mode_context.set_mode(mode);
     }
 
     /// Enter plan mode with the given plan file path.
     pub(crate) fn enter_plan_mode(&mut self, plan_file_path: String) {
-        self.set_permission_mode(PermissionMode::Plan { plan_file_path });
+        self.mode_context.enter_plan_mode(plan_file_path);
     }
 
     /// Exit plan mode and return to default mode.
     pub(crate) fn exit_plan_mode(&mut self) {
-        self.set_permission_mode(PermissionMode::Default);
+        self.mode_context.exit_plan_mode();
     }
 
-    /// Check if permission mode is in planning state.
+    /// Check if session mode is in planning state.
     pub(crate) fn is_planning(&self) -> bool {
-        self.permission_context.mode.is_planning()
+        self.mode_context.is_planning()
     }
 
     /// Alias for is_planning() - check if in plan mode.
@@ -147,29 +114,14 @@ impl SessionState {
         self.is_planning()
     }
 
-    /// Get the plan file path from permission context.
+    /// Get the plan file path from mode context.
     pub(crate) fn plan_file_path(&self) -> Option<&str> {
-        self.permission_context.mode.plan_file_path()
+        self.mode_context.plan_file_path()
     }
 
     /// Alias for plan_file_path() - get the plan file path.
     pub(crate) fn get_plan_file_path(&self) -> Option<&str> {
         self.plan_file_path()
-    }
-
-    /// Check if we've exited plan mode.
-    pub(crate) fn has_exited_plan_mode(&self) -> bool {
-        self.permission_context.has_exited_plan_mode
-    }
-
-    /// Check if bypass permissions mode is available.
-    pub(crate) fn is_bypass_available(&self) -> bool {
-        self.permission_context.is_bypass_available
-    }
-
-    /// Set whether bypass permissions mode is available.
-    pub(crate) fn set_bypass_available(&mut self, available: bool) {
-        self.permission_context.is_bypass_available = available;
     }
 }
 

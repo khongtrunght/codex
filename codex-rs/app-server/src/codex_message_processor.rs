@@ -2740,6 +2740,7 @@ impl CodexMessageProcessor {
                     model: params.model,
                     effort: params.effort.map(Some),
                     summary: params.summary,
+                    session_mode: None,
                 })
                 .await;
         }
