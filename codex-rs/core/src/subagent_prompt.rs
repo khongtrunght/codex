@@ -1,8 +1,7 @@
 //! Sub-agent system prompt construction.
 //!
 //! This module provides functions to build augmented system prompts for sub-agents
-//! spawned by the Task tool. The approach follows Claude Code's multi-layer prompt
-//! structure.
+//! spawned by the Task tool. The approach follows a multi-layer prompt structure.
 //!
 //! Note: Environment context (cwd, sandbox, etc.) is handled separately by
 //! `EnvironmentContext` which injects XML as a user message. This module only

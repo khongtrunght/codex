@@ -301,7 +301,7 @@ fn build_subagent_config(
     let augmented = augment_system_prompt(agent_prompt);
 
     // Set as base_instructions (system prompt), not user_instructions
-    // This REPLACES the parent's instructions, following Claude Code's approach
+    // This REPLACES the parent's instructions for clean sub-agent context
     config.base_instructions = Some(augmented);
 
     // Clear parent's instructions - sub-agents should not inherit these

@@ -2,8 +2,6 @@
 //!
 //! Generates human-friendly slugs in the format `{adjective}-{verb}-{noun}`
 //! for plan file naming. This makes plan files easy to identify and remember.
-//!
-//! Word lists are based on Claude Code's pattern.
 
 use rand::prelude::IndexedRandom;
 use rand::rng;

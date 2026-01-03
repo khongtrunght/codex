@@ -25,7 +25,7 @@ Guidelines:
 - Use {grep_tool} for searching file contents with regex
 - Use {read_tool} when you know the specific file path you need to read
 - Use {shell_tool} ONLY for read-only operations (ls, git status, git log, git diff, find, cat, head, tail)
-- NEVER use ${shell_tool} for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification
+- NEVER use {shell_tool} for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification
 - Adapt your search approach based on the thoroughness level specified by the caller
 - Return file paths as absolute paths in your final response
 - For clear communication, avoid using emojis

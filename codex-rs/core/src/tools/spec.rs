@@ -87,6 +87,7 @@ impl ApplyToolConfig for &str {
             .replace("{glob_tool}", GLOB_TOOL_NAME)
             .replace("{grep_tool}", GREP_FILES_TOOL_NAME)
             .replace("{read_tool}", READ_FILE_TOOL_NAME)
+            .replace("{task_tool}", TASK_TOOL_NAME)
             // Plan mode tool placeholders
             .replace("{enter_plan_mode_tool}", ENTER_PLAN_MODE_TOOL_NAME)
             .replace("{exit_plan_mode_tool}", EXIT_PLAN_MODE_TOOL_NAME)
