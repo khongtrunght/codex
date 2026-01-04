@@ -395,9 +395,11 @@ impl AskUserQuestionOverlay {
         self.done = true;
     }
 
-    /// Cancel and close the overlay.
+    /// Cancel and close the overlay, interrupting the current turn.
     fn cancel(&mut self) {
         self.send_response(true);
+        // Also send interrupt to stop the model from continuing
+        self.app_event_tx.send(AppEvent::CodexOp(Op::Interrupt));
         self.done = true;
     }
 
