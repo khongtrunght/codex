@@ -126,12 +126,6 @@ impl ToolHandler for AskUserQuestionHandler {
                     q.question
                 )));
             }
-            if q.header.len() > 12 {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "Question header '{}' exceeds 12 character limit",
-                    q.header
-                )));
-            }
         }
 
         // Convert to protocol types
