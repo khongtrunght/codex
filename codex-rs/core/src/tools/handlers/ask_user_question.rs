@@ -142,10 +142,10 @@ impl ToolHandler for AskUserQuestionHandler {
             .request_ask_user_question(&turn, call_id.clone(), questions.clone())
             .await;
 
-        // Handle cancellation
+        // Handle cancellation - send instructive message to model
         if response.cancelled {
             return Err(FunctionCallError::RespondToModel(
-                "User declined to answer questions".to_string(),
+                "The user doesn't want to take this action right now. STOP what you are doing and wait for the user to tell you how to proceed.".to_string(),
             ));
         }
 

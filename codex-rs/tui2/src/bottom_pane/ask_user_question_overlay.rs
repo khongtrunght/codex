@@ -29,6 +29,7 @@ use ratatui::widgets::Wrap;
 
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::history_cell;
 use crate::render::renderable::Renderable;
 
 use super::CancellationEvent;
@@ -398,6 +399,13 @@ impl AskUserQuestionOverlay {
     /// Cancel and close the overlay, interrupting the current turn.
     fn cancel(&mut self) {
         self.send_response(true);
+        // Show "User declined to answer questions" in the chat history
+        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+            history_cell::new_info_event(
+                "User declined to answer questions".to_string(),
+                None,
+            ),
+        )));
         // Also send interrupt to stop the model from continuing
         self.app_event_tx.send(AppEvent::CodexOp(Op::Interrupt));
         self.done = true;
