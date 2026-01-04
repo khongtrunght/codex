@@ -100,6 +100,33 @@ pub(crate) fn render_footer(area: Rect, buf: &mut Buffer, props: FooterProps<'_>
     .render(area, buf);
 }
 
+/// Build the base status line with permission mode indicator and context info.
+/// This is the core status that should remain visible across most footer modes.
+fn base_status_line(props: FooterProps<'_>) -> Line<'static> {
+    let mut line = Line::from("");
+
+    // Show permission mode indicator (only if not Default)
+    if let Some(perm_display) = props.permission_mode_display {
+        if !perm_display.icon.is_empty() {
+            line.push_span(Span::styled(
+                format!("{} {}", perm_display.icon, perm_display.name),
+                ratatui::style::Style::default().fg(perm_display.color),
+            ));
+            line.push_span(" (shift+tab to cycle) ".dim());
+            line.push_span("· ".dim());
+        }
+    }
+
+    // Context window info
+    let context_line = context_window_line(
+        props.context_window_percent,
+        props.context_window_used_tokens,
+    );
+    line.spans.extend(context_line.spans);
+
+    line
+}
+
 fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
     // Show the context indicator on the left, appended after the primary hint
     // (e.g., "? for shortcuts"). Keep it visible even when typing (i.e., when
@@ -110,25 +137,7 @@ fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
             is_task_running: props.is_task_running,
         })],
         FooterMode::ShortcutSummary => {
-            let mut line = Line::from("");
-
-            // Show permission mode indicator (only if not Default)
-            if let Some(perm_display) = props.permission_mode_display {
-                if !perm_display.icon.is_empty() {
-                    line.push_span(Span::styled(
-                        format!("{} {} ", perm_display.icon, perm_display.name),
-                        ratatui::style::Style::default().fg(perm_display.color),
-                    ));
-                    line.push_span("· ".dim());
-                }
-            }
-
-            // Context window info
-            let context_line = context_window_line(
-                props.context_window_percent,
-                props.context_window_used_tokens,
-            );
-            line.spans.extend(context_line.spans);
+            let mut line = base_status_line(props);
 
             line.push_span(" · ".dim());
             line.extend(vec![
@@ -172,10 +181,7 @@ fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
             shortcut_overlay_lines(state)
         }
         FooterMode::EscHint => vec![esc_hint_line(props.esc_backtrack_hint)],
-        FooterMode::ContextOnly => vec![context_window_line(
-            props.context_window_percent,
-            props.context_window_used_tokens,
-        )],
+        FooterMode::ContextOnly => vec![base_status_line(props)],
     }
 }
 

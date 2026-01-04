@@ -144,6 +144,8 @@ pub enum Op {
         summary: Option<ReasoningSummaryConfig>,
 
         /// Updated session mode (workflow state: Default, Plan, DontAsk).
+        /// When setting Plan mode, the backend will auto-generate a plan slug
+        /// if one doesn't already exist for the session.
         #[serde(skip_serializing_if = "Option::is_none")]
         session_mode: Option<SessionMode>,
     },

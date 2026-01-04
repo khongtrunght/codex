@@ -94,9 +94,11 @@ impl SessionState {
         self.mode_context.set_mode(mode);
     }
 
-    /// Enter plan mode with the given plan file path.
-    pub(crate) fn enter_plan_mode(&mut self, plan_file_path: String) {
-        self.mode_context.enter_plan_mode(plan_file_path);
+    /// Enter plan mode.
+    ///
+    /// Note: Ensure plan_slug is set before calling this.
+    pub(crate) fn enter_plan_mode(&mut self) {
+        self.mode_context.enter_plan_mode();
     }
 
     /// Exit plan mode and return to default mode.
@@ -112,16 +114,6 @@ impl SessionState {
     /// Alias for is_planning() - check if in plan mode.
     pub(crate) fn is_in_plan_mode(&self) -> bool {
         self.is_planning()
-    }
-
-    /// Get the plan file path from mode context.
-    pub(crate) fn plan_file_path(&self) -> Option<&str> {
-        self.mode_context.plan_file_path()
-    }
-
-    /// Alias for plan_file_path() - get the plan file path.
-    pub(crate) fn get_plan_file_path(&self) -> Option<&str> {
-        self.plan_file_path()
     }
 
     /// Check if plan mode has been exited (for reentry detection).

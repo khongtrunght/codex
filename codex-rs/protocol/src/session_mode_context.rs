@@ -14,6 +14,9 @@ use crate::session_mode::SessionMode;
 ///
 /// Tracks the current workflow mode and related state.
 /// Approval behavior is handled separately by AskForApproval/SandboxPolicy.
+///
+/// Note: Plan file path is NOT stored here. It's derived from `plan_slug`
+/// using `resolve_plan_file_path_with_slug()` in core when needed.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionModeContext {
@@ -26,6 +29,7 @@ pub struct SessionModeContext {
 
     /// Plan slug for memorable file naming (e.g., "atomic-marinating-pumpkin").
     /// Stored per-session so it persists across plan mode entries.
+    /// The plan file path is derived from this slug when needed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_slug: Option<String>,
 }
@@ -56,6 +60,9 @@ impl SessionModeContext {
     }
 
     /// Set the session mode.
+    ///
+    /// Note: When entering Plan mode, ensure plan_slug is set first
+    /// (either via set_plan_slug or get_or_create_plan_slug).
     pub fn set_mode(&mut self, mode: SessionMode) {
         // Track plan mode exit
         if self.mode.is_planning() && !mode.is_planning() {
@@ -64,9 +71,12 @@ impl SessionModeContext {
         self.mode = mode;
     }
 
-    /// Enter plan mode with the given plan file path.
-    pub fn enter_plan_mode(&mut self, plan_file_path: String) {
-        self.set_mode(SessionMode::Plan { plan_file_path });
+    /// Enter plan mode.
+    ///
+    /// Note: Ensure plan_slug is set before calling this. The slug
+    /// should be generated once per session and reused across entries.
+    pub fn enter_plan_mode(&mut self) {
+        self.mode = SessionMode::Plan;
     }
 
     /// Exit plan mode and return to default mode.
@@ -82,11 +92,6 @@ impl SessionModeContext {
     /// Alias for is_planning().
     pub fn is_in_plan_mode(&self) -> bool {
         self.is_planning()
-    }
-
-    /// Get the plan file path if in planning mode.
-    pub fn plan_file_path(&self) -> Option<&str> {
-        self.mode.plan_file_path()
     }
 
     /// Check if in non-interactive mode.
@@ -110,10 +115,7 @@ impl SessionModeContext {
     where
         F: FnOnce() -> String,
     {
-        if self.plan_slug.is_none() {
-            self.plan_slug = Some(generate());
-        }
-        self.plan_slug.as_deref().expect("slug was just set")
+        self.plan_slug.get_or_insert_with(generate)
     }
 }
 
@@ -139,13 +141,30 @@ mod tests {
     fn test_enter_exit_plan_mode() {
         let mut ctx = SessionModeContext::new();
 
-        ctx.enter_plan_mode("/tmp/plan.md".to_string());
+        // Set slug first, then enter plan mode
+        ctx.set_plan_slug("test-slug".to_string());
+        ctx.enter_plan_mode();
         assert!(ctx.is_planning());
-        assert_eq!(ctx.plan_file_path(), Some("/tmp/plan.md"));
+        assert_eq!(ctx.plan_slug(), Some("test-slug"));
         assert!(!ctx.has_exited_plan_mode);
 
         ctx.exit_plan_mode();
         assert!(!ctx.is_planning());
         assert!(ctx.has_exited_plan_mode);
+        // slug persists after exiting plan mode
+        assert_eq!(ctx.plan_slug(), Some("test-slug"));
+    }
+
+    #[test]
+    fn test_get_or_create_plan_slug() {
+        let mut ctx = SessionModeContext::new();
+
+        // First call creates the slug
+        let slug1 = ctx.get_or_create_plan_slug(|| "generated-slug".to_string());
+        assert_eq!(slug1, "generated-slug");
+
+        // Second call returns the same slug (doesn't regenerate)
+        let slug2 = ctx.get_or_create_plan_slug(|| "different-slug".to_string());
+        assert_eq!(slug2, "generated-slug");
     }
 }

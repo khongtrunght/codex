@@ -18,6 +18,10 @@ use ts_rs::TS;
 /// - Default: Normal workflow, approval determined by policy
 /// - Plan: Planning phase with restricted writes (only plan file)
 /// - DontAsk: Non-interactive mode for subagents (auto-deny if approval needed)
+///
+/// Note: Plan file path is NOT stored in the mode itself. It's derived from
+/// the plan_slug stored in SessionModeContext. This allows the backend to
+/// auto-generate the slug/path when entering plan mode.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", tag = "mode")]
 #[ts(rename_all = "camelCase", tag = "mode")]
@@ -29,12 +33,8 @@ pub enum SessionMode {
 
     /// Plan mode - exploration phase with restricted writes.
     /// Only the plan file can be written during this phase.
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    Plan {
-        /// Path to the plan file where the model can write.
-        plan_file_path: String,
-    },
+    /// The plan file path is derived from SessionModeContext.plan_slug.
+    Plan,
 
     /// Non-interactive mode - auto-DENY if approval would be needed.
     /// Used by subagents, hook agents, and built-in agents.
@@ -47,7 +47,7 @@ impl SessionMode {
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Default => "Default",
-            Self::Plan { .. } => "Plan Mode",
+            Self::Plan => "Plan Mode",
             Self::DontAsk => "Don't Ask",
         }
     }
@@ -56,7 +56,7 @@ impl SessionMode {
     pub fn icon(&self) -> &'static str {
         match self {
             Self::Default => "",
-            Self::Plan { .. } => "\u{23F8}", // ⏸
+            Self::Plan => "\u{23F8}", // ⏸
             Self::DontAsk => "",
         }
     }
@@ -65,22 +65,14 @@ impl SessionMode {
     pub fn color_theme(&self) -> &'static str {
         match self {
             Self::Default => "text",
-            Self::Plan { .. } => "planMode",
+            Self::Plan => "planMode",
             Self::DontAsk => "error",
         }
     }
 
     /// Check if we are currently in planning mode.
     pub fn is_planning(&self) -> bool {
-        matches!(self, Self::Plan { .. })
-    }
-
-    /// Get the plan file path if in planning mode.
-    pub fn plan_file_path(&self) -> Option<&str> {
-        match self {
-            Self::Plan { plan_file_path } => Some(plan_file_path.as_str()),
-            _ => None,
-        }
+        matches!(self, Self::Plan)
     }
 
     /// Check if this mode is for non-interactive contexts (subagents).
@@ -135,11 +127,8 @@ mod tests {
 
     #[test]
     fn test_plan_mode() {
-        let mode = SessionMode::Plan {
-            plan_file_path: "/tmp/plan.md".to_string(),
-        };
+        let mode = SessionMode::Plan;
         assert!(mode.is_planning());
-        assert_eq!(mode.plan_file_path(), Some("/tmp/plan.md"));
         assert_eq!(mode.display_name(), "Plan Mode");
     }
 
@@ -152,12 +141,9 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let mode = SessionMode::Plan {
-            plan_file_path: "/tmp/test.md".to_string(),
-        };
+        let mode = SessionMode::Plan;
         let json = serde_json::to_string(&mode).unwrap();
         assert!(json.contains("plan"));
-        assert!(json.contains("planFilePath"));
 
         let deserialized: SessionMode = serde_json::from_str(&json).unwrap();
         assert_eq!(mode, deserialized);

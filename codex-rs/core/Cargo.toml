@@ -68,17 +68,17 @@ test-case = "3.3.1"
 test-log = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true, features = [
-    "formatting",
-    "parsing",
-    "local-offset",
-    "macros",
+  "formatting",
+  "parsing",
+  "local-offset",
+  "macros",
 ] }
 tokio = { workspace = true, features = [
-    "io-std",
-    "macros",
-    "process",
-    "rt-multi-thread",
-    "signal",
+  "io-std",
+  "macros",
+  "process",
+  "rt-multi-thread",
+  "signal",
 ] }
 tokio-util = { workspace = true, features = ["rt"] }
 toml = { workspace = true }
@@ -92,6 +92,9 @@ which = { workspace = true }
 wildmatch = { workspace = true }
 
 [features]
+default = ["exit_plan_mode"]
+
+exit_plan_mode = []
 deterministic_process_ids = []
 test-support = []
 

@@ -996,10 +996,11 @@ impl Session {
 
     // Unified Permission Context methods
 
-    /// Enter plan mode with the given plan file path (unified API).
-    pub(crate) async fn enter_plan_mode_unified(&self, plan_file_path: String) {
+    /// Enter plan mode (unified API).
+    /// Note: Plan slug should be set before calling this.
+    pub(crate) async fn enter_plan_mode_unified(&self) {
         let mut state = self.state.lock().await;
-        state.enter_plan_mode(plan_file_path);
+        state.enter_plan_mode();
     }
 
     /// Exit plan mode and return to default mode (unified API).
@@ -1014,12 +1015,14 @@ impl Session {
         state.is_in_plan_mode()
     }
 
-    /// Get the plan file path from the mode context.
+    /// Get the plan file path derived from the plan slug.
     pub(crate) async fn get_plan_file_path_unified(&self) -> Option<String> {
         let state = self.state.lock().await;
-        state
-            .get_plan_file_path()
-            .map(std::string::ToString::to_string)
+        state.plan_slug().map(|slug| {
+            crate::plan_file::resolve_plan_file_path_with_slug(slug, None)
+                .to_string_lossy()
+                .to_string()
+        })
     }
 
     /// Check if plan mode has been exited (for reentry detection).
@@ -1141,6 +1144,11 @@ impl Session {
 
                 // Apply session mode change if provided
                 if let Some(mode) = updates.session_mode {
+                    // Auto-generate plan slug when entering Plan mode (if not already set)
+                    if mode.is_planning() && state.plan_slug().is_none() {
+                        let slug = crate::plan_file::generate_unique_slug();
+                        state.set_plan_slug(slug);
+                    }
                     state.set_session_mode(mode);
                 }
 

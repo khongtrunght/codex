@@ -103,18 +103,19 @@ pub fn plan_exists_with_slug(slug: &str, agent_id: Option<&str>) -> bool {
 
 /// Check if a given path is the plan file for the current session.
 ///
-/// Uses the plan file path stored in SessionState when plan mode was entered.
+/// Derives the plan file path from the plan slug stored in SessionState.
 pub(crate) fn is_plan_file_path(path: &Path, session_state: &SessionState) -> bool {
-    if let Some(plan_file_path) = session_state.plan_file_path() {
-        // Simple string comparison first (fast path)
-        let path_str = path.to_string_lossy();
-        if path_str == plan_file_path {
+    if let Some(slug) = session_state.plan_slug() {
+        let plan_file_path = resolve_plan_file_path_with_slug(slug, None);
+
+        // Simple path comparison first (fast path)
+        if path == plan_file_path {
             return true;
         }
 
         // Try canonical paths for edge cases
         let normalized_path = path.canonicalize().ok();
-        let normalized_plan = Path::new(plan_file_path).canonicalize().ok();
+        let normalized_plan = plan_file_path.canonicalize().ok();
 
         match (normalized_path, normalized_plan) {
             (Some(p1), Some(p2)) => p1 == p2,
@@ -123,76 +124,6 @@ pub(crate) fn is_plan_file_path(path: &Path, session_state: &SessionState) -> bo
     } else {
         false
     }
-}
-
-// =============================================================================
-// Deprecated: Legacy functions using global cache
-// These are kept for backward compatibility but should be migrated away from.
-// =============================================================================
-
-use once_cell::sync::Lazy;
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-/// Legacy cache of session ID to plan slug mappings.
-/// @deprecated Use session state's plan_slug field instead.
-static PLAN_SLUG_CACHE: Lazy<Mutex<HashMap<String, String>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-/// Legacy: Generate or retrieve a unique slug for the session.
-/// @deprecated Use session.get_or_create_plan_slug() instead.
-pub fn get_or_create_slug(session_id: &str) -> String {
-    let mut cache = PLAN_SLUG_CACHE.lock().expect("lock poisoned");
-
-    if let Some(slug) = cache.get(session_id) {
-        return slug.clone();
-    }
-
-    let slug = generate_unique_slug();
-    cache.insert(session_id.to_string(), slug.clone());
-    slug
-}
-
-/// Legacy: Set a specific slug for a session.
-/// @deprecated Use session.set_plan_slug() instead.
-pub fn set_slug(session_id: &str, slug: &str) {
-    let mut cache = PLAN_SLUG_CACHE.lock().expect("lock poisoned");
-    cache.insert(session_id.to_string(), slug.to_string());
-}
-
-/// Legacy: Get the current slug for a session.
-/// @deprecated Use session.get_plan_slug() instead.
-pub fn get_slug(session_id: &str) -> Option<String> {
-    let cache = PLAN_SLUG_CACHE.lock().expect("lock poisoned");
-    cache.get(session_id).cloned()
-}
-
-/// Legacy: Resolve plan file path using session_id (looks up slug in global cache).
-/// @deprecated Use resolve_plan_file_path_with_slug() with session.get_or_create_plan_slug().
-pub fn resolve_plan_file_path(session_id: &str, agent_id: Option<&str>) -> PathBuf {
-    let slug = get_or_create_slug(session_id);
-    resolve_plan_file_path_with_slug(&slug, agent_id)
-}
-
-/// Legacy: Check if a plan file exists using session_id.
-/// @deprecated Use plan_exists_with_slug() with session.get_plan_slug().
-pub fn plan_exists(session_id: &str, agent_id: Option<&str>) -> bool {
-    let slug = get_or_create_slug(session_id);
-    plan_exists_with_slug(&slug, agent_id)
-}
-
-/// Legacy: Restore slug from a persisted value.
-/// @deprecated Use session.set_plan_slug() instead.
-pub fn restore_slug_from_persisted(session_id: &str, slug: &str) -> bool {
-    set_slug(session_id, slug);
-    plan_exists_with_slug(slug, None)
-}
-
-/// Clear the slug cache (useful for testing).
-#[cfg(test)]
-pub fn clear_slug_cache() {
-    let mut cache = PLAN_SLUG_CACHE.lock().expect("lock poisoned");
-    cache.clear();
 }
 
 #[cfg(test)]
@@ -230,29 +161,5 @@ mod tests {
         assert!(path
             .to_string_lossy()
             .ends_with("test-happy-slug-agent-agent-123.md"));
-    }
-
-    // Legacy tests
-    #[test]
-    fn test_get_or_create_slug_cached() {
-        clear_slug_cache();
-
-        let session_id = "test-session-cached";
-        let slug1 = get_or_create_slug(session_id);
-        let slug2 = get_or_create_slug(session_id);
-
-        // Same session ID should return same slug
-        assert_eq!(slug1, slug2);
-    }
-
-    #[test]
-    fn test_set_and_get_slug() {
-        clear_slug_cache();
-
-        let session_id = "test-session-set";
-        assert!(get_slug(session_id).is_none());
-
-        set_slug(session_id, "custom-test-slug");
-        assert_eq!(get_slug(session_id), Some("custom-test-slug".to_string()));
     }
 }

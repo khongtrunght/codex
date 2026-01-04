@@ -23,10 +23,8 @@ pub enum TuiDisplayMode {
 
     /// Plan mode - exploration phase with restricted writes.
     /// Maps to: SessionMode::Plan
-    Plan {
-        /// Path to the plan file.
-        plan_file_path: String,
-    },
+    /// Note: Plan file path is managed by the backend (derived from plan_slug).
+    Plan,
 
     /// Bypass mode - skip all permission checks.
     /// Maps to: SessionMode::Default + DangerFullAccess + Never
@@ -45,7 +43,7 @@ impl TuiDisplayMode {
         match self {
             Self::Default => "Default",
             Self::AcceptEdits => "Accept Edits",
-            Self::Plan { .. } => "Plan Mode",
+            Self::Plan => "Plan Mode",
             Self::Bypass => "Bypass",
         }
     }
@@ -55,7 +53,7 @@ impl TuiDisplayMode {
         match self {
             Self::Default => "",
             Self::AcceptEdits => "\u{23F5}\u{23F5}", // ⏵⏵
-            Self::Plan { .. } => "\u{23F8}",          // ⏸
+            Self::Plan => "\u{23F8}",                 // ⏸
             Self::Bypass => "\u{23F5}\u{23F5}",      // ⏵⏵
         }
     }
@@ -65,25 +63,17 @@ impl TuiDisplayMode {
         match self {
             Self::Default => Color::Reset,
             Self::AcceptEdits => Color::Yellow,
-            Self::Plan { .. } => Color::Cyan,
+            Self::Plan => Color::Cyan,
             Self::Bypass => Color::Red,
         }
     }
 
     /// Get next mode in cycle (shift+tab).
-    ///
-    /// The `resolve_plan_path` closure is called lazily only when transitioning
-    /// to Plan mode.
-    pub fn next_mode<F>(&self, is_bypass_available: bool, resolve_plan_path: F) -> Self
-    where
-        F: FnOnce() -> String,
-    {
+    pub fn next_mode(&self, is_bypass_available: bool) -> Self {
         match self {
             Self::Default => Self::AcceptEdits,
-            Self::AcceptEdits => Self::Plan {
-                plan_file_path: resolve_plan_path(),
-            },
-            Self::Plan { .. } => {
+            Self::AcceptEdits => Self::Plan,
+            Self::Plan => {
                 if is_bypass_available {
                     Self::Bypass
                 } else {
@@ -102,26 +92,23 @@ mod tests {
     #[test]
     fn test_mode_cycling() {
         let mode = TuiDisplayMode::Default;
-        let resolve_path = || "/tmp/plan.md".to_string();
 
         // Without bypass
-        let next = mode.next_mode(false, resolve_path);
+        let next = mode.next_mode(false);
         assert!(matches!(next, TuiDisplayMode::AcceptEdits));
 
-        let next = next.next_mode(false, resolve_path);
-        assert!(matches!(next, TuiDisplayMode::Plan { .. }));
+        let next = next.next_mode(false);
+        assert!(matches!(next, TuiDisplayMode::Plan));
 
-        let next = next.next_mode(false, resolve_path);
+        let next = next.next_mode(false);
         assert!(matches!(next, TuiDisplayMode::Default));
 
         // With bypass available
-        let plan_mode = TuiDisplayMode::Plan {
-            plan_file_path: "/tmp/plan.md".to_string(),
-        };
-        let next = plan_mode.next_mode(true, resolve_path);
+        let plan_mode = TuiDisplayMode::Plan;
+        let next = plan_mode.next_mode(true);
         assert!(matches!(next, TuiDisplayMode::Bypass));
 
-        let next = next.next_mode(true, resolve_path);
+        let next = next.next_mode(true);
         assert!(matches!(next, TuiDisplayMode::Default));
     }
 }

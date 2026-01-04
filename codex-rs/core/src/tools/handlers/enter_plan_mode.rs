@@ -116,8 +116,9 @@ impl ToolHandler for EnterPlanModeHandler {
         // Approval granted - proceed with entering plan mode
         // (path_str was already resolved before approval request)
 
-        // Enter plan mode using unified API (also syncs with legacy fields)
-        session.enter_plan_mode_unified(path_str.clone()).await;
+        // Enter plan mode using unified API
+        // (slug was already set via get_or_create_plan_slug above)
+        session.enter_plan_mode_unified().await;
 
         // Note: Plan mode instructions are NOT injected here.
         // They are injected automatically at the start of the next task

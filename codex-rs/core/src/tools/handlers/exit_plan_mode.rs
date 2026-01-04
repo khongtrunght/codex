@@ -67,8 +67,7 @@ impl ToolHandler for ExitPlanModeHandler {
             .await
             .ok_or_else(|| {
                 FunctionCallError::RespondToModel(format!(
-                    "No plan file found at {}. Please write your plan to this file before calling ExitPlanMode.",
-                    path_str
+                    "No plan file found at {path_str}. Please write your plan to this file before calling ExitPlanMode."
                 ))
             })?;
 
@@ -98,14 +97,12 @@ impl ToolHandler for ExitPlanModeHandler {
             Ok(_) => {}
             Err(ToolError::Rejected(reason)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "ExitPlanMode was rejected: {}",
-                    reason
+                    "ExitPlanMode was rejected: {reason}"
                 )));
             }
             Err(ToolError::Codex(e)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "ExitPlanMode failed: {}",
-                    e
+                    "ExitPlanMode failed: {e}"
                 )));
             }
         }
@@ -148,8 +145,7 @@ pub fn generate_approval_message(is_agent: bool, plan_content: &str, file_path: 
         r#"User has approved the plan. There is nothing else needed from you now. Please respond with "ok". Very important: remember, if you modify your plan along the way, you MUST edit the plan file to reflect the changes."#.to_string()
     } else {
         format!(
-            "User has approved your plan. You can now start coding. Start with updating your todo list if applicable. Very important: remember, if you modify your plan along the way, you MUST edit the plan file to reflect the changes.\n\nYour plan has been saved to: {}\n\n## Approved Plan:\n{}",
-            file_path, plan_content
+            "User has approved your plan. You can now start coding. Start with updating your todo list if applicable. Very important: remember, if you modify your plan along the way, you MUST edit the plan file to reflect the changes.\n\nYour plan has been saved to: {file_path}\n\n## Approved Plan:\n{plan_content}"
         )
     }
 }

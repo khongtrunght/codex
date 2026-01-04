@@ -46,7 +46,7 @@ use codex_core::protocol::ListSkillsResponseEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::SessionSource;
 use codex_core::protocol::SkillErrorInfo;
-use codex_core::plan_file::resolve_plan_file_path;
+// Plan file path is managed by backend - TUI just sends SessionMode::Plan
 use codex_core::protocol::TokenUsage;
 use crate::tui_display_mode::TuiDisplayMode;
 use codex_core::terminal::terminal_info;
@@ -2139,24 +2139,9 @@ impl App {
 
     /// Cycle to the next TUI display mode (triggered by Shift+Tab).
     async fn cycle_display_mode(&mut self, tui: &mut tui::Tui) {
-        // Get the session ID for plan file path resolution
-        let session_id = self
-            .chat_widget
-            .conversation_id()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let next_mode = self.current_display_mode.next_mode(self.is_bypass_available);
 
-        let next_mode = self.current_display_mode.next_mode(
-            self.is_bypass_available,
-            || {
-                // Lazily resolve plan file path when transitioning to Plan mode
-                resolve_plan_file_path(&session_id, None)
-                    .to_string_lossy()
-                    .to_string()
-            },
-        );
-
-        // Determine approval, sandbox, and session mode changes based on the new mode
+        // Determine approval, sandbox, and session mode based on the new mode
         let (approval_policy, sandbox_policy, session_mode) = match &next_mode {
             TuiDisplayMode::Default => {
                 // Restore initial policies and default session mode
@@ -2174,14 +2159,12 @@ impl App {
                     Some(codex_protocol::session_mode::SessionMode::Default),
                 )
             }
-            TuiDisplayMode::Plan { plan_file_path } => {
-                // Plan mode sets the session mode to Plan
+            TuiDisplayMode::Plan => {
+                // Plan mode - backend auto-generates slug if needed
                 (
                     None, // Keep current approval policy
                     None, // Keep current sandbox policy
-                    Some(codex_protocol::session_mode::SessionMode::Plan {
-                        plan_file_path: plan_file_path.clone(),
-                    }),
+                    Some(codex_protocol::session_mode::SessionMode::Plan),
                 )
             }
             TuiDisplayMode::Bypass => {
