@@ -1,4 +1,5 @@
 pub mod apply_patch;
+mod ask_user_question;
 mod bash;
 mod bash_output;
 mod edit_file;
@@ -20,6 +21,7 @@ mod view_image;
 mod write_file;
 
 pub use todo_write::TODO_WRITE_TOOL;
+pub use ask_user_question::AskUserQuestionHandler;
 pub use enter_plan_mode::EnterPlanModeHandler;
 pub use exit_plan_mode::ExitPlanModeHandler;
 

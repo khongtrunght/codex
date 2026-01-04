@@ -2105,7 +2105,8 @@ impl ChatWidget {
             | EventMsg::SubAgentBegin(_)
             | EventMsg::SubAgentEnd(_)
             | EventMsg::EnterPlanModeApprovalRequest(_)
-            | EventMsg::ExitPlanModeApprovalRequest(_) => {}
+            | EventMsg::ExitPlanModeApprovalRequest(_)
+            | EventMsg::AskUserQuestionRequest(_) => {}
         }
     }
 

@@ -99,6 +99,9 @@ use crate::protocol::AgentMessageContentDeltaEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
 use crate::protocol::ApplyPatchApprovalRequestEvent;
 use crate::protocol::AskForApproval;
+use crate::protocol::AskUserQuestion;
+use crate::protocol::AskUserQuestionRequestEvent;
+use crate::protocol::AskUserQuestionResponse;
 use crate::protocol::BackgroundEventEvent;
 use crate::protocol::DeprecationNoticeEvent;
 use crate::protocol::ErrorEvent;
@@ -1577,6 +1580,62 @@ impl Session {
         }
     }
 
+    /// Request user to answer questions via the AskUserQuestion tool.
+    /// Emits AskUserQuestionRequestEvent and waits for user response.
+    pub async fn request_ask_user_question(
+        &self,
+        turn_context: &TurnContext,
+        call_id: String,
+        questions: Vec<AskUserQuestion>,
+    ) -> AskUserQuestionResponse {
+        let sub_id = call_id.clone();
+        let (tx, rx) = oneshot::channel();
+        let event_id = sub_id.clone();
+        let prev_entry = {
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.insert_pending_question(sub_id, tx)
+                }
+                None => None,
+            }
+        };
+        if prev_entry.is_some() {
+            warn!("Overwriting existing pending question for call_id: {event_id}");
+        }
+
+        let event = EventMsg::AskUserQuestionRequest(AskUserQuestionRequestEvent {
+            call_id,
+            turn_id: turn_context.sub_id.clone(),
+            questions,
+        });
+        self.send_event(turn_context, event).await;
+        rx.await.unwrap_or_default()
+    }
+
+    /// Notify that the user has responded to an AskUserQuestion request.
+    pub async fn notify_ask_user_question(&self, call_id: &str, response: AskUserQuestionResponse) {
+        let entry = {
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.remove_pending_question(call_id)
+                }
+                None => None,
+            }
+        };
+        match entry {
+            Some(tx) => {
+                tx.send(response).ok();
+            }
+            None => {
+                warn!("No pending question found for call_id: {call_id}");
+            }
+        }
+    }
+
     pub async fn resolve_elicitation(
         &self,
         server_name: String,
@@ -2099,6 +2158,9 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             } => {
                 handlers::resolve_elicitation(&sess, server_name, request_id, decision).await;
             }
+            Op::ResolveAskUserQuestion { call_id, response } => {
+                handlers::resolve_ask_user_question(&sess, call_id, response).await;
+            }
             Op::Shutdown => {
                 if handlers::shutdown(&sess, sub.id.clone()).await {
                     break;
@@ -2272,6 +2334,15 @@ mod handlers {
                 "failed to resolve elicitation request in session"
             );
         }
+    }
+
+    /// Propagate a user's AskUserQuestion response to the session.
+    pub async fn resolve_ask_user_question(
+        sess: &Arc<Session>,
+        call_id: String,
+        response: codex_protocol::protocol::AskUserQuestionResponse,
+    ) {
+        sess.notify_ask_user_question(&call_id, response).await;
     }
 
     /// Propagate a user's exec approval decision to the session.

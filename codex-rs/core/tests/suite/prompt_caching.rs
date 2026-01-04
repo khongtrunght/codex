@@ -124,6 +124,7 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
         "todo_write",
         "enter_plan_mode",
         "exit_plan_mode",
+        "ask_user_question",
         "apply_patch",
         "view_image",
         "task",

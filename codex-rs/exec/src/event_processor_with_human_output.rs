@@ -596,7 +596,8 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::EnteredPlanMode(_)
             | EventMsg::ExitedPlanMode(_)
             | EventMsg::EnterPlanModeApprovalRequest(_)
-            | EventMsg::ExitPlanModeApprovalRequest(_) => {}
+            | EventMsg::ExitPlanModeApprovalRequest(_)
+            | EventMsg::AskUserQuestionRequest(_) => {}
         }
         CodexStatus::Running
     }

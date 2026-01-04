@@ -22,6 +22,7 @@ use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::AskUserQuestionRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
@@ -1196,6 +1197,18 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn on_ask_user_question_request(&mut self, ev: AskUserQuestionRequestEvent) {
+        self.flush_answer_stream_with_separator();
+
+        let overlay = crate::bottom_pane::AskUserQuestionOverlay::new(
+            ev.call_id,
+            ev.questions,
+            self.app_event_tx.clone(),
+        );
+        self.bottom_pane.push_ask_user_question(overlay);
+        self.request_redraw();
+    }
+
     pub(crate) fn handle_exec_begin_now(&mut self, ev: ExecCommandBeginEvent) {
         // Ensure the status indicator is visible while the command runs.
         self.running_commands.insert(
@@ -2016,6 +2029,7 @@ impl ChatWidget {
             | EventMsg::ExitedPlanMode(_)
             | EventMsg::EnterPlanModeApprovalRequest(_)
             | EventMsg::ExitPlanModeApprovalRequest(_) => {}
+            EventMsg::AskUserQuestionRequest(ev) => self.on_ask_user_question_request(ev),
         }
     }
 

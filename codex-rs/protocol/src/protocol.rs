@@ -40,6 +40,10 @@ use tracing::error;
 use ts_rs::TS;
 
 pub use crate::approvals::ApplyPatchApprovalRequestEvent;
+pub use crate::approvals::AskUserQuestion;
+pub use crate::approvals::AskUserQuestionOption;
+pub use crate::approvals::AskUserQuestionRequestEvent;
+pub use crate::approvals::AskUserQuestionResponse;
 pub use crate::approvals::ElicitationAction;
 pub use crate::approvals::EnterPlanModeApprovalRequestEvent;
 pub use crate::approvals::ExecApprovalRequestEvent;
@@ -174,6 +178,14 @@ pub enum Op {
         request_id: RequestId,
         /// User's decision for the request.
         decision: ElicitationAction,
+    },
+
+    /// Resolve an AskUserQuestion request with the user's answers.
+    ResolveAskUserQuestion {
+        /// The tool call ID that initiated this question request.
+        call_id: String,
+        /// The user's response containing answers to the questions.
+        response: AskUserQuestionResponse,
     },
 
     /// Append an entry to the persistent cross-session message history.
@@ -640,6 +652,9 @@ pub enum EventMsg {
 
     /// Request user approval to exit plan mode (includes plan for review).
     ExitPlanModeApprovalRequest(ExitPlanModeApprovalRequestEvent),
+
+    /// Request user to answer questions via the AskUserQuestion tool.
+    AskUserQuestionRequest(AskUserQuestionRequestEvent),
 
     /// Notification advising the user that something they are using has been
     /// deprecated and should be phased out.

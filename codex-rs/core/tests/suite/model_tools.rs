@@ -61,6 +61,7 @@ async fn model_selects_expected_tools() {
             "todo_write".to_string(),
             "enter_plan_mode".to_string(),
             "exit_plan_mode".to_string(),
+            "ask_user_question".to_string(),
             "view_image".to_string(),
             "task".to_string()
         ],
@@ -79,6 +80,7 @@ async fn model_selects_expected_tools() {
             "todo_write".to_string(),
             "enter_plan_mode".to_string(),
             "exit_plan_mode".to_string(),
+            "ask_user_question".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()
@@ -98,6 +100,7 @@ async fn model_selects_expected_tools() {
             "todo_write".to_string(),
             "enter_plan_mode".to_string(),
             "exit_plan_mode".to_string(),
+            "ask_user_question".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()
@@ -117,6 +120,7 @@ async fn model_selects_expected_tools() {
             "todo_write".to_string(),
             "enter_plan_mode".to_string(),
             "exit_plan_mode".to_string(),
+            "ask_user_question".to_string(),
             "view_image".to_string(),
             "task".to_string()
         ],
@@ -135,6 +139,7 @@ async fn model_selects_expected_tools() {
             "todo_write".to_string(),
             "enter_plan_mode".to_string(),
             "exit_plan_mode".to_string(),
+            "ask_user_question".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()
@@ -154,6 +159,7 @@ async fn model_selects_expected_tools() {
             "todo_write".to_string(),
             "enter_plan_mode".to_string(),
             "exit_plan_mode".to_string(),
+            "ask_user_question".to_string(),
             "apply_patch".to_string(),
             "view_image".to_string(),
             "task".to_string()

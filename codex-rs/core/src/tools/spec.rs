@@ -1584,6 +1584,83 @@ fn create_exit_plan_mode_tool() -> ToolSpec {
     })
 }
 
+/// Creates the AskUserQuestion tool.
+/// This tool asks the user multiple choice questions to gather information.
+fn create_ask_user_question_tool() -> ToolSpec {
+    let option_schema = JsonSchema::Object {
+        properties: BTreeMap::from([
+            (
+                "label".to_string(),
+                JsonSchema::String {
+                    description: Some("Display text for this option (1-5 words)".to_string()),
+                },
+            ),
+            (
+                "description".to_string(),
+                JsonSchema::String {
+                    description: Some("Explanation of what this option means".to_string()),
+                },
+            ),
+        ]),
+        required: Some(vec!["label".to_string(), "description".to_string()]),
+        additional_properties: Some(false.into()),
+    };
+
+    let question_schema = JsonSchema::Object {
+        properties: BTreeMap::from([
+            (
+                "question".to_string(),
+                JsonSchema::String {
+                    description: Some("The complete question to ask the user".to_string()),
+                },
+            ),
+            (
+                "header".to_string(),
+                JsonSchema::String {
+                    description: Some("Very short label (max 12 chars)".to_string()),
+                },
+            ),
+            (
+                "options".to_string(),
+                JsonSchema::Array {
+                    items: Box::new(option_schema),
+                    description: Some("Available choices (2-4 options)".to_string()),
+                },
+            ),
+            (
+                "multiSelect".to_string(),
+                JsonSchema::Boolean {
+                    description: Some("Whether multiple answers can be selected".to_string()),
+                },
+            ),
+        ]),
+        required: Some(vec![
+            "question".to_string(),
+            "header".to_string(),
+            "options".to_string(),
+            "multiSelect".to_string(),
+        ]),
+        additional_properties: Some(false.into()),
+    };
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: ASK_USER_QUESTION_TOOL_NAME.to_string(),
+        description: "Asks the user multiple choice questions to gather information, clarify ambiguity, understand preferences, or make decisions.".to_string(),
+        strict: true,
+        parameters: JsonSchema::Object {
+            properties: BTreeMap::from([(
+                "questions".to_string(),
+                JsonSchema::Array {
+                    items: Box::new(question_schema),
+                    description: Some("Questions to ask the user (1-4 questions)".to_string()),
+                },
+            )]),
+            required: Some(vec!["questions".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 /// Builds the tool registry builder while collecting tool specs for later serialization.
 pub(crate) fn build_specs(
     config: &ToolsConfig,
@@ -1699,6 +1776,15 @@ pub(crate) fn build_specs(
 
         builder.push_spec(create_exit_plan_mode_tool());
         builder.register_handler(EXIT_PLAN_MODE_TOOL_NAME, exit_plan_mode_handler);
+    }
+
+    // AskUserQuestion tool for gathering user input
+    {
+        use crate::tools::handlers::AskUserQuestionHandler;
+
+        let ask_user_question_handler = Arc::new(AskUserQuestionHandler);
+        builder.push_spec(create_ask_user_question_tool());
+        builder.register_handler(ASK_USER_QUESTION_TOOL_NAME, ask_user_question_handler);
     }
 
     // Edit tools based on edit_tool_type
@@ -1948,6 +2034,7 @@ mod tests {
             TODO_WRITE_TOOL.clone(),
             create_enter_plan_mode_tool(),
             create_exit_plan_mode_tool(),
+            create_ask_user_question_tool(),
             create_apply_patch_freeform_tool(),
             ToolSpec::WebSearch {},
             create_view_image_tool(),
@@ -1996,6 +2083,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "apply_patch",
                 "view_image",
             ],
@@ -2016,6 +2104,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "apply_patch",
                 "view_image",
             ],
@@ -2039,6 +2128,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2063,6 +2153,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2085,6 +2176,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "view_image",
             ],
         );
@@ -2104,6 +2196,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "apply_patch",
                 "view_image",
             ],
@@ -2125,6 +2218,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "view_image",
             ],
         );
@@ -2144,6 +2238,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "apply_patch",
                 "view_image",
             ],
@@ -2165,6 +2260,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "apply_patch",
                 "view_image",
             ],
@@ -2189,6 +2285,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "web_search",
                 "view_image",
             ],
@@ -2212,6 +2309,7 @@ mod tests {
                 "todo_write",
                 "enter_plan_mode",
                 "exit_plan_mode",
+                "ask_user_question",
                 "write_file",
                 "edit_file",
                 "view_image",

@@ -20,6 +20,8 @@ use std::time::Duration;
 mod approval_overlay;
 pub(crate) use approval_overlay::ApprovalOverlay;
 pub(crate) use approval_overlay::ApprovalRequest;
+mod ask_user_question_overlay;
+pub(crate) use ask_user_question_overlay::AskUserQuestionOverlay;
 mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
@@ -478,6 +480,12 @@ impl BottomPane {
         let modal = ApprovalOverlay::new(request, self.app_event_tx.clone(), features.clone());
         self.pause_status_timer_for_modal();
         self.push_view(Box::new(modal));
+    }
+
+    /// Called when the agent asks the user a question via AskUserQuestion tool.
+    pub fn push_ask_user_question(&mut self, overlay: AskUserQuestionOverlay) {
+        self.pause_status_timer_for_modal();
+        self.push_view(Box::new(overlay));
     }
 
     fn on_active_view_complete(&mut self) {

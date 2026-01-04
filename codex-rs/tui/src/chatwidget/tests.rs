@@ -437,6 +437,8 @@ async fn make_chatwidget_manual(
         last_rendered_width: std::cell::Cell::new(None),
         feedback: codex_feedback::CodexFeedback::new(),
         current_rollout_path: None,
+        is_plan_mode: false,
+        plan_file_path: None,
     };
     (widget, rx, op_rx)
 }
