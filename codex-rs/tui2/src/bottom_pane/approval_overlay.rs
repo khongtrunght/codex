@@ -56,6 +56,20 @@ pub(crate) enum ApprovalRequest {
         request_id: RequestId,
         message: String,
     },
+    EnterPlanMode {
+        /// Turn ID for the pending approval
+        turn_id: String,
+        /// Path to the plan file
+        plan_file_path: PathBuf,
+    },
+    ExitPlanMode {
+        /// Turn ID for the pending approval
+        turn_id: String,
+        /// Plan content for review
+        plan: String,
+        /// Path to the plan file
+        plan_file_path: PathBuf,
+    },
 }
 
 /// Modal overlay asking the user to approve or deny one or more requests.
@@ -123,6 +137,14 @@ impl ApprovalOverlay {
                 elicitation_options(),
                 format!("{server_name} needs your approval."),
             ),
+            ApprovalVariant::EnterPlanMode { .. } => (
+                plan_mode_options(),
+                "Would you like to enter plan mode?".to_string(),
+            ),
+            ApprovalVariant::ExitPlanMode { .. } => (
+                plan_mode_options(),
+                "Would you like to exit plan mode with this plan?".to_string(),
+            ),
         };
 
         let header = Box::new(ColumnRenderable::with([
@@ -183,6 +205,18 @@ impl ApprovalOverlay {
                 ) => {
                     self.handle_elicitation_decision(server_name, request_id, *decision);
                 }
+                (
+                    ApprovalVariant::EnterPlanMode { turn_id },
+                    ApprovalDecision::Review(decision),
+                ) => {
+                    self.handle_plan_mode_decision(turn_id, decision.clone());
+                }
+                (
+                    ApprovalVariant::ExitPlanMode { turn_id },
+                    ApprovalDecision::Review(decision),
+                ) => {
+                    self.handle_plan_mode_decision(turn_id, decision.clone());
+                }
                 _ => {}
             }
         }
@@ -217,6 +251,14 @@ impl ApprovalOverlay {
             .send(AppEvent::CodexOp(Op::ResolveElicitation {
                 server_name: server_name.to_string(),
                 request_id: request_id.clone(),
+                decision,
+            }));
+    }
+
+    fn handle_plan_mode_decision(&self, turn_id: &str, decision: ReviewDecision) {
+        self.app_event_tx
+            .send(AppEvent::CodexOp(Op::PlanModeApproval {
+                id: turn_id.to_string(),
                 decision,
             }));
     }
@@ -295,6 +337,12 @@ impl BottomPaneView for ApprovalOverlay {
                         request_id,
                         ElicitationAction::Cancel,
                     );
+                }
+                ApprovalVariant::EnterPlanMode { turn_id } => {
+                    self.handle_plan_mode_decision(turn_id, ReviewDecision::Abort);
+                }
+                ApprovalVariant::ExitPlanMode { turn_id } => {
+                    self.handle_plan_mode_decision(turn_id, ReviewDecision::Abort);
                 }
             }
         }
@@ -405,6 +453,53 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                     header: Box::new(header),
                 }
             }
+            ApprovalRequest::EnterPlanMode {
+                turn_id,
+                plan_file_path,
+            } => {
+                let header = Paragraph::new(vec![
+                    Line::from("Enter plan mode to explore the codebase and design".bold()),
+                    Line::from("an implementation approach before making changes.".bold()),
+                    Line::from(""),
+                    Line::from(vec![
+                        "Plan file: ".into(),
+                        plan_file_path.display().to_string().italic(),
+                    ]),
+                ])
+                .wrap(Wrap { trim: false });
+                Self {
+                    variant: ApprovalVariant::EnterPlanMode { turn_id },
+                    header: Box::new(header),
+                }
+            }
+            ApprovalRequest::ExitPlanMode {
+                turn_id,
+                plan,
+                plan_file_path,
+            } => {
+                let mut lines: Vec<Line<'static>> = vec![
+                    Line::from("Exit plan mode with the following plan:".bold()),
+                    Line::from(""),
+                    Line::from(vec![
+                        "Plan file: ".into(),
+                        plan_file_path.display().to_string().italic(),
+                    ]),
+                    Line::from(""),
+                ];
+                // Show first few lines of the plan as preview
+                let plan_lines: Vec<&str> = plan.lines().take(10).collect();
+                for line in plan_lines {
+                    lines.push(Line::from(line.to_string()));
+                }
+                if plan.lines().count() > 10 {
+                    lines.push(Line::from("...".dim()));
+                }
+                let header = Paragraph::new(lines).wrap(Wrap { trim: false });
+                Self {
+                    variant: ApprovalVariant::ExitPlanMode { turn_id },
+                    header: Box::new(header),
+                }
+            }
         }
     }
 }
@@ -422,6 +517,12 @@ enum ApprovalVariant {
     McpElicitation {
         server_name: String,
         request_id: RequestId,
+    },
+    EnterPlanMode {
+        turn_id: String,
+    },
+    ExitPlanMode {
+        turn_id: String,
     },
 }
 
@@ -522,6 +623,23 @@ fn elicitation_options() -> Vec<ApprovalOption> {
             decision: ApprovalDecision::McpElicitation(ElicitationAction::Cancel),
             display_shortcut: Some(key_hint::plain(KeyCode::Esc)),
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('c'))],
+        },
+    ]
+}
+
+fn plan_mode_options() -> Vec<ApprovalOption> {
+    vec![
+        ApprovalOption {
+            label: "Yes, proceed".to_string(),
+            decision: ApprovalDecision::Review(ReviewDecision::Approved),
+            display_shortcut: None,
+            additional_shortcuts: vec![key_hint::plain(KeyCode::Char('y'))],
+        },
+        ApprovalOption {
+            label: "No, cancel".to_string(),
+            decision: ApprovalDecision::Review(ReviewDecision::Abort),
+            display_shortcut: Some(key_hint::plain(KeyCode::Esc)),
+            additional_shortcuts: vec![key_hint::plain(KeyCode::Char('n'))],
         },
     ]
 }

@@ -170,6 +170,14 @@ pub enum Op {
         decision: ReviewDecision,
     },
 
+    /// Approve entering or exiting plan mode.
+    PlanModeApproval {
+        /// The turn_id of the pending approval.
+        id: String,
+        /// The user's decision in response to the request.
+        decision: ReviewDecision,
+    },
+
     /// Resolve an MCP elicitation request.
     ResolveElicitation {
         /// Name of the MCP server that issued the request.

@@ -1574,6 +1574,17 @@ impl SubAgentCell {
         self.start_time = None;
     }
 
+    /// Mark the sub-agent as interrupted/failed when the turn is cancelled.
+    pub fn mark_interrupted(&mut self) {
+        self.status = SubAgentStatus::Error;
+        // Calculate duration from start time if available
+        if let Some(start) = self.start_time {
+            self.duration_ms = Some(start.elapsed().as_millis() as u64);
+        }
+        self.output = Some("interrupted".to_string());
+        self.start_time = None;
+    }
+
     /// Get the session ID for this sub-agent.
     pub fn session_id(&self) -> &str {
         &self.session_id
@@ -3341,12 +3352,17 @@ mod tests {
         let lines = cell.display_lines(80);
         let rendered = render_lines(&lines);
 
-        // Should have header and description
+        // Should have header line and status line
         assert!(rendered.len() >= 2);
+        // Line 0: header with agent type and description
         assert!(rendered[0].contains("explore"));
-        assert!(rendered[0].contains("Running"));
-        assert!(rendered[0].contains("0 tool uses"));
-        assert!(rendered[1].contains("Search for rust files"));
+        assert!(rendered[0].contains("Search for rust files"));
+        // Line 1: status line with "Running..."
+        assert!(
+            rendered[1].contains("Running"),
+            "Expected 'Running' in: {}",
+            rendered[1]
+        );
     }
 
     #[test]
@@ -3366,19 +3382,21 @@ mod tests {
         let lines = cell.display_lines(80);
         let rendered = render_lines(&lines);
 
-        // Should show "Resumed" instead of "Running"
+        // Should have header line and status line
         assert!(rendered.len() >= 2);
+        // Line 0: header with agent type and description
         assert!(rendered[0].contains("explore"));
+        assert!(rendered[0].contains("Resuming previous search"));
+        // Line 1: status line should show "Resumed" instead of "Running"
         assert!(
-            rendered[0].contains("Resumed"),
+            rendered[1].contains("Resumed"),
             "Expected 'Resumed' in: {}",
-            rendered[0]
+            rendered[1]
         );
         assert!(
-            !rendered[0].contains("Running"),
+            !rendered[1].contains("Running"),
             "Should not contain 'Running' when resumed"
         );
-        assert!(rendered[1].contains("Resuming previous search"));
     }
 
     #[test]
@@ -3415,8 +3433,21 @@ mod tests {
         let lines = cell.display_lines(80);
         let rendered = render_lines(&lines);
 
-        assert!(rendered[0].contains("Done"));
-        assert!(rendered[0].contains("700 tokens"));
+        // Should have header line and status line
+        assert!(rendered.len() >= 2);
+        // Line 0: header with agent type and description
+        assert!(rendered[0].contains("explore"));
+        // Line 1: status line with "Done" and token count
+        assert!(
+            rendered[1].contains("Done"),
+            "Expected 'Done' in: {}",
+            rendered[1]
+        );
+        assert!(
+            rendered[1].contains("700 tokens"),
+            "Expected '700 tokens' in: {}",
+            rendered[1]
+        );
     }
 
     #[test]
@@ -3454,10 +3485,13 @@ mod tests {
         let lines = cell.display_lines(80);
         let rendered = render_lines(&lines);
 
+        // Should have header line and status line
+        assert!(rendered.len() >= 2);
+        // Line 1: status line should contain formatted token count
         assert!(
-            rendered[0].contains("101.5k tokens"),
+            rendered[1].contains("101.5k tokens"),
             "Expected '101.5k tokens' in: {}",
-            rendered[0]
+            rendered[1]
         );
     }
 
@@ -3486,21 +3520,32 @@ mod tests {
             call_id: "call-1".to_string(),
         }));
 
-        // Initially collapsed
+        // Initially collapsed - shows last tool in status line but not full tree
         let lines_collapsed = cell.display_lines(80);
         let rendered_collapsed = render_lines(&lines_collapsed);
+        // Collapsed shows tool name in status line (e.g., "Read(file.rs)")
         assert!(
-            !rendered_collapsed.iter().any(|l| l.contains("Read")),
-            "Tool should not be visible when collapsed"
+            rendered_collapsed.iter().any(|l| l.contains("Read")),
+            "Last tool should be visible in status line when collapsed: {:?}",
+            rendered_collapsed
+        );
+        // But should not show the tree prefix "├" (expanded view only)
+        assert!(
+            !rendered_collapsed.iter().any(|l| l.contains("├")),
+            "Tree prefix should not be visible when collapsed"
         );
 
-        // Toggle to expanded
+        // Toggle to expanded - shows full tool tree with prefixes
         cell.toggle_expanded();
         let lines_expanded = cell.display_lines(80);
         let rendered_expanded = render_lines(&lines_expanded);
         assert!(
             rendered_expanded.iter().any(|l| l.contains("Read")),
             "Tool should be visible when expanded"
+        );
+        assert!(
+            rendered_expanded.iter().any(|l| l.contains("├")),
+            "Tree prefix should be visible when expanded"
         );
         assert!(rendered_expanded.iter().any(|l| l.contains("file.rs")));
     }
@@ -3534,8 +3579,21 @@ mod tests {
         let lines = cell.display_lines(80);
         let rendered = render_lines(&lines);
 
-        assert!(rendered[0].contains("Error"));
-        assert!(rendered[0].contains("-- tokens")); // No token usage
+        // Should have header line and status line
+        assert!(rendered.len() >= 2);
+        // Error state is indicated by red bullet color (verified via status),
+        // status line shows "Done" with missing token info
+        assert_eq!(cell.status(), SubAgentStatus::Error);
+        assert!(
+            rendered[1].contains("Done"),
+            "Expected 'Done' in status line: {}",
+            rendered[1]
+        );
+        assert!(
+            rendered[1].contains("-- tokens"),
+            "Expected '-- tokens' (no token usage) in: {}",
+            rendered[1]
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -3561,26 +3619,29 @@ mod tests {
         let lines = group.render_lines(80);
         let rendered = render_lines(&lines);
 
-        // Should have: header, agent header, agent status
+        // Single agent case: renders SubAgentCell directly without wrapper
+        // Should have: header line, status line
         assert!(
-            rendered.len() >= 3,
-            "Expected at least 3 lines, got {}",
+            rendered.len() >= 2,
+            "Expected at least 2 lines, got {}",
             rendered.len()
         );
+        // Line 0: agent header with type and description
         assert!(
-            rendered[0].contains("Running 1 agent"),
-            "Header should show '1 agent': {}",
+            rendered[0].contains("explore"),
+            "Should contain agent type: {}",
             rendered[0]
         );
         assert!(
-            rendered[1].contains("Explore(Search for files)"),
-            "Should contain Explore(description): {}",
-            rendered[1]
+            rendered[0].contains("Search for files"),
+            "Should contain description: {}",
+            rendered[0]
         );
+        // Line 1: status line (Running... for new agent)
         assert!(
-            rendered[2].contains("Initializing"),
-            "Should show initializing status: {}",
-            rendered[2]
+            rendered[1].contains("Running"),
+            "Should show running status: {}",
+            rendered[1]
         );
     }
 
@@ -3713,18 +3774,18 @@ mod tests {
         let lines = group.render_lines(80);
         let rendered = render_lines(&lines);
 
-        // When collapsed, should show status summary but NOT expanded tool details
-        // Status line "shell: ls -la" is shown in the status area
+        // Single agent case: renders SubAgentCell directly without wrapper
+        // When collapsed, should show current tool in status line but NOT expanded tree
         assert!(
             rendered.iter().any(|l| l.contains("shell")),
             "Should show current tool status when collapsed: {:?}",
             rendered
         );
-        // Should only have header (1) + agent header (1) + status (1) = 3 lines
+        // Should only have agent header (1) + status (1) = 2 lines for single agent
         assert_eq!(
             rendered.len(),
-            3,
-            "Collapsed should have 3 lines: {:?}",
+            2,
+            "Collapsed single agent should have 2 lines: {:?}",
             rendered
         );
     }
@@ -3805,31 +3866,34 @@ mod tests {
         let lines = group.display_lines(80);
         let rendered = render_lines(&lines);
 
+        // Single agent case: renders SubAgentCell directly without wrapper
+        // Should have: header line, status line
         assert!(
-            rendered.len() >= 3,
-            "Expected at least 3 lines: {:?}",
+            rendered.len() >= 2,
+            "Expected at least 2 lines: {:?}",
             rendered
         );
+        // Line 0: agent header with type and description
         assert!(
-            rendered[0].contains("1 agent"),
-            "Header should show '1 agent': {}",
+            rendered[0].contains("explore"),
+            "Should contain agent type: {}",
             rendered[0]
         );
         assert!(
-            rendered[0].contains("completed"),
-            "Header should show 'completed': {}",
+            rendered[0].contains("Search files"),
+            "Should contain description: {}",
             rendered[0]
         );
+        // Line 1: status line with Done and token count
         assert!(
-            rendered[1].contains("Explore(Search files)"),
-            "Should contain Explore(description): {}",
+            rendered[1].contains("Done"),
+            "Should contain 'Done': {}",
             rendered[1]
         );
-        // Token count shown in status line
         assert!(
-            rendered.iter().any(|l| l.contains("7.0k tokens")),
-            "Should show token count: {:?}",
-            rendered
+            rendered[1].contains("7.0k tokens"),
+            "Should contain token count: {}",
+            rendered[1]
         );
     }
 

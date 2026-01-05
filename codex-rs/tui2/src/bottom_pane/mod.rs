@@ -157,6 +157,10 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    pub fn display_mode(&self) -> &TuiDisplayMode {
+        self.composer.display_mode()
+    }
+
     pub fn status_widget(&self) -> Option<&StatusIndicatorWidget> {
         self.status.as_ref()
     }

@@ -23,6 +23,8 @@ use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::AskUserQuestionRequestEvent;
+use codex_core::protocol::EnterPlanModeApprovalRequestEvent;
+use codex_core::protocol::ExitPlanModeApprovalRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
@@ -69,6 +71,8 @@ use codex_protocol::ConversationId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::session_mode::EnteredPlanModeEvent;
+use codex_protocol::session_mode::ExitedPlanModeEvent;
 use codex_protocol::user_input::UserInput;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -336,6 +340,12 @@ pub(crate) struct ChatWidget {
     pending_notification: Option<Notification>,
     // Simple review mode flag; used to adjust layout and banners.
     is_review_mode: bool,
+    // Simple plan mode flag; used to adjust layout and banners.
+    is_plan_mode: bool,
+    // Path to the plan file when in plan mode.
+    plan_file_path: Option<String>,
+    // Display mode to restore after plan mode exits.
+    pre_plan_display_mode: Option<crate::tui_display_mode::TuiDisplayMode>,
     // Snapshot of token usage to restore after review mode exits.
     pre_review_token_info: Option<Option<TokenUsageInfo>>,
     // Whether to add a final message separator after the last message
@@ -872,6 +882,22 @@ impl ChatWidget {
         );
     }
 
+    fn on_enter_plan_mode_approval_request(&mut self, ev: EnterPlanModeApprovalRequestEvent) {
+        let ev2 = ev.clone();
+        self.defer_or_handle(
+            |q| q.push_enter_plan_mode_approval(ev),
+            |s| s.handle_enter_plan_mode_approval_now(ev2),
+        );
+    }
+
+    fn on_exit_plan_mode_approval_request(&mut self, ev: ExitPlanModeApprovalRequestEvent) {
+        let ev2 = ev.clone();
+        self.defer_or_handle(
+            |q| q.push_exit_plan_mode_approval(ev),
+            |s| s.handle_exit_plan_mode_approval_now(ev2),
+        );
+    }
+
     fn on_exec_command_begin(&mut self, ev: ExecCommandBeginEvent) {
         self.flush_answer_stream_with_separator();
         let ev2 = ev.clone();
@@ -1197,6 +1223,37 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    pub(crate) fn handle_enter_plan_mode_approval_now(
+        &mut self,
+        ev: EnterPlanModeApprovalRequestEvent,
+    ) {
+        self.flush_answer_stream_with_separator();
+
+        let request = ApprovalRequest::EnterPlanMode {
+            turn_id: ev.turn_id,
+            plan_file_path: ev.plan_file_path,
+        };
+        self.bottom_pane
+            .push_approval_request(request, &self.config.features);
+        self.request_redraw();
+    }
+
+    pub(crate) fn handle_exit_plan_mode_approval_now(
+        &mut self,
+        ev: ExitPlanModeApprovalRequestEvent,
+    ) {
+        self.flush_answer_stream_with_separator();
+
+        let request = ApprovalRequest::ExitPlanMode {
+            turn_id: ev.turn_id,
+            plan: ev.plan,
+            plan_file_path: ev.plan_file_path,
+        };
+        self.bottom_pane
+            .push_approval_request(request, &self.config.features);
+        self.request_redraw();
+    }
+
     fn on_ask_user_question_request(&mut self, ev: AskUserQuestionRequestEvent) {
         self.flush_answer_stream_with_separator();
 
@@ -1388,6 +1445,9 @@ impl ChatWidget {
             suppress_session_configured_redraw: false,
             pending_notification: None,
             is_review_mode: false,
+            is_plan_mode: false,
+            plan_file_path: None,
+            pre_plan_display_mode: None,
             pre_review_token_info: None,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
@@ -1479,6 +1539,9 @@ impl ChatWidget {
             suppress_session_configured_redraw: true,
             pending_notification: None,
             is_review_mode: false,
+            is_plan_mode: false,
+            plan_file_path: None,
+            pre_plan_display_mode: None,
             pre_review_token_info: None,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
@@ -2024,11 +2087,14 @@ impl ChatWidget {
             | EventMsg::ReasoningRawContentDelta(_) => {}
             EventMsg::SubAgentBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentEnd(ev) => self.on_subagent_end(ev),
-            // Plan mode events - not handled in tui2 for now
-            EventMsg::EnteredPlanMode(_)
-            | EventMsg::ExitedPlanMode(_)
-            | EventMsg::EnterPlanModeApprovalRequest(_)
-            | EventMsg::ExitPlanModeApprovalRequest(_) => {}
+            EventMsg::EnteredPlanMode(ev) => self.on_entered_plan_mode(ev),
+            EventMsg::ExitedPlanMode(ev) => self.on_exited_plan_mode(ev),
+            EventMsg::EnterPlanModeApprovalRequest(ev) => {
+                self.on_enter_plan_mode_approval_request(ev);
+            }
+            EventMsg::ExitPlanModeApprovalRequest(ev) => {
+                self.on_exit_plan_mode_approval_request(ev);
+            }
             EventMsg::AskUserQuestionRequest(ev) => self.on_ask_user_question_request(ev),
         }
     }
@@ -2079,6 +2145,54 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_review_status_line(
             "<< Code review finished >>".to_string(),
         ));
+        self.request_redraw();
+    }
+
+    fn on_entered_plan_mode(&mut self, ev: EnteredPlanModeEvent) {
+        // Flush any pending state to ensure clean transition
+        self.flush_answer_stream_with_separator();
+        self.flush_interrupt_queue();
+        self.flush_active_cell();
+
+        self.is_plan_mode = true;
+        self.plan_file_path = Some(ev.plan_file_path.clone());
+
+        // Save current display mode before entering plan mode
+        if self.pre_plan_display_mode.is_none() {
+            self.pre_plan_display_mode = Some(self.bottom_pane.display_mode().clone());
+        }
+        // Set display mode to Plan
+        self.bottom_pane
+            .set_display_mode(crate::tui_display_mode::TuiDisplayMode::Plan);
+
+        let banner = format!(">> Plan mode started. Plan file: {} <<", ev.plan_file_path);
+        self.add_to_history(history_cell::new_review_status_line(banner));
+        self.request_redraw();
+    }
+
+    fn on_exited_plan_mode(&mut self, ev: ExitedPlanModeEvent) {
+        // Flush any pending state to ensure clean transition
+        self.flush_answer_stream_with_separator();
+        self.flush_interrupt_queue();
+        self.flush_active_cell();
+
+        self.is_plan_mode = false;
+        self.plan_file_path = None;
+
+        // Restore previous display mode
+        if let Some(prev_mode) = self.pre_plan_display_mode.take() {
+            self.bottom_pane.set_display_mode(prev_mode);
+        } else {
+            // Fallback to Default if no saved mode
+            self.bottom_pane
+                .set_display_mode(crate::tui_display_mode::TuiDisplayMode::Default);
+        }
+
+        let banner = format!(
+            "<< Plan mode finished. Plan saved to: {} >>",
+            ev.plan_file_path
+        );
+        self.add_to_history(history_cell::new_review_status_line(banner));
         self.request_redraw();
     }
 
@@ -2171,6 +2285,23 @@ impl ChatWidget {
                 tool.mark_failed();
             }
             self.add_boxed_history(cell);
+        }
+
+        // Also finalize any running subagents as interrupted
+        if !self.running_subagents.is_empty() || !self.pending_completed_subagents.is_empty() {
+            // Mark all running subagents as interrupted
+            for cell in self.running_subagents.values_mut() {
+                cell.mark_interrupted();
+            }
+            // Collect all subagents (running + pending completed) into a group
+            let mut all_cells: Vec<SubAgentCell> =
+                std::mem::take(&mut self.running_subagents).into_values().collect();
+            all_cells.extend(std::mem::take(&mut self.pending_completed_subagents));
+            // Add as a group to history
+            if !all_cells.is_empty() {
+                let group = history_cell::SubAgentGroupCell::new(all_cells);
+                self.add_to_history(group);
+            }
         }
     }
 

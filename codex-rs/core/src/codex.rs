@@ -2134,6 +2134,9 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             Op::PatchApproval { id, decision } => {
                 handlers::patch_approval(&sess, id, decision).await;
             }
+            Op::PlanModeApproval { id, decision } => {
+                handlers::plan_mode_approval(&sess, id, decision).await;
+            }
             Op::AddToHistory { text } => {
                 handlers::add_to_history(&sess, &config, text).await;
             }
@@ -2389,6 +2392,15 @@ mod handlers {
     }
 
     pub async fn patch_approval(sess: &Arc<Session>, id: String, decision: ReviewDecision) {
+        match decision {
+            ReviewDecision::Abort => {
+                sess.interrupt_task().await;
+            }
+            other => sess.notify_approval(&id, other).await,
+        }
+    }
+
+    pub async fn plan_mode_approval(sess: &Arc<Session>, id: String, decision: ReviewDecision) {
         match decision {
             ReviewDecision::Abort => {
                 sess.interrupt_task().await;

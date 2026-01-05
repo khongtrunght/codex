@@ -2105,6 +2105,47 @@ impl App {
                         "E L I C I T A T I O N".to_string(),
                     ));
                 }
+                ApprovalRequest::EnterPlanMode { plan_file_path, .. } => {
+                    let _ = tui.enter_alt_screen();
+                    let paragraph = Paragraph::new(vec![
+                        Line::from("Enter plan mode to explore the codebase".bold()),
+                        Line::from("and design an implementation approach.".bold()),
+                        Line::from(""),
+                        Line::from(vec![
+                            "Plan file: ".into(),
+                            plan_file_path.display().to_string().italic(),
+                        ]),
+                    ])
+                    .wrap(Wrap { trim: false });
+                    self.overlay = Some(Overlay::new_static_with_renderables(
+                        vec![Box::new(paragraph)],
+                        "P L A N   M O D E".to_string(),
+                    ));
+                }
+                ApprovalRequest::ExitPlanMode {
+                    plan,
+                    plan_file_path,
+                    ..
+                } => {
+                    let _ = tui.enter_alt_screen();
+                    let mut lines: Vec<Line<'static>> = vec![
+                        Line::from("Exit plan mode with the following plan:".bold()),
+                        Line::from(""),
+                        Line::from(vec![
+                            "Plan file: ".into(),
+                            plan_file_path.display().to_string().italic(),
+                        ]),
+                        Line::from(""),
+                    ];
+                    for line in plan.lines() {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+                    self.overlay = Some(Overlay::new_static_with_renderables(
+                        vec![Box::new(paragraph)],
+                        "P L A N".to_string(),
+                    ));
+                }
             },
         }
         Ok(true)

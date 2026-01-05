@@ -193,6 +193,10 @@ impl ChatComposer {
         self.display_mode = mode;
     }
 
+    pub fn display_mode(&self) -> &TuiDisplayMode {
+        &self.display_mode
+    }
+
     fn layout_areas(&self, area: Rect) -> [Rect; 3] {
         let footer_props = self.footer_props();
         let footer_hint_height = self
