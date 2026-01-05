@@ -16,6 +16,7 @@ mod registry;
 mod types;
 
 pub use collectors::collect_plan_mode;
+pub use collectors::collect_plan_mode_exit;
 pub use registry::AttachmentRegistry;
 pub use types::expand_attachments;
 pub use types::ToolsConfig;
@@ -26,6 +27,7 @@ pub use types::ToolsConfig;
 pub fn default_registry() -> AttachmentRegistry {
     let mut registry = AttachmentRegistry::new();
     registry.register(collect_plan_mode);
+    registry.register(collect_plan_mode_exit);
     // Future collectors can be added here:
     // registry.register(collect_todo);
     // registry.register(collect_diagnostics);

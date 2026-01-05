@@ -1041,6 +1041,19 @@ impl Session {
         state.reset_has_exited_plan_mode();
     }
 
+    /// Check if plan mode exit attachment is needed.
+    pub(crate) async fn needs_plan_mode_exit_attachment(&self) -> bool {
+        let state = self.state.lock().await;
+        state.needs_plan_mode_exit_attachment()
+    }
+
+    /// Clear the plan mode exit attachment flag.
+    /// Called after the exit attachment has been injected.
+    pub(crate) async fn clear_plan_mode_exit_attachment_flag(&self) {
+        let mut state = self.state.lock().await;
+        state.clear_plan_mode_exit_attachment_flag();
+    }
+
     /// Get the plan slug if set.
     pub(crate) async fn get_plan_slug(&self) -> Option<String> {
         let state = self.state.lock().await;
@@ -2776,6 +2789,51 @@ pub(crate) async fn run_task(
             .await;
     }
 
+    // Collect and record attachments BEFORE user's message
+    // System reminders come before user input
+    let tools_config = crate::attachments::ToolsConfig {
+        edit_tool: turn_context.tools_config.edit_tool_type.clone(),
+        shell_tool: turn_context.tools_config.shell_type,
+    };
+
+    let initial_attachments = sess
+        .services
+        .attachments
+        .collect_all(&sess, &turn_context)
+        .await;
+
+    if !initial_attachments.is_empty() {
+        let has_exited = sess.has_exited_plan_mode().await;
+        let has_exit_attachment = initial_attachments
+            .iter()
+            .any(|a| a.attachment_type() == "plan_mode_exit");
+
+        let attachment_markers: Vec<ResponseItem> = initial_attachments
+            .into_iter()
+            .map(|data| ResponseItem::Attachment {
+                data,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            })
+            .collect();
+
+        sess.record_conversation_items(&turn_context, &attachment_markers)
+            .await;
+
+        tracing::debug!(
+            attachment_count = attachment_markers.len(),
+            "Recorded initial attachment markers to history (before user message)"
+        );
+
+        if has_exited {
+            sess.reset_has_exited_plan_mode().await;
+        }
+
+        if has_exit_attachment {
+            sess.clear_plan_mode_exit_attachment_flag().await;
+        }
+    }
+
+    // Now record user's initial message AFTER attachments
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
     let response_item: ResponseItem = initial_input_for_turn.clone().into();
     sess.record_response_item_and_emit_turn_item(turn_context.as_ref(), response_item)
@@ -2786,12 +2844,6 @@ pub(crate) async fn run_task(
             .await;
     }
 
-    // Note: Plan mode attachments are injected INSIDE the loop on each turn iteration.
-    // They are added transiently to turn_input, NOT recorded to permanent history.
-    // This allows:
-    // 1. Re-evaluating plan mode state on each turn (detecting mode changes mid-task)
-    // 2. Proper cleanup when exiting plan mode
-
     sess.maybe_start_ghost_snapshot(Arc::clone(&turn_context), cancellation_token.child_token())
         .await;
     let mut last_agent_message: Option<String> = None;
@@ -2800,42 +2852,22 @@ pub(crate) async fn run_task(
     let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
 
     loop {
-        // Note that pending_input would be something like a message the user
-        // submitted through the UI while the model was running. Though the UI
-        // may support this, the model might not.
-        let pending_input = sess
-            .get_pending_input()
-            .await
-            .into_iter()
-            .map(ResponseItem::from)
-            .collect::<Vec<ResponseItem>>();
-
-        // Record pending input to history
-        sess.record_conversation_items(&turn_context, &pending_input)
-            .await;
-
-        // GhostSnapshot pattern for attachments:
-        // 1. Collect attachments (throttled by history analysis)
-        // 2. Record Attachment items to history (for future throttle queries)
-        // 3. Fetch history and expand Attachment items to Message items
-        let tools_config = crate::attachments::ToolsConfig {
-            edit_tool: turn_context.tools_config.edit_tool_type.clone(),
-            shell_tool: turn_context.tools_config.shell_type,
-        };
-
-        // Step 1: Collect attachments (throttled by history analysis in collector)
-        let attachments = sess
+        // For subsequent loop iterations (tool calls, interrupts):
+        // Collect attachments BEFORE pending user input
+        // Note: On first iteration, throttle logic will skip since we just recorded attachments above
+        let loop_attachments = sess
             .services
             .attachments
             .collect_all(&sess, &turn_context)
             .await;
 
-        if !attachments.is_empty() {
+        if !loop_attachments.is_empty() {
             let has_exited = sess.has_exited_plan_mode().await;
+            let has_exit_attachment = loop_attachments
+                .iter()
+                .any(|a| a.attachment_type() == "plan_mode_exit");
 
-            // Step 2: Record Attachment items to history (for future throttle queries)
-            // These are stored but not sent to API directly - they'll be expanded below
-            let attachment_markers: Vec<ResponseItem> = attachments
+            let attachment_markers: Vec<ResponseItem> = loop_attachments
                 .into_iter()
                 .map(|data| ResponseItem::Attachment {
                     data,
@@ -2848,16 +2880,33 @@ pub(crate) async fn run_task(
 
             debug!(
                 attachment_count = attachment_markers.len(),
-                "Recorded attachment markers to history"
+                "Recorded attachment markers in loop (before pending input)"
             );
 
-            // Reset the has_exited_plan_mode flag after recording reentry attachment
             if has_exited {
                 sess.reset_has_exited_plan_mode().await;
             }
+
+            if has_exit_attachment {
+                sess.clear_plan_mode_exit_attachment_flag().await;
+            }
         }
 
-        // Step 3: Fetch history (includes Attachment items) and expand
+        // Record pending user input AFTER attachments
+        // Note that pending_input would be something like a message the user
+        // submitted through the UI while the model was running. Though the UI
+        // may support this, the model might not.
+        let pending_input = sess
+            .get_pending_input()
+            .await
+            .into_iter()
+            .map(ResponseItem::from)
+            .collect::<Vec<ResponseItem>>();
+
+        sess.record_conversation_items(&turn_context, &pending_input)
+            .await;
+
+        // Step 4: Fetch history (includes Attachment items) and expand
         // This follows GhostSnapshot pattern: Attachment is stored but expanded to
         // Message items during get_history_for_prompt
         let mut turn_input = sess.clone_history().await.get_history_for_prompt();

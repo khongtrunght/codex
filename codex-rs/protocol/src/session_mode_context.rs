@@ -27,6 +27,12 @@ pub struct SessionModeContext {
     #[serde(default)]
     pub has_exited_plan_mode: bool,
 
+    /// Flag to inject plan_mode_exit attachment on next turn.
+    /// Set to true when mode changes from plan to non-plan via UI (shift+tab).
+    /// The collector will check this flag and inject the exit notification once.
+    #[serde(default)]
+    pub needs_plan_mode_exit_attachment: bool,
+
     /// Plan slug for memorable file naming (e.g., "atomic-marinating-pumpkin").
     /// Stored per-session so it persists across plan mode entries.
     /// The plan file path is derived from this slug when needed.
@@ -39,6 +45,7 @@ impl Default for SessionModeContext {
         Self {
             mode: SessionMode::Default,
             has_exited_plan_mode: false,
+            needs_plan_mode_exit_attachment: false,
             plan_slug: None,
         }
     }
@@ -55,6 +62,7 @@ impl SessionModeContext {
         Self {
             mode: SessionMode::DontAsk,
             has_exited_plan_mode: false,
+            needs_plan_mode_exit_attachment: false,
             plan_slug: None,
         }
     }
@@ -64,11 +72,23 @@ impl SessionModeContext {
     /// Note: When entering Plan mode, ensure plan_slug is set first
     /// (either via set_plan_slug or get_or_create_plan_slug).
     pub fn set_mode(&mut self, mode: SessionMode) {
-        // Track plan mode exit
+        // Track plan mode exit and set flag for exit attachment
         if self.mode.is_planning() && !mode.is_planning() {
             self.has_exited_plan_mode = true;
+            self.needs_plan_mode_exit_attachment = true;
         }
         self.mode = mode;
+    }
+
+    /// Clear the needs_plan_mode_exit_attachment flag.
+    /// Called after the exit attachment has been injected.
+    pub fn clear_plan_mode_exit_attachment_flag(&mut self) {
+        self.needs_plan_mode_exit_attachment = false;
+    }
+
+    /// Check if plan mode exit attachment is needed.
+    pub fn needs_plan_mode_exit_attachment(&self) -> bool {
+        self.needs_plan_mode_exit_attachment
     }
 
     /// Enter plan mode.
@@ -128,6 +148,7 @@ mod tests {
         let ctx = SessionModeContext::default();
         assert!(matches!(ctx.mode, SessionMode::Default));
         assert!(!ctx.has_exited_plan_mode);
+        assert!(!ctx.needs_plan_mode_exit_attachment);
     }
 
     #[test]
@@ -135,6 +156,7 @@ mod tests {
         let ctx = SessionModeContext::for_subagent();
         assert!(matches!(ctx.mode, SessionMode::DontAsk));
         assert!(!ctx.has_exited_plan_mode);
+        assert!(!ctx.needs_plan_mode_exit_attachment);
     }
 
     #[test]
@@ -147,12 +169,18 @@ mod tests {
         assert!(ctx.is_planning());
         assert_eq!(ctx.plan_slug(), Some("test-slug"));
         assert!(!ctx.has_exited_plan_mode);
+        assert!(!ctx.needs_plan_mode_exit_attachment);
 
         ctx.exit_plan_mode();
         assert!(!ctx.is_planning());
         assert!(ctx.has_exited_plan_mode);
+        assert!(ctx.needs_plan_mode_exit_attachment()); // Flag set on exit
         // slug persists after exiting plan mode
         assert_eq!(ctx.plan_slug(), Some("test-slug"));
+
+        // Clear the flag
+        ctx.clear_plan_mode_exit_attachment_flag();
+        assert!(!ctx.needs_plan_mode_exit_attachment());
     }
 
     #[test]

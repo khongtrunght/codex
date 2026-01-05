@@ -52,6 +52,12 @@ pub fn attachment_data_to_messages(data: &AttachmentData, config: &ToolsConfig) 
         AttachmentData::PlanModeReentry { plan_file_path } => {
             generate_reentry_items(plan_file_path, config)
         }
+        AttachmentData::PlanModeExit {
+            plan_file_path,
+            plan_exists,
+        } => {
+            generate_exit_items(plan_file_path, *plan_exists, config)
+        }
     }
 }
 
@@ -268,6 +274,35 @@ fn generate_reentry_items(plan_file_path: &str, config: &ToolsConfig) -> Vec<Res
     let contents = PLAN_MODE_REENTRY_TEMPLATE
         .replace("{plan_file_path}", plan_file_path)
         .apply_tool_config(config.edit_tool.clone(), config.shell_tool);
+
+    vec![wrap_in_system_reminder(&contents)]
+}
+
+/// Template for plan mode exit notification.
+/// This is injected ONCE when the user exits plan mode via UI (shift+tab).
+const PLAN_MODE_EXIT_TEMPLATE: &str = r#"## Exited Plan Mode
+
+The user has exited plan mode. You are no longer in plan mode and can proceed to implement the plan.
+
+{plan_file_info}
+
+You should now:
+1. Read the plan file if it exists to understand what was planned
+2. Proceed to implement the plan, making necessary edits and running commands
+3. You are now allowed to make edits and run non-readonly tools"#;
+
+fn generate_exit_items(
+    plan_file_path: &str,
+    plan_exists: bool,
+    _config: &ToolsConfig,
+) -> Vec<ResponseItem> {
+    let plan_file_info = if plan_exists {
+        format!("A plan file exists at {plan_file_path} from the planning session.")
+    } else {
+        "No plan file was created during the planning session.".to_string()
+    };
+
+    let contents = PLAN_MODE_EXIT_TEMPLATE.replace("{plan_file_info}", &plan_file_info);
 
     vec![wrap_in_system_reminder(&contents)]
 }

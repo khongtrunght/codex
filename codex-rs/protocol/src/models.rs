@@ -75,6 +75,11 @@ pub enum AttachmentData {
     },
     /// Plan mode reentry instructions (after ExitPlanMode)
     PlanModeReentry { plan_file_path: String },
+    /// Plan mode exit notification (when user exits plan mode via UI)
+    PlanModeExit {
+        plan_file_path: String,
+        plan_exists: bool,
+    },
 }
 
 impl AttachmentData {
@@ -83,6 +88,7 @@ impl AttachmentData {
         match self {
             Self::PlanMode { .. } => "plan_mode",
             Self::PlanModeReentry { .. } => "plan_mode_reentry",
+            Self::PlanModeExit { .. } => "plan_mode_exit",
         }
     }
 }

@@ -126,6 +126,16 @@ impl SessionState {
         self.mode_context.has_exited_plan_mode = false;
     }
 
+    /// Check if plan mode exit attachment is needed.
+    pub(crate) fn needs_plan_mode_exit_attachment(&self) -> bool {
+        self.mode_context.needs_plan_mode_exit_attachment()
+    }
+
+    /// Clear the plan mode exit attachment flag.
+    pub(crate) fn clear_plan_mode_exit_attachment_flag(&mut self) {
+        self.mode_context.clear_plan_mode_exit_attachment_flag();
+    }
+
     /// Get the current session mode.
     #[allow(dead_code)]
     pub(crate) fn current_mode(&self) -> &SessionMode {

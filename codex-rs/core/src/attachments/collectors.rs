@@ -111,6 +111,52 @@ pub fn collect_plan_mode<'a>(
     })
 }
 
+/// Collect plan mode exit attachment.
+///
+/// Returns a plan_mode_exit attachment ONCE when the user exits plan mode via UI (shift+tab).
+/// This notifies Claude that it is no longer in plan mode.
+///
+/// Note: The flag is cleared by the caller (codex.rs) after collecting.
+pub fn collect_plan_mode_exit<'a>(
+    session: &'a Session,
+    _turn: &'a TurnContext,
+) -> BoxFuture<'a, Vec<AttachmentData>> {
+    Box::pin(async move {
+        // Check if exit attachment is needed
+        if !session.needs_plan_mode_exit_attachment().await {
+            return vec![];
+        }
+
+        // Double-check: if we're back in plan mode, don't send exit notification
+        if session.is_in_plan_mode().await {
+            return vec![];
+        }
+
+        // Get slug from session state
+        let slug = match session.get_plan_slug().await {
+            Some(s) => s,
+            None => return vec![],
+        };
+
+        // Resolve plan file path using slug
+        let plan_file_path = session
+            .get_plan_file_path_unified()
+            .await
+            .unwrap_or_else(|| {
+                resolve_plan_file_path_with_slug(&slug, None)
+                    .to_string_lossy()
+                    .into_owned()
+            });
+
+        let plan_file_exists = plan_exists_with_slug(&slug, None);
+
+        vec![AttachmentData::PlanModeExit {
+            plan_file_path,
+            plan_exists: plan_file_exists,
+        }]
+    })
+}
+
 // Future collectors can be added here:
 //
 // pub fn collect_todo<'a>(
