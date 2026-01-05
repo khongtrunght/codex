@@ -82,17 +82,6 @@ pub enum AttachmentData {
     },
 }
 
-impl AttachmentData {
-    /// Returns the attachment type string for throttle matching.
-    pub fn attachment_type(&self) -> &'static str {
-        match self {
-            Self::PlanMode { .. } => "plan_mode",
-            Self::PlanModeReentry { .. } => "plan_mode_reentry",
-            Self::PlanModeExit { .. } => "plan_mode_exit",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {

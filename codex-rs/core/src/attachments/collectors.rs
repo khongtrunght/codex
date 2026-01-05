@@ -14,6 +14,9 @@ use crate::plan_file::{plan_exists_with_slug, resolve_plan_file_path_with_slug};
 ///
 /// Walks backwards through history counting assistant turns until finding
 /// a plan_mode or plan_mode_reentry attachment.
+///
+/// Reset on exit: If a plan_mode_exit is encountered before plan_mode/plan_mode_reentry,
+/// the throttle is reset (returns found=false) so re-entry always gets fresh plan_mode.
 pub fn analyze_history_for_throttle(items: &[ResponseItem]) -> (usize, bool) {
     let mut turn_count = 0;
     let mut found = false;
@@ -26,10 +29,14 @@ pub fn analyze_history_for_throttle(items: &[ResponseItem]) -> (usize, bool) {
                 turn_count += 1;
             }
             // Check for previous plan_mode or plan_mode_reentry attachment
-            ResponseItem::Attachment { data, .. } => {
-                let att_type = data.attachment_type();
-                if att_type == "plan_mode" || att_type == "plan_mode_reentry" {
+            ResponseItem::Attachment { data, .. } => match data {
+                AttachmentData::PlanMode { .. } | AttachmentData::PlanModeReentry { .. } => {
                     found = true;
+                    break;
+                }
+                AttachmentData::PlanModeExit { .. } => {
+                    // Exit found before any plan_mode - treat as no previous attachment
+                    found = false;
                     break;
                 }
             }

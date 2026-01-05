@@ -157,6 +157,7 @@ use codex_async_utils::OrCancelExt;
 use codex_execpolicy::Policy as ExecPolicy;
 use codex_otel::otel_manager::OtelManager;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::models::AttachmentData;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
@@ -2806,7 +2807,7 @@ pub(crate) async fn run_task(
         let has_exited = sess.has_exited_plan_mode().await;
         let has_exit_attachment = initial_attachments
             .iter()
-            .any(|a| a.attachment_type() == "plan_mode_exit");
+            .any(|a| matches!(a, AttachmentData::PlanModeExit { .. }));
 
         let attachment_markers: Vec<ResponseItem> = initial_attachments
             .into_iter()
@@ -2865,7 +2866,7 @@ pub(crate) async fn run_task(
             let has_exited = sess.has_exited_plan_mode().await;
             let has_exit_attachment = loop_attachments
                 .iter()
-                .any(|a| a.attachment_type() == "plan_mode_exit");
+                .any(|a| matches!(a, AttachmentData::PlanModeExit { .. }));
 
             let attachment_markers: Vec<ResponseItem> = loop_attachments
                 .into_iter()
