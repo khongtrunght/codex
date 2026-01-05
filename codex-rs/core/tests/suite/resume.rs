@@ -38,6 +38,7 @@ async fn resume_includes_initial_messages_from_rollout_events() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "Record some messages".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
 
@@ -90,6 +91,7 @@ async fn resume_includes_initial_messages_from_reasoning_events() -> Result<()> 
             items: vec![UserInput::Text {
                 text: "Record reasoning messages".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
 

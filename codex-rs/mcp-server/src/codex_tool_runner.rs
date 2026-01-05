@@ -97,6 +97,7 @@ pub async fn run_codex_tool_session(
             items: vec![UserInput::Text {
                 text: initial_prompt.clone(),
             }],
+            final_output_json_schema: None,
         },
     };
 
@@ -131,6 +132,7 @@ pub async fn run_codex_tool_session_reply(
     if let Err(e) = conversation
         .submit(Op::UserInput {
             items: vec![UserInput::Text { text: prompt }],
+            final_output_json_schema: None,
         })
         .await
     {

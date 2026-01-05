@@ -290,6 +290,7 @@ async fn resume_includes_initial_messages_and_sends_prior_items() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -366,6 +367,7 @@ async fn includes_conversation_id_and_model_headers_in_request() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -425,6 +427,7 @@ async fn includes_base_instructions_override_in_request() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -490,6 +493,7 @@ async fn chatgpt_auth_sends_correct_request() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -584,6 +588,7 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -624,6 +629,7 @@ async fn includes_user_instructions_message_in_request() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -694,6 +700,7 @@ async fn skills_append_to_instructions() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -743,6 +750,7 @@ async fn includes_configured_effort_in_request() -> anyhow::Result<()> {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -779,6 +787,7 @@ async fn includes_no_effort_in_request() -> anyhow::Result<()> {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -813,6 +822,7 @@ async fn includes_default_reasoning_effort_in_request_when_defined_by_model_fami
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -851,6 +861,7 @@ async fn configured_reasoning_summary_is_sent() -> anyhow::Result<()> {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -889,6 +900,7 @@ async fn reasoning_summary_is_omitted_when_disabled() -> anyhow::Result<()> {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -921,6 +933,7 @@ async fn includes_default_verbosity_in_request() -> anyhow::Result<()> {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -960,6 +973,7 @@ async fn configured_verbosity_not_sent_for_models_without_support() -> anyhow::R
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -998,6 +1012,7 @@ async fn configured_verbosity_is_sent() -> anyhow::Result<()> {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1052,6 +1067,7 @@ async fn includes_developer_instructions_message_in_request() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1283,6 +1299,7 @@ async fn token_count_includes_rate_limits_snapshot() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1440,6 +1457,7 @@ async fn usage_limit_error_emits_rate_limit_event() -> anyhow::Result<()> {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .expect("submission should succeed while emitting usage limit error events");
@@ -1509,6 +1527,7 @@ async fn context_window_error_sets_total_tokens_to_model_window() -> anyhow::Res
             items: vec![UserInput::Text {
                 text: "seed turn".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
 
@@ -1519,6 +1538,7 @@ async fn context_window_error_sets_total_tokens_to_model_window() -> anyhow::Res
             items: vec![UserInput::Text {
                 text: "trigger context window".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
 
@@ -1639,6 +1659,7 @@ async fn azure_overrides_assign_properties_used_for_responses_url() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1722,6 +1743,7 @@ async fn env_var_overrides_loaded_auth() {
             items: vec![UserInput::Text {
                 text: "hello".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1805,6 +1827,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text { text: "U1".into() }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1814,6 +1837,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text { text: "U2".into() }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1823,6 +1847,7 @@ async fn history_dedupes_streamed_and_final_messages_across_turns() {
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text { text: "U3".into() }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
