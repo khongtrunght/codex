@@ -215,10 +215,12 @@ impl<'a> AnthropicRequestBuilder<'a> {
                 }
 
                 // Skip items that don't translate to messages
+                // Attachment should be expanded before reaching here
                 ResponseItem::Reasoning { .. }
                 | ResponseItem::WebSearchCall { .. }
                 | ResponseItem::GhostSnapshot { .. }
                 | ResponseItem::Compaction { .. }
+                | ResponseItem::Attachment { .. }
                 | ResponseItem::Other => continue,
             }
         }

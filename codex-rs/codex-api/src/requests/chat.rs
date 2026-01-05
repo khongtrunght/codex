@@ -75,6 +75,7 @@ impl<'a> ChatRequestBuilder<'a> {
                 ResponseItem::WebSearchCall { .. } => {}
                 ResponseItem::GhostSnapshot { .. } => {}
                 ResponseItem::Compaction { .. } => {}
+                ResponseItem::Attachment { .. } => {}
             }
         }
 
@@ -303,7 +304,9 @@ impl<'a> ChatRequestBuilder<'a> {
                 ResponseItem::Reasoning { .. }
                 | ResponseItem::WebSearchCall { .. }
                 | ResponseItem::Other
-                | ResponseItem::Compaction { .. } => {
+                | ResponseItem::Compaction { .. }
+                | ResponseItem::Attachment { .. } => {
+                    // Attachment should be expanded before reaching here
                     continue;
                 }
             }

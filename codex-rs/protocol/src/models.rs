@@ -62,6 +62,31 @@ pub enum ContentItem {
     OutputText { text: String },
 }
 
+/// Attachment data variants - stored in history, converted to Message before API.
+/// Follows GhostSnapshot pattern: stored in history but transformed before API call.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AttachmentData {
+    /// Main plan mode instructions
+    PlanMode {
+        plan_file_path: String,
+        is_subagent: bool,
+        plan_exists: bool,
+    },
+    /// Plan mode reentry instructions (after ExitPlanMode)
+    PlanModeReentry { plan_file_path: String },
+}
+
+impl AttachmentData {
+    /// Returns the attachment type string for throttle matching.
+    pub fn attachment_type(&self) -> &'static str {
+        match self {
+            Self::PlanMode { .. } => "plan_mode",
+            Self::PlanModeReentry { .. } => "plan_mode_reentry",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
@@ -153,6 +178,13 @@ pub enum ResponseItem {
     #[serde(alias = "compaction_summary")]
     Compaction {
         encrypted_content: String,
+    },
+    /// Attachment stored in history for throttle queries.
+    /// Converted to Message items via expand_attachments() before API call.
+    /// Follows GhostSnapshot pattern: is_api_message returns false, special check allows storage.
+    Attachment {
+        data: AttachmentData,
+        timestamp: String,
     },
     #[serde(other)]
     Other,

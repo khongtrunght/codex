@@ -2810,50 +2810,61 @@ pub(crate) async fn run_task(
             .map(ResponseItem::from)
             .collect::<Vec<ResponseItem>>();
 
-        // Construct the input that we will send to the model.
-        let mut turn_input: Vec<ResponseItem> = {
-            sess.record_conversation_items(&turn_context, &pending_input)
-                .await;
-            sess.clone_history().await.get_history_for_prompt()
+        // Record pending input to history
+        sess.record_conversation_items(&turn_context, &pending_input)
+            .await;
+
+        // GhostSnapshot pattern for attachments:
+        // 1. Collect attachments (throttled by history analysis)
+        // 2. Record Attachment items to history (for future throttle queries)
+        // 3. Fetch history and expand Attachment items to Message items
+        let tools_config = crate::attachments::ToolsConfig {
+            edit_tool: turn_context.tools_config.edit_tool_type.clone(),
+            shell_tool: turn_context.tools_config.shell_type,
         };
 
-        // Inject attachments transiently on each turn iteration.
-        // Unlike skill_items, these are NOT recorded to permanent history - they're added
-        // directly to turn_input so they're re-evaluated on each turn.
-        {
-            let tools_config = crate::attachments::ToolsConfig {
-                edit_tool: turn_context.tools_config.edit_tool_type.clone(),
-                shell_tool: turn_context.tools_config.shell_type,
-            };
+        // Step 1: Collect attachments (throttled by history analysis in collector)
+        let attachments = sess
+            .services
+            .attachments
+            .collect_all(&sess, &turn_context)
+            .await;
 
-            let attachments = sess
-                .services
-                .attachments
-                .collect_all(&sess, &turn_context)
+        if !attachments.is_empty() {
+            let has_exited = sess.has_exited_plan_mode().await;
+
+            // Step 2: Record Attachment items to history (for future throttle queries)
+            // These are stored but not sent to API directly - they'll be expanded below
+            let attachment_markers: Vec<ResponseItem> = attachments
+                .into_iter()
+                .map(|data| ResponseItem::Attachment {
+                    data,
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                })
+                .collect();
+
+            sess.record_conversation_items(&turn_context, &attachment_markers)
                 .await;
 
-            if !attachments.is_empty() {
-                let has_exited = sess.has_exited_plan_mode().await;
+            debug!(
+                attachment_count = attachment_markers.len(),
+                "Recorded attachment markers to history"
+            );
 
-                let attachment_items: Vec<ResponseItem> = attachments
-                    .into_iter()
-                    .flat_map(|a| a.into_response_items(&tools_config))
-                    .collect();
-
-                // Add to turn_input transiently (not recorded to history)
-                turn_input.extend(attachment_items.clone());
-
-                // Reset the has_exited_plan_mode flag after injecting reentry attachment
-                if has_exited {
-                    sess.reset_has_exited_plan_mode().await;
-                }
-
-                debug!(
-                    attachment_items = attachment_items.len(),
-                    "Injected attachments (transient)"
-                );
+            // Reset the has_exited_plan_mode flag after recording reentry attachment
+            if has_exited {
+                sess.reset_has_exited_plan_mode().await;
             }
         }
+
+        // Step 3: Fetch history (includes Attachment items) and expand
+        // This follows GhostSnapshot pattern: Attachment is stored but expanded to
+        // Message items during get_history_for_prompt
+        let mut turn_input = sess.clone_history().await.get_history_for_prompt();
+        turn_input.extend(skill_items.clone()); // Add skill items
+
+        // Expand all Attachment items to Message items (GhostSnapshot pattern)
+        let turn_input = crate::attachments::expand_attachments(turn_input, &tools_config);
 
         let turn_input_messages = turn_input
             .iter()

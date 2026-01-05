@@ -2,11 +2,11 @@
 //!
 //! All attachment variants are defined here with their data and conversion logic.
 
+use codex_protocol::models::AttachmentData;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::EditToolType;
-use serde::{Deserialize, Serialize};
 
 use crate::tools::spec::ApplyToolConfig;
 
@@ -16,22 +16,8 @@ const PLAN_AGENT_COUNT: usize = 3;
 /// Number of parallel Explore agents to use for codebase research.
 const EXPLORE_AGENT_COUNT: usize = 3;
 
-/// All attachment variants.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Attachment {
-    /// Main session plan mode instructions.
-    PlanMode {
-        plan_file_path: String,
-        is_subagent: bool,
-        plan_exists: bool,
-    },
-
-    /// Plan mode reentry instructions (when returning to plan mode after exit).
-    PlanModeReentry { plan_file_path: String },
-    // Future variants can be added here:
-    // Diagnostics { files: Vec<DiagnosticFile> },
-}
+/// Turns between attachment injections (matching JS TURNS_BETWEEN_ATTACHMENTS).
+pub const TURNS_BETWEEN_ATTACHMENTS: usize = 5;
 
 /// Tools configuration needed for attachment rendering.
 #[derive(Debug, Clone)]
@@ -40,33 +26,48 @@ pub struct ToolsConfig {
     pub shell_tool: ConfigShellToolType,
 }
 
-impl Attachment {
-    /// Convert attachment to ResponseItems for prompt injection.
-    pub fn into_response_items(self, config: &ToolsConfig) -> Vec<ResponseItem> {
-        match self {
-            Self::PlanMode {
-                plan_file_path,
-                is_subagent,
-                plan_exists,
-            } => {
-                #[cfg(feature = "exit_plan_mode")]
-                {
-                    if is_subagent {
-                        generate_subagent_items(&plan_file_path, plan_exists, config)
-                    } else {
-                        generate_main_session_items(&plan_file_path, plan_exists, config)
-                    }
-                }
-                #[cfg(not(feature = "exit_plan_mode"))]
-                {
-                    generate_legacy_plan_mode_items(config, is_subagent)
+/// Convert AttachmentData to ResponseItem::Message items for API call.
+/// This follows the GhostSnapshot pattern: Attachment is stored in history,
+/// then expanded to Message items during get_history_for_prompt().
+pub fn attachment_data_to_messages(data: &AttachmentData, config: &ToolsConfig) -> Vec<ResponseItem> {
+    match data {
+        AttachmentData::PlanMode {
+            plan_file_path,
+            is_subagent,
+            plan_exists,
+        } => {
+            #[cfg(feature = "exit_plan_mode")]
+            {
+                if *is_subagent {
+                    generate_subagent_items(plan_file_path, *plan_exists, config)
+                } else {
+                    generate_main_session_items(plan_file_path, *plan_exists, config)
                 }
             }
-            Self::PlanModeReentry { plan_file_path } => {
-                generate_reentry_items(&plan_file_path, config)
+            #[cfg(not(feature = "exit_plan_mode"))]
+            {
+                generate_legacy_plan_mode_items(config, *is_subagent)
             }
         }
+        AttachmentData::PlanModeReentry { plan_file_path } => {
+            generate_reentry_items(plan_file_path, config)
+        }
     }
+}
+
+/// Expand Attachment items in history to Message items (GhostSnapshot pattern).
+/// Called during get_history_for_prompt() to convert Attachment markers to actual messages.
+pub fn expand_attachments(items: Vec<ResponseItem>, config: &ToolsConfig) -> Vec<ResponseItem> {
+    items
+        .into_iter()
+        .flat_map(|item| match item {
+            ResponseItem::Attachment { ref data, .. } => {
+                // Expand to Message items
+                attachment_data_to_messages(data, config)
+            }
+            other => vec![other],
+        })
+        .collect()
 }
 
 // =============================================================================
@@ -288,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_plan_mode_main_session() {
-        let attachment = Attachment::PlanMode {
+        let data = AttachmentData::PlanMode {
             plan_file_path: "/tmp/plan.md".to_string(),
             is_subagent: false,
             plan_exists: false,
@@ -299,7 +300,7 @@ mod tests {
             shell_tool: ConfigShellToolType::Bash,
         };
 
-        let items = attachment.into_response_items(&config);
+        let items = attachment_data_to_messages(&data, &config);
         assert_eq!(items.len(), 1);
 
         if let ResponseItem::Message { content, .. } = &items[0] {
@@ -314,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_plan_mode_subagent() {
-        let attachment = Attachment::PlanMode {
+        let data = AttachmentData::PlanMode {
             plan_file_path: "/tmp/plan.md".to_string(),
             is_subagent: true,
             plan_exists: true,
@@ -325,7 +326,7 @@ mod tests {
             shell_tool: ConfigShellToolType::Bash,
         };
 
-        let items = attachment.into_response_items(&config);
+        let items = attachment_data_to_messages(&data, &config);
         assert_eq!(items.len(), 1);
 
         if let ResponseItem::Message { content, .. } = &items[0] {
@@ -338,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_plan_mode_reentry() {
-        let attachment = Attachment::PlanModeReentry {
+        let data = AttachmentData::PlanModeReentry {
             plan_file_path: "/tmp/plan.md".to_string(),
         };
 
@@ -347,7 +348,7 @@ mod tests {
             shell_tool: ConfigShellToolType::Bash,
         };
 
-        let items = attachment.into_response_items(&config);
+        let items = attachment_data_to_messages(&data, &config);
         assert_eq!(items.len(), 1);
 
         if let ResponseItem::Message { content, .. } = &items[0] {
@@ -356,5 +357,45 @@ mod tests {
                 assert!(text.contains("/tmp/plan.md"));
             }
         }
+    }
+
+    #[test]
+    fn test_expand_attachments() {
+        let config = ToolsConfig {
+            edit_tool: Some(EditToolType::FileEdit),
+            shell_tool: ConfigShellToolType::Bash,
+        };
+
+        // Create history with Attachment item
+        let history = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "test".to_string(),
+                }],
+            },
+            ResponseItem::Attachment {
+                data: AttachmentData::PlanMode {
+                    plan_file_path: "/tmp/plan.md".to_string(),
+                    is_subagent: false,
+                    plan_exists: false,
+                },
+                timestamp: "2024-01-01T00:00:00Z".to_string(),
+            },
+        ];
+
+        // Expand attachments
+        let expanded = expand_attachments(history, &config);
+
+        // Should have 2 items: original user message + expanded plan mode message
+        assert_eq!(expanded.len(), 2);
+
+        // First should be original user message
+        assert!(matches!(&expanded[0], ResponseItem::Message { role, .. } if role == "user"));
+
+        // Second should be expanded plan mode (NOT Attachment)
+        assert!(matches!(&expanded[1], ResponseItem::Message { .. }));
+        assert!(!matches!(&expanded[1], ResponseItem::Attachment { .. }));
     }
 }

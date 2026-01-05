@@ -1,23 +1,69 @@
 //! Attachment collector functions.
 
+use codex_protocol::models::AttachmentData;
+use codex_protocol::models::ResponseItem;
 use futures::future::BoxFuture;
 
-use super::types::Attachment;
+use super::types::TURNS_BETWEEN_ATTACHMENTS;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::plan_file::{plan_exists_with_slug, resolve_plan_file_path_with_slug};
 
-/// Collect plan mode attachments.
+/// Analyzes history to find turns since last attachment of given types.
+/// Returns (turns_since_attachment, found_previous_attachment).
 ///
-/// Returns plan mode instructions if session is in plan mode.
+/// Walks backwards through history counting assistant turns until finding
+/// a plan_mode or plan_mode_reentry attachment.
+pub fn analyze_history_for_throttle(items: &[ResponseItem]) -> (usize, bool) {
+    let mut turn_count = 0;
+    let mut found = false;
+
+    // Walk backwards through history (newest to oldest)
+    for item in items.iter().rev() {
+        match item {
+            // Count assistant messages as turns
+            ResponseItem::Message { role, .. } if role == "assistant" => {
+                turn_count += 1;
+            }
+            // Check for previous plan_mode or plan_mode_reentry attachment
+            ResponseItem::Attachment { data, .. } => {
+                let att_type = data.attachment_type();
+                if att_type == "plan_mode" || att_type == "plan_mode_reentry" {
+                    found = true;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (turn_count, found)
+}
+
+/// Collect plan mode attachments with throttling.
+///
+/// Returns plan mode instructions if session is in plan mode AND:
+/// - No previous attachment exists, OR
+/// - Enough turns have passed since last attachment (TURNS_BETWEEN_ATTACHMENTS)
+///
 /// Includes reentry attachment if previously exited plan mode.
 pub fn collect_plan_mode<'a>(
     session: &'a Session,
     _turn: &'a TurnContext,
-) -> BoxFuture<'a, Vec<Attachment>> {
+) -> BoxFuture<'a, Vec<AttachmentData>> {
     Box::pin(async move {
         // Only collect if in plan mode
         if !session.is_in_plan_mode().await {
+            return vec![];
+        }
+
+        // Get history for throttle analysis (in-memory, fast)
+        let history = session.clone_history().await;
+        let items = history.contents();
+
+        // Check throttle: skip if found previous AND not enough turns passed
+        let (turns_since, found_previous) = analyze_history_for_throttle(&items);
+        if found_previous && turns_since < TURNS_BETWEEN_ATTACHMENTS {
             return vec![];
         }
 
@@ -49,13 +95,13 @@ pub fn collect_plan_mode<'a>(
 
         // Reentry detection: previously exited AND plan file exists
         if has_exited && plan_file_exists {
-            attachments.push(Attachment::PlanModeReentry {
+            attachments.push(AttachmentData::PlanModeReentry {
                 plan_file_path: plan_file_path.clone(),
             });
         }
 
         // Main plan mode attachment
-        attachments.push(Attachment::PlanMode {
+        attachments.push(AttachmentData::PlanMode {
             plan_file_path,
             is_subagent,
             plan_exists: plan_file_exists,

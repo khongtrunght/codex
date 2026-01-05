@@ -1,16 +1,16 @@
 //! Attachment registry for collecting attachments.
 
+use codex_protocol::models::AttachmentData;
 use futures::future::{BoxFuture, join_all};
 
-use super::types::Attachment;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 
 /// Collector function signature.
 ///
 /// Each collector is a function that takes session and turn context,
-/// and returns a future resolving to a vector of attachments.
-pub type CollectFn = for<'a> fn(&'a Session, &'a TurnContext) -> BoxFuture<'a, Vec<Attachment>>;
+/// and returns a future resolving to a vector of attachment data.
+pub type CollectFn = for<'a> fn(&'a Session, &'a TurnContext) -> BoxFuture<'a, Vec<AttachmentData>>;
 
 /// Registry of attachment collectors.
 ///
@@ -39,7 +39,7 @@ impl AttachmentRegistry {
         &self,
         session: &Session,
         turn: &TurnContext,
-    ) -> Vec<Attachment> {
+    ) -> Vec<AttachmentData> {
         join_all(self.collectors.iter().map(|f| f(session, turn)))
             .await
             .into_iter()

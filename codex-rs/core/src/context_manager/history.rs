@@ -54,8 +54,11 @@ impl ContextManager {
     {
         for item in items {
             let item_ref = item.deref();
+            // GhostSnapshot and Attachment follow the same pattern:
+            // is_api_message returns false, but we still want to store them
             let is_ghost_snapshot = matches!(item_ref, ResponseItem::GhostSnapshot { .. });
-            if !is_api_message(item_ref) && !is_ghost_snapshot {
+            let is_attachment = matches!(item_ref, ResponseItem::Attachment { .. });
+            if !is_api_message(item_ref) && !is_ghost_snapshot && !is_attachment {
                 continue;
             }
 
@@ -87,7 +90,9 @@ impl ContextManager {
 
         let items_tokens = self.items.iter().fold(0i64, |acc, item| {
             acc + match item {
+                // GhostSnapshot is removed, Attachment is expanded - don't count their tokens
                 ResponseItem::GhostSnapshot { .. } => 0,
+                ResponseItem::Attachment { .. } => 0,
                 ResponseItem::Reasoning {
                     encrypted_content: Some(content),
                     ..
@@ -216,7 +221,8 @@ impl ContextManager {
     }
 
     /// Returns a clone of the contents in the transcript.
-    fn contents(&self) -> Vec<ResponseItem> {
+    /// Public so collectors can access history for throttle analysis.
+    pub fn contents(&self) -> Vec<ResponseItem> {
         self.items.clone()
     }
 
@@ -260,6 +266,7 @@ impl ContextManager {
             | ResponseItem::CustomToolCall { .. }
             | ResponseItem::Compaction { .. }
             | ResponseItem::GhostSnapshot { .. }
+            | ResponseItem::Attachment { .. }
             | ResponseItem::Other => item.clone(),
         }
     }
@@ -267,6 +274,8 @@ impl ContextManager {
 
 /// API messages include every non-system item (user/assistant messages, reasoning,
 /// tool calls, tool outputs, shell calls, and web-search calls).
+/// GhostSnapshot and Attachment return false - they are stored in history
+/// but not sent to API directly (GhostSnapshot is removed, Attachment is expanded).
 fn is_api_message(message: &ResponseItem) -> bool {
     match message {
         ResponseItem::Message { role, .. } => role.as_str() != "system",
@@ -278,7 +287,9 @@ fn is_api_message(message: &ResponseItem) -> bool {
         | ResponseItem::Reasoning { .. }
         | ResponseItem::WebSearchCall { .. }
         | ResponseItem::Compaction { .. } => true,
+        // GhostSnapshot and Attachment follow same pattern: stored but transformed
         ResponseItem::GhostSnapshot { .. } => false,
+        ResponseItem::Attachment { .. } => false,
         ResponseItem::Other => false,
     }
 }
