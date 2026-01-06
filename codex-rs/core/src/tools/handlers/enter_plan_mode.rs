@@ -69,9 +69,7 @@ impl ToolHandler for EnterPlanModeHandler {
         }
 
         // Get or create slug from session state (persisted across plan mode entries)
-        let slug = session
-            .get_or_create_plan_slug(generate_unique_slug)
-            .await;
+        let slug = session.get_or_create_plan_slug(generate_unique_slug).await;
 
         // Resolve plan file path using the slug
         let plan_file_path = resolve_plan_file_path_with_slug(&slug, None);
@@ -135,9 +133,18 @@ impl ToolHandler for EnterPlanModeHandler {
             )
             .await;
 
-        let message = format!(
-            "Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.\n\nYour plan file is at: {path_str}",
-        );
+        let message = r#"Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+
+
+In plan mode, you should:
+1. Thoroughly explore the codebase to understand existing patterns
+2. Identify similar features and architectural approaches
+3. Consider multiple approaches and their trade-offs
+4. Use AskUserQuestion if you need to clarify the approach
+5. Design a concrete implementation strategy
+6. When ready, use ExitPlanMode to present your plan for approval
+
+Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase."#.to_string();
 
         Ok(ToolOutput::Function {
             content: message,

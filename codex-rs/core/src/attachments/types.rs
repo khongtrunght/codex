@@ -29,7 +29,10 @@ pub struct ToolsConfig {
 /// Convert AttachmentData to ResponseItem::Message items for API call.
 /// This follows the GhostSnapshot pattern: Attachment is stored in history,
 /// then expanded to Message items during get_history_for_prompt().
-pub fn attachment_data_to_messages(data: &AttachmentData, config: &ToolsConfig) -> Vec<ResponseItem> {
+pub fn attachment_data_to_messages(
+    data: &AttachmentData,
+    config: &ToolsConfig,
+) -> Vec<ResponseItem> {
     match data {
         AttachmentData::PlanMode {
             plan_file_path,
@@ -55,9 +58,7 @@ pub fn attachment_data_to_messages(data: &AttachmentData, config: &ToolsConfig) 
         AttachmentData::PlanModeExit {
             plan_file_path,
             plan_exists,
-        } => {
-            generate_exit_items(plan_file_path, *plan_exists, config)
-        }
+        } => generate_exit_items(plan_file_path, *plan_exists),
     }
 }
 
@@ -282,22 +283,12 @@ fn generate_reentry_items(plan_file_path: &str, config: &ToolsConfig) -> Vec<Res
 /// This is injected ONCE when the user exits plan mode via UI (shift+tab).
 const PLAN_MODE_EXIT_TEMPLATE: &str = r#"## Exited Plan Mode
 
-The user has exited plan mode. You are no longer in plan mode and can proceed to implement the plan.
+You have exited plan mode. You can now make edits, run tools, and take actions. {plan_file_info}
+"#;
 
-{plan_file_info}
-
-You should now:
-1. Read the plan file if it exists to understand what was planned
-2. Proceed to implement the plan, making necessary edits and running commands
-3. You are now allowed to make edits and run non-readonly tools"#;
-
-fn generate_exit_items(
-    plan_file_path: &str,
-    plan_exists: bool,
-    _config: &ToolsConfig,
-) -> Vec<ResponseItem> {
+fn generate_exit_items(plan_file_path: &str, plan_exists: bool) -> Vec<ResponseItem> {
     let plan_file_info = if plan_exists {
-        format!("A plan file exists at {plan_file_path} from the planning session.")
+        format!(" The plan file is located at {plan_file_path} if you need to reference it.")
     } else {
         "No plan file was created during the planning session.".to_string()
     };

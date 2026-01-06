@@ -4,8 +4,8 @@
 //! The plan is read from the plan file that was written during plan mode.
 
 use async_trait::async_trait;
-use codex_protocol::session_mode::ExitedPlanModeEvent;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::session_mode::ExitedPlanModeEvent;
 
 use crate::function_tool::FunctionCallError;
 use crate::plan_file::{extract_plan_from_file_with_slug, resolve_plan_file_path_with_slug};
@@ -124,14 +124,9 @@ impl ToolHandler for ExitPlanModeHandler {
             .await;
 
         // Build response with plan data
-        let response = serde_json::json!({
-            "plan": plan_content,
-            "isAgent": is_agent,
-            "filePath": path_str,
-        });
-
+        let response = generate_approval_message(is_agent, &plan_content, &path_str);
         Ok(ToolOutput::Function {
-            content: response.to_string(),
+            content: response,
             content_items: None,
             success: Some(true),
         })
@@ -139,13 +134,18 @@ impl ToolHandler for ExitPlanModeHandler {
 }
 
 /// Generate the tool result message after user approval.
-#[allow(dead_code)]
 pub fn generate_approval_message(is_agent: bool, plan_content: &str, file_path: &str) -> String {
     if is_agent {
-        r#"User has approved the plan. There is nothing else needed from you now. Please respond with "ok". Very important: remember, if you modify your plan along the way, you MUST edit the plan file to reflect the changes."#.to_string()
+        r#"User has approved the plan. There is nothing else needed from you now. Please respond with "ok""#.to_string()
     } else {
         format!(
-            "User has approved your plan. You can now start coding. Start with updating your todo list if applicable. Very important: remember, if you modify your plan along the way, you MUST edit the plan file to reflect the changes.\n\nYour plan has been saved to: {file_path}\n\n## Approved Plan:\n{plan_content}"
+            r#"User has approved your plan. You can now start coding. Start with updating your todo list if applicable
+
+Your plan has been saved to: {file_path}
+You can refer back to it if needed during implementation.
+
+## Approved Plan:
+{plan_content}"#
         )
     }
 }
