@@ -17,9 +17,10 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::plan_mode::ExitPlanModeRequest;
 use crate::tools::runtimes::plan_mode::ExitPlanModeRuntime;
+use crate::prompt_template::ExitPlanModeNoFileError;
+use crate::prompt_template::ToolConfig;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
-use crate::tools::spec::ApplyToolConfig;
 use crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME;
 
 pub struct ExitPlanModeHandler;
@@ -68,12 +69,15 @@ impl ToolHandler for ExitPlanModeHandler {
         let plan_content = extract_plan_from_file_with_slug(&slug, None)
             .await
             .ok_or_else(|| {
-                let error_msg = format!(
-                    "No plan file found at {path_str}. Please write your plan to this file before calling {{exit_plan_mode_tool}}."
-                ).apply_tool_config(
+                let tools = ToolConfig::new(
                     turn.tools_config.edit_tool_type,
                     turn.tools_config.shell_type,
                 );
+                let error_msg = ExitPlanModeNoFileError {
+                    tools,
+                    path_str: path_str.clone(),
+                }
+                .to_string();
                 FunctionCallError::RespondToModel(error_msg)
             })?;
 

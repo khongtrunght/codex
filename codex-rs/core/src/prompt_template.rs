@@ -126,6 +126,99 @@ pub struct GeneralMainPrompt {
     pub tools: ToolConfig,
 }
 
+// =============================================================================
+// Agent Prompts (external templates)
+// =============================================================================
+
+/// Template for the explore agent prompt.
+#[derive(Template)]
+#[template(path = "agents/explore_agent_prompt.md")]
+pub struct ExploreAgentPrompt {
+    pub tools: ToolConfig,
+}
+
+/// Template for the plan sub-agent prompt.
+#[derive(Template)]
+#[template(path = "agents/plan_subagent_prompt.md")]
+pub struct PlanSubagentPrompt {
+    pub tools: ToolConfig,
+}
+
+// =============================================================================
+// Plan Mode Prompts (external templates)
+// =============================================================================
+
+/// Template for enhanced multi-agent plan mode instructions (main session).
+#[derive(Template)]
+#[template(path = "plan_mode/enhanced.md")]
+pub struct PlanModeEnhancedPrompt {
+    pub tools: ToolConfig,
+    pub plan_file_info: String,
+    pub plan_agent_count: usize,
+    pub explore_agent_count: usize,
+    pub multi_agent_mode: bool,
+}
+
+/// Template for legacy plan mode instructions.
+#[derive(Template)]
+#[template(path = "plan_mode/legacy.md")]
+pub struct PlanModeLegacyPrompt {
+    pub tools: ToolConfig,
+    pub is_subagent: bool,
+}
+
+/// Template for sub-agent plan mode instructions.
+#[derive(Template)]
+#[template(path = "plan_mode/subagent.md")]
+pub struct PlanModeSubagentPrompt {
+    pub tools: ToolConfig,
+    pub plan_file_info: String,
+}
+
+/// Template for plan mode reentry instructions.
+#[derive(Template)]
+#[template(path = "plan_mode/reentry.md")]
+pub struct PlanModeReentryPrompt {
+    pub tools: ToolConfig,
+    pub plan_file_path: String,
+}
+
+// =============================================================================
+// Tool Handler Messages (inline templates)
+// =============================================================================
+
+/// Message shown when entering plan mode successfully.
+#[derive(Template)]
+#[template(
+    ext = "txt",
+    source = r#"Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+
+
+In plan mode, you should:
+1. Thoroughly explore the codebase to understand existing patterns
+2. Identify similar features and architectural approaches
+3. Consider multiple approaches and their trade-offs
+4. Use {{ tools.ask_user_question_tool() }} if you need to clarify the approach
+5. Design a concrete implementation strategy
+6. When ready, use {{ tools.exit_plan_mode_tool() }} to present your plan for approval
+
+Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase."#
+)]
+pub struct EnterPlanModeSuccessMessage {
+    pub tools: ToolConfig,
+}
+
+/// Error message when plan file doesn't exist on exit.
+#[derive(Template)]
+#[template(
+    ext = "txt",
+    source = "No plan file found at {{ path_str }}. Please write your plan to this file before calling {{ tools.exit_plan_mode_tool() }}."
+)]
+pub struct ExitPlanModeNoFileError {
+    pub tools: ToolConfig,
+    pub path_str: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

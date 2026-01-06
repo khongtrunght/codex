@@ -4,7 +4,9 @@
 //! that can be spawned by the Task tool. Each agent type can have its own model,
 //! tools, system prompt, and other settings.
 
-use crate::tools::spec::ApplyToolConfig;
+use crate::prompt_template::ExploreAgentPrompt;
+use crate::prompt_template::PlanSubagentPrompt;
+use crate::prompt_template::ToolConfig;
 use crate::tools::spec::EXEC_COMMAND_TOOL_NAME;
 use crate::tools::spec::GLOB_TOOL_NAME;
 use crate::tools::spec::GREP_FILES_TOOL_NAME;
@@ -72,9 +74,6 @@ pub struct AgentTypeRegistry {
     agents: HashMap<String, AgentTypeConfig>,
 }
 
-const EXPLORE_AGENT_PROMPT_TEMPLATE: &str = include_str!("../explore_agent_prompt.md");
-const PLAN_SUB_AGENT_PROMPT_TEMPLATE: &str = include_str!("../plan_subagent_prompt.md");
-
 impl AgentTypeRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
@@ -107,6 +106,8 @@ impl AgentTypeRegistry {
         );
 
         // Exploration agent - optimized for codebase exploration (read-only)
+        let explore_tools =
+            ToolConfig::new(Some(EditToolType::FileEdit), ConfigShellToolType::Bash);
         agents.insert(
             "explore".to_string(),
             AgentTypeConfig {
@@ -116,11 +117,8 @@ impl AgentTypeRegistry {
                 ,
                 model: None,
                 system_prompt: Some(
-                    EXPLORE_AGENT_PROMPT_TEMPLATE
-                    .apply_tool_config(
-                    Some(EditToolType::FileEdit),
-                    ConfigShellToolType::Bash
-                    ) // TODO: make tool config customizable in the args
+                    ExploreAgentPrompt { tools: explore_tools }
+                        .to_string()
                 ),
                 tools: Some(vec![
                     READ_FILE_TOOL_NAME.to_string(),
@@ -139,20 +137,17 @@ impl AgentTypeRegistry {
         );
 
         // Planning agent - for creating implementation plans
+        let plan_tools = ToolConfig::new(Some(EditToolType::FileEdit), ConfigShellToolType::Bash);
         agents.insert(
             "plan".to_string(),
             AgentTypeConfig {
                 name: "plan".to_string(),
                 description:
-                    r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
+                    r#""Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs."#.to_string()
                 ,
                 model: None,
                 system_prompt: Some(
-                    PLAN_SUB_AGENT_PROMPT_TEMPLATE
-                    .apply_tool_config(
-                        Some(EditToolType::FileEdit),
-                        ConfigShellToolType::Bash
-                    )
+                    PlanSubagentPrompt { tools: plan_tools }.to_string()
                 ),
                 tools: Some(vec![
                     READ_FILE_TOOL_NAME.to_string(),

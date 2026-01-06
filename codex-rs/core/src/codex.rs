@@ -1122,12 +1122,12 @@ impl Session {
                 // Restore plan slug from EnteredPlanModeEvent if present
                 if let InitialHistory::Resumed(_) = conversation_history {
                     for item in &rollout_items {
-                        if let RolloutItem::EventMsg(EventMsg::EnteredPlanMode(event)) = item {
-                            if let Some(ref slug) = event.plan_slug {
-                                self.set_plan_slug(slug.clone()).await;
-                                tracing::info!("Restored plan slug from session: {slug}");
-                                break;
-                            }
+                        if let RolloutItem::EventMsg(EventMsg::EnteredPlanMode(event)) = item
+                            && let Some(ref slug) = event.plan_slug
+                        {
+                            self.set_plan_slug(slug.clone()).await;
+                            tracing::info!("Restored plan slug from session: {slug}");
+                            break;
                         }
                     }
                 }

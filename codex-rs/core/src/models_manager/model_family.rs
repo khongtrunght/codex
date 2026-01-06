@@ -151,7 +151,7 @@ impl ModelFamily {
         self.edit_tool_type = match apply_patch_tool_type {
             Some(ApplyPatchToolType::Freeform) => Some(EditToolType::ApplyPatchFreeform),
             Some(ApplyPatchToolType::Function) => Some(EditToolType::ApplyPatchFunction),
-            None => self.edit_tool_type.clone(), // Keep existing if server doesn't specify
+            None => self.edit_tool_type, // Keep existing if server doesn't specify
         };
         self.truncation_policy = truncation_policy.into();
         self.supports_parallel_tool_calls = supports_parallel_tool_calls;

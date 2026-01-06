@@ -44,67 +44,6 @@ pub const ENTER_PLAN_MODE_TOOL_NAME: &str = "enter_plan_mode";
 pub const EXIT_PLAN_MODE_TOOL_NAME: &str = "exit_plan_mode";
 pub const ASK_USER_QUESTION_TOOL_NAME: &str = "ask_user_question";
 
-pub trait ApplyToolConfig {
-    fn apply_tool_config(
-        &self,
-        edit_tool: Option<EditToolType>,
-        shell_tool: ConfigShellToolType,
-    ) -> String;
-}
-
-impl ApplyToolConfig for &str {
-    fn apply_tool_config(
-        &self,
-        edit_tool: Option<EditToolType>,
-        shell_tool: ConfigShellToolType,
-    ) -> String {
-        let edit_tool_str = match edit_tool {
-            Some(EditToolType::ApplyPatchFreeform) => APPLY_PATCH_TOOL_NAME,
-            Some(EditToolType::ApplyPatchFunction) => APPLY_PATCH_TOOL_NAME,
-            Some(EditToolType::FileEdit) => EDIT_FILE_TOOL_NAME,
-            None => "<no edit tool>",
-        };
-
-        let write_tool_str = match edit_tool {
-            Some(EditToolType::ApplyPatchFreeform) => APPLY_PATCH_TOOL_NAME,
-            Some(EditToolType::ApplyPatchFunction) => APPLY_PATCH_TOOL_NAME,
-            Some(EditToolType::FileEdit) => WRITE_FILE_TOOL_NAME,
-            _ => "<no write tool>",
-        };
-
-        let shell_tool_str = match shell_tool {
-            ConfigShellToolType::Disabled => "<no shell tool>".to_string(),
-            ConfigShellToolType::UnifiedExec => EXEC_COMMAND_TOOL_NAME.to_string(),
-            ConfigShellToolType::ShellCommand => SHELL_COMMAND_TOOL_NAME.to_string(),
-            ConfigShellToolType::Bash => BASH_TOOL_NAME.to_string(),
-            ConfigShellToolType::Local => SHELL_TOOL_NAME.to_string(),
-            ConfigShellToolType::Default => SHELL_TOOL_NAME.to_string(),
-        };
-
-        self.replace("{edit_tool}", edit_tool_str)
-            .replace("{write_tool}", write_tool_str)
-            .replace("{shell_tool}", &shell_tool_str)
-            .replace("{glob_tool}", GLOB_TOOL_NAME)
-            .replace("{grep_tool}", GREP_FILES_TOOL_NAME)
-            .replace("{read_tool}", READ_FILE_TOOL_NAME)
-            .replace("{task_tool}", TASK_TOOL_NAME)
-            // Plan mode tool placeholders
-            .replace("{enter_plan_mode_tool}", ENTER_PLAN_MODE_TOOL_NAME)
-            .replace("{exit_plan_mode_tool}", EXIT_PLAN_MODE_TOOL_NAME)
-            .replace("{ask_user_question_tool}", ASK_USER_QUESTION_TOOL_NAME)
-    }
-}
-
-impl ApplyToolConfig for String {
-    fn apply_tool_config(
-        &self,
-        edit_tool: Option<EditToolType>,
-        shell_tool: ConfigShellToolType,
-    ) -> String {
-        self.as_str().apply_tool_config(edit_tool, shell_tool)
-    }
-}
-
 /// Renders agent descriptions into a formatted string for the task tool.
 pub fn render_agent_descriptions(agents: &[AgentTypeConfig]) -> String {
     agents

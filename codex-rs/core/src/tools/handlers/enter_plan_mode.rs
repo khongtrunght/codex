@@ -22,9 +22,10 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::plan_mode::EnterPlanModeRequest;
 use crate::tools::runtimes::plan_mode::EnterPlanModeRuntime;
+use crate::prompt_template::EnterPlanModeSuccessMessage;
+use crate::prompt_template::ToolConfig;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
-use crate::tools::spec::ApplyToolConfig;
 use crate::tools::spec::ENTER_PLAN_MODE_TOOL_NAME;
 use crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME;
 
@@ -136,23 +137,11 @@ impl ToolHandler for EnterPlanModeHandler {
             )
             .await;
 
-        let message_template = r#"Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
-
-
-In plan mode, you should:
-1. Thoroughly explore the codebase to understand existing patterns
-2. Identify similar features and architectural approaches
-3. Consider multiple approaches and their trade-offs
-4. Use {ask_user_question_tool} if you need to clarify the approach
-5. Design a concrete implementation strategy
-6. When ready, use {exit_plan_mode_tool} to present your plan for approval
-
-Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase."#;
-
-        let message = message_template.apply_tool_config(
+        let tools = ToolConfig::new(
             turn.tools_config.edit_tool_type,
             turn.tools_config.shell_type,
         );
+        let message = EnterPlanModeSuccessMessage { tools }.to_string();
 
         Ok(ToolOutput::Function {
             content: message,
