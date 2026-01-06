@@ -95,6 +95,7 @@ use crate::mcp::auth::compute_auth_statuses;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_provider_info::CHAT_WIRE_API_DEPRECATION_SUMMARY;
 use crate::project_doc::get_user_instructions;
+use crate::prompt_template::ToolConfig;
 use crate::protocol::AgentMessageContentDeltaEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
 use crate::protocol::ApplyPatchApprovalRequestEvent;
@@ -2804,10 +2805,10 @@ pub(crate) async fn run_task(
 
     // Collect and record attachments BEFORE user's message
     // System reminders come before user input
-    let tools_config = crate::attachments::ToolsConfig {
-        edit_tool: turn_context.tools_config.edit_tool_type.clone(),
-        shell_tool: turn_context.tools_config.shell_type,
-    };
+    let tool_config = ToolConfig::new(
+        turn_context.tools_config.edit_tool_type,
+        turn_context.tools_config.shell_type,
+    );
 
     let initial_attachments = sess
         .services
@@ -2926,7 +2927,7 @@ pub(crate) async fn run_task(
         turn_input.extend(skill_items.clone()); // Add skill items
 
         // Expand all Attachment items to Message items (GhostSnapshot pattern)
-        let turn_input = crate::attachments::expand_attachments(turn_input, &tools_config);
+        let turn_input = crate::attachments::expand_attachments(turn_input, &tool_config);
 
         let turn_input_messages = turn_input
             .iter()

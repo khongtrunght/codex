@@ -19,7 +19,6 @@ pub use collectors::collect_plan_mode;
 pub use collectors::collect_plan_mode_exit;
 pub use registry::AttachmentRegistry;
 pub use types::expand_attachments;
-pub use types::ToolsConfig;
 
 /// Create a registry with default collectors.
 ///
