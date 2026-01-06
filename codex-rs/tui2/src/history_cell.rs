@@ -2637,6 +2637,12 @@ mod tests {
         let cell = new_active_mcp_tool_call("call-1".into(), invocation, true);
         let rendered = render_lines(&cell.display_lines(80)).join("\n");
 
+        // Normalize elapsed time which is non-deterministic
+        let rendered = regex_lite::Regex::new(r"\(\d+m?s\)")
+            .unwrap()
+            .replace_all(&rendered, "(Xms)")
+            .to_string();
+
         insta::assert_snapshot!(rendered);
     }
 
