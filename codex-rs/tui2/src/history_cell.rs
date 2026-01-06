@@ -1641,7 +1641,7 @@ impl SubAgentCell {
                 }) => {
                     let (title, args) = match action {
                         LocalShellAction::Exec(exec) => {
-                            let cmd = exec.command.join(" ");
+                            let cmd = strip_bash_lc_and_escape(&exec.command);
                             (Some(cmd.clone()), cmd)
                         }
                     };
@@ -1656,7 +1656,7 @@ impl SubAgentCell {
                 // EventMsg (from live sessions and persisted history)
                 RolloutItem::EventMsg(ev) => match ev {
                     EventMsg::ExecCommandBegin(begin) => {
-                        let cmd = begin.command.join(" ");
+                        let cmd = strip_bash_lc_and_escape(&begin.command);
                         tool_calls.push(ToolCallInfo {
                             tool_name: "shell".to_string(),
                             arguments: cmd.clone(),
