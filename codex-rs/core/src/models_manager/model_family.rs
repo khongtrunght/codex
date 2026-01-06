@@ -1,3 +1,4 @@
+use askama::Template;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
@@ -7,20 +8,20 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
 
 use crate::config::Config;
+use crate::prompt_template::GeneralMainPrompt;
+use crate::prompt_template::ToolConfig;
 use crate::truncate::TruncationPolicy;
 
-/// The `instructions` field in the payload sent to a model should always start
-/// with this content.
-const BASE_INSTRUCTIONS: &str = include_str!("../../prompt.md");
-
-const NON_OPENAI_INSTRUCTIONS: &str = include_str!("../../non_openai_prompt.md");
-
-const GPT_5_CODEX_INSTRUCTIONS: &str = include_str!("../../gpt_5_codex_prompt.md");
-const GPT_5_1_INSTRUCTIONS: &str = include_str!("../../gpt_5_1_prompt.md");
-const GPT_5_2_INSTRUCTIONS: &str = include_str!("../../gpt_5_2_prompt.md");
-const GPT_5_1_CODEX_MAX_INSTRUCTIONS: &str = include_str!("../../gpt-5.1-codex-max_prompt.md");
-const GPT_5_2_CODEX_INSTRUCTIONS: &str = include_str!("../../gpt-5.2-codex_prompt.md");
 pub(crate) const CONTEXT_WINDOW_272K: i64 = 272_000;
+
+/// Renders the GeneralMainPrompt template with the given tool configuration.
+/// This provides a unified prompt for all model families.
+fn render_general_prompt(edit_tool: Option<EditToolType>, shell_tool: ConfigShellToolType) -> String {
+    let tools = ToolConfig::new(edit_tool, shell_tool);
+    GeneralMainPrompt { tools }
+        .render()
+        .expect("Failed to render GeneralMainPrompt template")
+}
 
 /// A model family is a group of models that share certain characteristics.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -178,7 +179,7 @@ macro_rules! model_family {
     (
         $slug:expr, $family:expr $(, $key:ident : $value:expr )* $(,)?
     ) => {{
-        // defaults
+        // defaults - use empty string as placeholder for base_instructions
         #[allow(unused_mut)]
         let mut mf = ModelFamily {
             slug: $slug.to_string(),
@@ -190,7 +191,7 @@ macro_rules! model_family {
             reasoning_summary_format: ReasoningSummaryFormat::None,
             supports_parallel_tool_calls: false,
             edit_tool_type: None,
-            base_instructions: BASE_INSTRUCTIONS.to_string(),
+            base_instructions: String::new(), // Placeholder, will be rendered after overrides
             experimental_supported_tools: Vec::new(),
             effective_context_window_percent: 95,
             support_verbosity: false,
@@ -204,6 +205,12 @@ macro_rules! model_family {
         $(
             mf.$key = $value;
         )*
+
+        // Render GeneralMainPrompt if base_instructions wasn't explicitly set
+        if mf.base_instructions.is_empty() {
+            mf.base_instructions = render_general_prompt(mf.edit_tool_type, mf.shell_type);
+        }
+
         mf
     }};
 }
@@ -263,7 +270,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             slug, slug,
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
-            base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
             experimental_supported_tools: vec![
                 "grep_files".to_string(),
                 "list_dir".to_string(),
@@ -283,7 +289,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             slug, slug,
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
-            base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
@@ -298,7 +303,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
-            base_instructions: BASE_INSTRUCTIONS.to_string(),
             default_reasoning_effort: Some(ReasoningEffort::Medium),
             truncation_policy: TruncationPolicy::Bytes(10_000),
             shell_type: ConfigShellToolType::UnifiedExec,
@@ -312,7 +316,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             slug, slug,
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
-            base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
@@ -325,7 +328,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             slug, slug,
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
-            base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
@@ -338,7 +340,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             slug, slug,
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
-            base_instructions: GPT_5_1_CODEX_MAX_INSTRUCTIONS.to_string(),
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: false,
@@ -354,7 +355,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             slug, slug,
             supports_reasoning_summaries: true,
             reasoning_summary_format: ReasoningSummaryFormat::Experimental,
-            base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: false,
@@ -369,7 +369,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
-            base_instructions: GPT_5_2_INSTRUCTIONS.to_string(),
             default_reasoning_effort: Some(ReasoningEffort::Medium),
             truncation_policy: TruncationPolicy::Bytes(10_000),
             shell_type: ConfigShellToolType::ShellCommand,
@@ -383,7 +382,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
-            base_instructions: GPT_5_2_INSTRUCTIONS.to_string(),
             default_reasoning_effort: Some(ReasoningEffort::Medium),
             truncation_policy: TruncationPolicy::Bytes(10_000),
             shell_type: ConfigShellToolType::ShellCommand,
@@ -397,7 +395,6 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
             edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
-            base_instructions: GPT_5_1_INSTRUCTIONS.to_string(),
             default_reasoning_effort: Some(ReasoningEffort::Medium),
             truncation_policy: TruncationPolicy::Bytes(10_000),
             shell_type: ConfigShellToolType::ShellCommand,
@@ -421,6 +418,8 @@ pub(super) fn find_family_for_model(slug: &str) -> ModelFamily {
 
 fn derive_default_model_family(model: &str) -> ModelFamily {
     tracing::warn!("Unknown model {model} is used. This will degrade the performance of Codex.");
+    let edit_tool_type = Some(EditToolType::FileEdit);
+    let shell_type = ConfigShellToolType::Bash;
     ModelFamily {
         slug: model.to_string(),
         family: model.to_string(),
@@ -430,12 +429,12 @@ fn derive_default_model_family(model: &str) -> ModelFamily {
         supports_reasoning_summaries: false,
         reasoning_summary_format: ReasoningSummaryFormat::None,
         supports_parallel_tool_calls: true,
-        edit_tool_type: Some(EditToolType::FileEdit),
-        base_instructions: NON_OPENAI_INSTRUCTIONS.to_string(),
+        edit_tool_type,
+        base_instructions: render_general_prompt(edit_tool_type, shell_type),
         experimental_supported_tools: Vec::new(),
         effective_context_window_percent: 95,
         support_verbosity: false,
-        shell_type: ConfigShellToolType::Bash,
+        shell_type,
         default_verbosity: None,
         default_reasoning_effort: None,
         truncation_policy: TruncationPolicy::Bytes(10_000),
