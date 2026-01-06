@@ -4,6 +4,7 @@
 //! operations should be blocked with an error message.
 
 use crate::codex::Session;
+use crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME;
 use std::path::Path;
 
 /// Check if a write operation is allowed in plan mode.
@@ -33,7 +34,7 @@ pub async fn check_plan_mode_write(session: &Session, file_path: &Path) -> Resul
 
     Err(format!(
         "In Plan Mode, only the plan file ({}) can be modified. Attempted to modify: {}. \
-        Use ExitPlanMode when ready to make code changes.",
+        Use {EXIT_PLAN_MODE_TOOL_NAME} when ready to make code changes.",
         plan_file,
         file_path.display()
     ))

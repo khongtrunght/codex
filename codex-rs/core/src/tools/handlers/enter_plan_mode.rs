@@ -24,6 +24,9 @@ use crate::tools::runtimes::plan_mode::EnterPlanModeRequest;
 use crate::tools::runtimes::plan_mode::EnterPlanModeRuntime;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
+use crate::tools::spec::ApplyToolConfig;
+use crate::tools::spec::ENTER_PLAN_MODE_TOOL_NAME;
+use crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME;
 
 pub struct EnterPlanModeHandler;
 
@@ -56,16 +59,16 @@ impl ToolHandler for EnterPlanModeHandler {
         // Check if this is being called from a sub-agent context
         // Sub-agents have a source_session_id that differs from their conversation_id
         if session.source_session_id().is_some() {
-            return Err(FunctionCallError::RespondToModel(
-                "EnterPlanMode tool cannot be used in agent contexts. Plan mode is only available for the main session.".to_string()
-            ));
+            return Err(FunctionCallError::RespondToModel(format!(
+                "{ENTER_PLAN_MODE_TOOL_NAME} tool cannot be used in agent contexts. Plan mode is only available for the main session."
+            )));
         }
 
         // Check if already in plan mode (using unified API)
         if session.is_in_plan_mode().await {
-            return Err(FunctionCallError::RespondToModel(
-                "Already in plan mode. Use ExitPlanMode when ready.".to_string(),
-            ));
+            return Err(FunctionCallError::RespondToModel(format!(
+                "Already in plan mode. Use {EXIT_PLAN_MODE_TOOL_NAME} when ready."
+            )));
         }
 
         // Get or create slug from session state (persisted across plan mode entries)
@@ -101,12 +104,12 @@ impl ToolHandler for EnterPlanModeHandler {
             Ok(_) => {}
             Err(ToolError::Rejected(reason)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "EnterPlanMode was rejected: {reason}"
+                    "{ENTER_PLAN_MODE_TOOL_NAME} was rejected: {reason}"
                 )));
             }
             Err(ToolError::Codex(e)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "EnterPlanMode failed: {e}"
+                    "{ENTER_PLAN_MODE_TOOL_NAME} failed: {e}"
                 )));
             }
         }
@@ -133,18 +136,23 @@ impl ToolHandler for EnterPlanModeHandler {
             )
             .await;
 
-        let message = r#"Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+        let message_template = r#"Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
 
 
 In plan mode, you should:
 1. Thoroughly explore the codebase to understand existing patterns
 2. Identify similar features and architectural approaches
 3. Consider multiple approaches and their trade-offs
-4. Use AskUserQuestion if you need to clarify the approach
+4. Use {ask_user_question_tool} if you need to clarify the approach
 5. Design a concrete implementation strategy
-6. When ready, use ExitPlanMode to present your plan for approval
+6. When ready, use {exit_plan_mode_tool} to present your plan for approval
 
-Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase."#.to_string();
+Remember: DO NOT write or edit any files yet. This is a read-only exploration and planning phase."#;
+
+        let message = message_template.apply_tool_config(
+            turn.tools_config.edit_tool_type,
+            turn.tools_config.shell_type,
+        );
 
         Ok(ToolOutput::Function {
             content: message,

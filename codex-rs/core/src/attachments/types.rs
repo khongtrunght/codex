@@ -199,7 +199,7 @@ In the agent prompt:
         )
         .replace("{plan_agent_type}", "plan")
         .replace("{explore_agent_type}", "explore")
-        .apply_tool_config(config.edit_tool.clone(), config.shell_tool);
+        .apply_tool_config(config.edit_tool, config.shell_tool);
 
     vec![wrap_in_system_reminder(&contents)]
 }
@@ -218,7 +218,7 @@ fn generate_legacy_plan_mode_items(config: &ToolsConfig, is_subagent: bool) -> V
     let contents = PLAN_MODE_LEGACY_TEMPLATE
         .replace("{agent_usage_requirement}", agent_usage_requirement)
         .replace("{agent_type}", "plan")
-        .apply_tool_config(config.edit_tool.clone(), config.shell_tool);
+        .apply_tool_config(config.edit_tool, config.shell_tool);
 
     vec![wrap_in_system_reminder(&contents)]
 }
@@ -248,7 +248,7 @@ Answer the user's query comprehensively, using the {ask_user_question_tool} tool
 
     let contents = PLAN_MODE_SUBAGENT_TEMPLATE
         .replace("{plan_file_info}", &plan_file_info)
-        .apply_tool_config(config.edit_tool.clone(), config.shell_tool);
+        .apply_tool_config(config.edit_tool, config.shell_tool);
 
     vec![wrap_in_system_reminder(&contents)]
 }
@@ -271,7 +271,7 @@ Treat this as a fresh planning session. Do not assume the existing plan is relev
 fn generate_reentry_items(plan_file_path: &str, config: &ToolsConfig) -> Vec<ResponseItem> {
     let contents = PLAN_MODE_REENTRY_TEMPLATE
         .replace("{plan_file_path}", plan_file_path)
-        .apply_tool_config(config.edit_tool.clone(), config.shell_tool);
+        .apply_tool_config(config.edit_tool, config.shell_tool);
 
     vec![wrap_in_system_reminder(&contents)]
 }

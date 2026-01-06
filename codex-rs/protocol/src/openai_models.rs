@@ -129,7 +129,7 @@ pub enum ApplyPatchToolType {
 }
 
 /// Specifies which editing tools are available for a model.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EditToolType {
     /// Uses apply_patch tool with freeform text input (OpenAI models)

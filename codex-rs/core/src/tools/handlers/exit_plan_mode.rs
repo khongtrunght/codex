@@ -19,6 +19,8 @@ use crate::tools::runtimes::plan_mode::ExitPlanModeRequest;
 use crate::tools::runtimes::plan_mode::ExitPlanModeRuntime;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
+use crate::tools::spec::ApplyToolConfig;
+use crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME;
 
 pub struct ExitPlanModeHandler;
 
@@ -66,9 +68,13 @@ impl ToolHandler for ExitPlanModeHandler {
         let plan_content = extract_plan_from_file_with_slug(&slug, None)
             .await
             .ok_or_else(|| {
-                FunctionCallError::RespondToModel(format!(
-                    "No plan file found at {path_str}. Please write your plan to this file before calling ExitPlanMode."
-                ))
+                let error_msg = format!(
+                    "No plan file found at {path_str}. Please write your plan to this file before calling {{exit_plan_mode_tool}}."
+                ).apply_tool_config(
+                    turn.tools_config.edit_tool_type,
+                    turn.tools_config.shell_type,
+                );
+                FunctionCallError::RespondToModel(error_msg)
             })?;
 
         // Create request with plan content for approval UI display
@@ -97,12 +103,12 @@ impl ToolHandler for ExitPlanModeHandler {
             Ok(_) => {}
             Err(ToolError::Rejected(reason)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "ExitPlanMode was rejected: {reason}"
+                    "{EXIT_PLAN_MODE_TOOL_NAME} was rejected: {reason}"
                 )));
             }
             Err(ToolError::Codex(e)) => {
                 return Err(FunctionCallError::RespondToModel(format!(
-                    "ExitPlanMode failed: {e}"
+                    "{EXIT_PLAN_MODE_TOOL_NAME} failed: {e}"
                 )));
             }
         }
