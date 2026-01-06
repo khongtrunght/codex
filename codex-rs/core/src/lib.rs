@@ -47,6 +47,7 @@ pub mod path_utils;
 pub mod plan_file;
 mod plan_slug;
 pub mod powershell;
+pub mod prompt_template;
 pub mod sandboxing;
 mod stream_events_utils;
 mod text_encoding;
