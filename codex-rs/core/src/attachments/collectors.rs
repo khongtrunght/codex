@@ -157,10 +157,13 @@ pub fn collect_plan_mode_exit<'a>(
 
         let plan_file_exists = plan_exists_with_slug(&slug, None);
 
-        vec![AttachmentData::PlanModeExit {
-            plan_file_path,
-            plan_exists: plan_file_exists,
-        }]
+        let plan_file_path = if plan_file_exists {
+            Some(plan_file_path)
+        } else {
+            None
+        };
+
+        vec![AttachmentData::PlanModeExit { plan_file_path }]
     })
 }
 

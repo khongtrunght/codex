@@ -76,10 +76,8 @@ pub enum AttachmentData {
     /// Plan mode reentry instructions (after ExitPlanMode)
     PlanModeReentry { plan_file_path: String },
     /// Plan mode exit notification (when user exits plan mode via UI)
-    PlanModeExit {
-        plan_file_path: String,
-        plan_exists: bool,
-    },
+    /// plan_file_path is Some(path) if a plan was created, None otherwise
+    PlanModeExit { plan_file_path: Option<String> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]

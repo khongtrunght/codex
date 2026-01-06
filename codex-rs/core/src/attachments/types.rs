@@ -55,10 +55,7 @@ pub fn attachment_data_to_messages(
         AttachmentData::PlanModeReentry { plan_file_path } => {
             generate_reentry_items(plan_file_path, config)
         }
-        AttachmentData::PlanModeExit {
-            plan_file_path,
-            plan_exists,
-        } => generate_exit_items(plan_file_path, *plan_exists),
+        AttachmentData::PlanModeExit { plan_file_path } => generate_exit_items(plan_file_path),
     }
 }
 
@@ -286,11 +283,10 @@ const PLAN_MODE_EXIT_TEMPLATE: &str = r#"## Exited Plan Mode
 You have exited plan mode. You can now make edits, run tools, and take actions. {plan_file_info}
 "#;
 
-fn generate_exit_items(plan_file_path: &str, plan_exists: bool) -> Vec<ResponseItem> {
-    let plan_file_info = if plan_exists {
-        format!(" The plan file is located at {plan_file_path} if you need to reference it.")
-    } else {
-        "No plan file was created during the planning session.".to_string()
+fn generate_exit_items(plan_file_path: &Option<String>) -> Vec<ResponseItem> {
+    let plan_file_info = match plan_file_path {
+        Some(path) => format!(" The plan file is located at {path} if you need to reference it."),
+        None => "No plan file was created during the planning session.".to_string(),
     };
 
     let contents = PLAN_MODE_EXIT_TEMPLATE.replace("{plan_file_info}", &plan_file_info);
