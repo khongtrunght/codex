@@ -67,11 +67,11 @@ impl Sandboxable for EnterPlanModeRuntime {
 impl Approvable<EnterPlanModeRequest> for EnterPlanModeRuntime {
     type ApprovalKey = PlanModeApprovalKey;
 
-    fn approval_key(&self, req: &EnterPlanModeRequest) -> Self::ApprovalKey {
-        PlanModeApprovalKey {
+    fn approval_keys(&self, req: &EnterPlanModeRequest) -> Vec<Self::ApprovalKey> {
+        vec![PlanModeApprovalKey {
             action: "enter".to_string(),
             session_id: req.session_id.clone(),
-        }
+        }]
     }
 
     /// Plan mode tools ALWAYS need approval, regardless of policy.
@@ -95,14 +95,14 @@ impl Approvable<EnterPlanModeRequest> for EnterPlanModeRuntime {
         req: &'a EnterPlanModeRequest,
         ctx: ApprovalCtx<'a>,
     ) -> BoxFuture<'a, ReviewDecision> {
-        let key = self.approval_key(req);
+        let keys = self.approval_keys(req);
         let session = ctx.session;
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
         let plan_file_path = req.plan_file_path.clone();
 
         Box::pin(async move {
-            with_cached_approval(&session.services, key, move || async move {
+            with_cached_approval(&session.services, keys, move || async move {
                 session
                     .request_enter_plan_mode_approval(turn, call_id, plan_file_path)
                     .await
@@ -169,11 +169,11 @@ impl Sandboxable for ExitPlanModeRuntime {
 impl Approvable<ExitPlanModeRequest> for ExitPlanModeRuntime {
     type ApprovalKey = PlanModeApprovalKey;
 
-    fn approval_key(&self, req: &ExitPlanModeRequest) -> Self::ApprovalKey {
-        PlanModeApprovalKey {
+    fn approval_keys(&self, req: &ExitPlanModeRequest) -> Vec<Self::ApprovalKey> {
+        vec![PlanModeApprovalKey {
             action: "exit".to_string(),
             session_id: req.session_id.clone(),
-        }
+        }]
     }
 
     fn exec_approval_requirement(
@@ -196,7 +196,7 @@ impl Approvable<ExitPlanModeRequest> for ExitPlanModeRuntime {
         req: &'a ExitPlanModeRequest,
         ctx: ApprovalCtx<'a>,
     ) -> BoxFuture<'a, ReviewDecision> {
-        let key = self.approval_key(req);
+        let keys = self.approval_keys(req);
         let session = ctx.session;
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
@@ -204,7 +204,7 @@ impl Approvable<ExitPlanModeRequest> for ExitPlanModeRuntime {
         let plan_file_path = req.plan_file_path.clone();
 
         Box::pin(async move {
-            with_cached_approval(&session.services, key, move || async move {
+            with_cached_approval(&session.services, keys, move || async move {
                 session
                     .request_exit_plan_mode_approval(turn, call_id, plan_content, plan_file_path)
                     .await

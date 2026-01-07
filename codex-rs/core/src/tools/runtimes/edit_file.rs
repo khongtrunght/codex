@@ -87,10 +87,10 @@ impl Sandboxable for EditFileRuntime {
 impl Approvable<EditFileRequest> for EditFileRuntime {
     type ApprovalKey = EditFileApprovalKey;
 
-    fn approval_key(&self, req: &EditFileRequest) -> Self::ApprovalKey {
-        EditFileApprovalKey {
+    fn approval_keys(&self, req: &EditFileRequest) -> Vec<Self::ApprovalKey> {
+        vec![EditFileApprovalKey {
             file_path: req.file_path.clone(),
-        }
+        }]
     }
 
     /// Always return NeedsApproval so we can do the proper safety check in start_approval_async.
@@ -107,7 +107,7 @@ impl Approvable<EditFileRequest> for EditFileRuntime {
         req: &'a EditFileRequest,
         ctx: ApprovalCtx<'a>,
     ) -> BoxFuture<'a, ReviewDecision> {
-        let key = self.approval_key(req);
+        let keys = self.approval_keys(req);
         let session = ctx.session;
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
@@ -117,7 +117,7 @@ impl Approvable<EditFileRequest> for EditFileRuntime {
         let retry_reason = ctx.retry_reason.clone();
 
         Box::pin(async move {
-            with_cached_approval(&session.services, key, move || async move {
+            with_cached_approval(&session.services, keys, move || async move {
                 // Read current file content to generate diff
                 let content = match fs::read_to_string(&file_path).await {
                     Ok(c) => c,

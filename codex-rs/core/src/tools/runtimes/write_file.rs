@@ -72,10 +72,10 @@ impl Sandboxable for WriteFileRuntime {
 impl Approvable<WriteFileRequest> for WriteFileRuntime {
     type ApprovalKey = WriteFileApprovalKey;
 
-    fn approval_key(&self, req: &WriteFileRequest) -> Self::ApprovalKey {
-        WriteFileApprovalKey {
+    fn approval_keys(&self, req: &WriteFileRequest) -> Vec<Self::ApprovalKey> {
+        vec![WriteFileApprovalKey {
             file_path: req.file_path.clone(),
-        }
+        }]
     }
 
     /// Always return NeedsApproval so we can do the proper safety check in start_approval_async.
@@ -95,7 +95,7 @@ impl Approvable<WriteFileRequest> for WriteFileRuntime {
         req: &'a WriteFileRequest,
         ctx: ApprovalCtx<'a>,
     ) -> BoxFuture<'a, ReviewDecision> {
-        let key = self.approval_key(req);
+        let keys = self.approval_keys(req);
         let session = ctx.session;
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
@@ -104,7 +104,7 @@ impl Approvable<WriteFileRequest> for WriteFileRuntime {
         let retry_reason = ctx.retry_reason.clone();
 
         Box::pin(async move {
-            with_cached_approval(&session.services, key, move || async move {
+            with_cached_approval(&session.services, keys, move || async move {
                 // Determine if this is a new file or update
                 let (patch_change, protocol_change) = if file_path.exists() {
                     // Existing file - generate diff
