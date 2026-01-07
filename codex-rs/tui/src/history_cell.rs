@@ -74,6 +74,14 @@ use unicode_width::UnicodeWidthStr;
 pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>>;
 
+    /// Render display lines with explicit verbose flag.
+    /// When verbose is true, expandable cells should show their full content.
+    /// Default implementation ignores the verbose flag for backward compatibility.
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        let _ = verbose;
+        self.display_lines(width)
+    }
+
     fn desired_height(&self, width: u16) -> u16 {
         Paragraph::new(Text::from(self.display_lines(width)))
             .wrap(Wrap { trim: false })
@@ -220,6 +228,15 @@ impl HistoryCell for ReasoningSummaryCell {
             Vec::new()
         } else {
             self.lines(width)
+        }
+    }
+
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        // When verbose, show reasoning even if transcript_only
+        if verbose || !self.transcript_only {
+            self.lines(width)
+        } else {
+            Vec::new()
         }
     }
 
@@ -2028,6 +2045,10 @@ impl HistoryCell for SubAgentCell {
         self.render_with_expanded(width, self.expanded)
     }
 
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        self.render_with_expanded(width, verbose || self.expanded)
+    }
+
     fn desired_height(&self, _width: u16) -> u16 {
         self.calculate_height(self.expanded)
     }
@@ -2646,6 +2667,10 @@ impl SubAgentGroupCell {
 impl HistoryCell for SubAgentGroupCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         self.render_with_expanded(width, self.expanded)
+    }
+
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        self.render_with_expanded(width, verbose || self.expanded)
     }
 
     fn desired_height(&self, _width: u16) -> u16 {

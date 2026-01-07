@@ -877,7 +877,15 @@ impl ChatWidget {
     }
 
     fn on_plan_update(&mut self, update: TodoWriteArgs) {
+        // Store todos in bottom pane for display
+        self.bottom_pane.set_todos(Some(update.clone()));
+        // Also add to history as a cell
         self.add_to_history(history_cell::new_plan_update(update));
+    }
+
+    /// Toggle expanded plan view (Ctrl+U).
+    pub(crate) fn toggle_expanded_plan(&mut self) {
+        self.bottom_pane.toggle_expanded_plan();
     }
 
     fn on_exec_approval_request(&mut self, id: String, ev: ExecApprovalRequestEvent) {

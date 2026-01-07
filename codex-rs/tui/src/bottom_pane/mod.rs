@@ -14,8 +14,13 @@ use codex_core::skills::model::SkillMetadata;
 use codex_file_search::FileMatch;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
+use codex_protocol::todo_tool::StepStatus;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::text::Span;
 use std::time::Duration;
 
 mod approval_overlay;
@@ -89,6 +94,11 @@ pub(crate) struct BottomPane {
     queued_user_messages: QueuedUserMessages,
     context_window_percent: Option<i64>,
     context_window_used_tokens: Option<i64>,
+
+    /// Current plan for display below the status indicator.
+    current_todos: Option<codex_protocol::todo_tool::TodoWriteArgs>,
+    /// Whether to show the expanded plan view (toggled with Ctrl+U).
+    show_expanded_plan: bool,
 }
 
 pub(crate) struct BottomPaneParams {
@@ -138,11 +148,25 @@ impl BottomPane {
             animations_enabled,
             context_window_percent: None,
             context_window_used_tokens: None,
+            current_todos: None,
+            show_expanded_plan: false,
         }
     }
 
     pub fn set_skills(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.composer.set_skill_mentions(skills);
+        self.request_redraw();
+    }
+
+    /// Update the current plan for display.
+    pub(crate) fn set_todos(&mut self, todos: Option<codex_protocol::todo_tool::TodoWriteArgs>) {
+        self.current_todos = todos;
+        self.request_redraw();
+    }
+
+    /// Toggle expanded plan view (Ctrl+U).
+    pub(crate) fn toggle_expanded_plan(&mut self) {
+        self.show_expanded_plan = !self.show_expanded_plan;
         self.request_redraw();
     }
 
@@ -546,6 +570,61 @@ impl BottomPane {
         self.composer.take_recent_submission_images()
     }
 
+    /// Generate the plan status lines for display.
+    fn plan_lines(&self) -> Vec<Line<'static>> {
+        let plan = match &self.current_todos {
+            Some(p) => p,
+            None => {
+                if self.show_expanded_plan {
+                    // When toggled on but no plan exists, show hint
+                    return vec![Line::from(vec![
+                        "  └ ".dim(),
+                        "No plan available ".dim(),
+                        "(ctrl+u to hide)".dim(),
+                    ])];
+                }
+                return vec![];
+            }
+        };
+
+        if self.show_expanded_plan {
+            // Expanded view: show full plan with all steps
+            let mut lines: Vec<Line<'static>> = Vec::new();
+
+            // Plan steps with └ on first item
+            for (i, item) in plan.todos.iter().enumerate() {
+                let prefix = if i == 0 { "  └ " } else { "    " };
+                let (checkbox, style) = match item.status {
+                    StepStatus::Completed => ("✔ ", Style::default().dim().crossed_out()),
+                    StepStatus::InProgress => ("□ ", Style::default().cyan().bold()),
+                    StepStatus::Pending => ("□ ", Style::default().dim()),
+                };
+                lines.push(Line::from(vec![
+                    Span::from(prefix).dim(),
+                    Span::styled(checkbox, style),
+                    Span::styled(item.step.clone(), style),
+                ]));
+            }
+
+            lines
+        } else {
+            // Collapsed view: show only "└ Next: [in-progress step]"
+            if let Some(in_progress) = plan
+                .todos
+                .iter()
+                .find(|s| matches!(s.status, StepStatus::InProgress))
+            {
+                vec![Line::from(vec![
+                    "  └ ".dim(),
+                    "Next: ".dim(),
+                    Span::from(in_progress.step.clone()),
+                ])]
+            } else {
+                vec![]
+            }
+        }
+    }
+
     fn as_renderable(&'_ self) -> RenderableItem<'_> {
         if let Some(view) = self.active_view() {
             RenderableItem::Borrowed(view)
@@ -554,6 +633,14 @@ impl BottomPane {
             if let Some(status) = &self.status {
                 flex.push(0, RenderableItem::Borrowed(status));
             }
+
+            // Add plan lines below status indicator
+            let plan_lines = self.plan_lines();
+            if !plan_lines.is_empty() {
+                let plan_widget = PlanLinesWidget { lines: plan_lines };
+                flex.push(0, RenderableItem::Owned(Box::new(plan_widget)));
+            }
+
             if !self.unified_exec_footer.is_empty() {
                 flex.push(0, RenderableItem::Borrowed(&self.unified_exec_footer));
             }
@@ -561,6 +648,7 @@ impl BottomPane {
             if self.status.is_some()
                 || !self.unified_exec_footer.is_empty()
                 || !self.queued_user_messages.messages.is_empty()
+                || self.current_todos.is_some()
             {
                 flex.push(0, RenderableItem::Owned("".into()));
             }
@@ -569,6 +657,36 @@ impl BottomPane {
             flex2.push(0, RenderableItem::Borrowed(&self.composer));
             RenderableItem::Owned(Box::new(flex2))
         }
+    }
+}
+
+/// A simple widget that renders plan status lines.
+struct PlanLinesWidget {
+    lines: Vec<Line<'static>>,
+}
+
+impl Renderable for PlanLinesWidget {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        use ratatui::widgets::WidgetRef;
+        for (i, line) in self.lines.iter().enumerate() {
+            if i as u16 >= area.height {
+                break;
+            }
+            let y = area.y + i as u16;
+            line.render_ref(
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+                buf,
+            );
+        }
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        self.lines.len() as u16
     }
 }
 

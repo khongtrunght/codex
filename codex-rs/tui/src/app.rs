@@ -689,7 +689,12 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
                 self.transcript_cells.push(cell.clone());
-                let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
+                // Use verbose mode from chat widget for history cell rendering
+                let verbose = self.chat_widget.is_verbose();
+                let mut display = cell.display_lines_verbose(
+                    tui.terminal.last_known_screen_size.width,
+                    verbose,
+                );
                 if !display.is_empty() {
                     // Only insert a separating blank line for new cells that are not
                     // part of an ongoing stream. Streaming continuations should not
@@ -1223,6 +1228,16 @@ impl App {
                 // Enter alternate screen and set viewport to full size.
                 let _ = tui.enter_alt_screen();
                 self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
+                tui.frame_requester().schedule_frame();
+            }
+            KeyEvent {
+                code: KeyCode::Char('u'),
+                modifiers: crossterm::event::KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                // Toggle expanded plan view (similar to Claude Code's Ctrl+T for todos).
+                self.chat_widget.toggle_expanded_plan();
                 tui.frame_requester().schedule_frame();
             }
             // Esc primes/advances backtracking only in normal (not working) mode
