@@ -7,13 +7,13 @@
 use crate::prompt_template::ExploreAgentPrompt;
 use crate::prompt_template::PlanSubagentPrompt;
 use crate::prompt_template::ToolConfig;
-use crate::tools::spec::EXEC_COMMAND_TOOL_NAME;
+use crate::tools::spec::APPLY_PATCH_TOOL_NAME;
+use crate::tools::spec::EDIT_FILE_TOOL_NAME;
 use crate::tools::spec::GLOB_TOOL_NAME;
 use crate::tools::spec::GREP_FILES_TOOL_NAME;
 use crate::tools::spec::LIST_DIR_TOOL_NAME;
 use crate::tools::spec::READ_FILE_TOOL_NAME;
-use crate::tools::spec::SHELL_COMMAND_TOOL_NAME;
-use crate::tools::spec::SHELL_TOOL_NAME;
+use crate::tools::spec::WRITE_FILE_TOOL_NAME;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::EditToolType;
 use serde::Deserialize;
@@ -63,6 +63,17 @@ pub struct AgentTypeConfig {
     /// If true, the agent will inherit the context from the parent agent.
     #[serde(default)]
     pub fork_context: bool,
+
+    /// Tools to block for this agent (negative list).
+    /// Applied after global blocks and before allowed_tools filter.
+    /// Use this when you want "all tools except these".
+    #[serde(default)]
+    pub disallowed_tools: Option<Vec<String>>,
+
+    /// Whether this is a built-in agent (affects filtering rules).
+    /// Built-in agents have fewer restrictions than user-defined agents.
+    #[serde(default)]
+    pub is_built_in: bool,
 }
 
 /// Registry of all available agent types.
@@ -102,6 +113,8 @@ impl AgentTypeRegistry {
                 temperature: None,
                 hidden: false,
                 fork_context: false,
+                disallowed_tools: None,
+                is_built_in: true,
             },
         );
 
@@ -120,19 +133,17 @@ impl AgentTypeRegistry {
                     ExploreAgentPrompt { tools: explore_tools }
                         .to_string()
                 ),
-                tools: Some(vec![
-                    READ_FILE_TOOL_NAME.to_string(),
-                    GREP_FILES_TOOL_NAME.to_string(),
-                    LIST_DIR_TOOL_NAME.to_string(),
-                    GLOB_TOOL_NAME.to_string(),
-                    SHELL_TOOL_NAME.to_string(),
-                    EXEC_COMMAND_TOOL_NAME.to_string(),
-                    SHELL_COMMAND_TOOL_NAME.to_string(),
-                ]),
+                tools: None, // All tools (wildcard) - use disallowed_tools for restrictions
                 max_steps: Some(30),
                 temperature: None,
                 hidden: false,
                 fork_context: false,
+                disallowed_tools: Some(vec![
+                    EDIT_FILE_TOOL_NAME.to_string(),
+                    WRITE_FILE_TOOL_NAME.to_string(),
+                    APPLY_PATCH_TOOL_NAME.to_string(),
+                ]),
+                is_built_in: true,
             },
         );
 
@@ -159,6 +170,8 @@ impl AgentTypeRegistry {
                 temperature: None,
                 hidden: false,
                 fork_context: false,
+                disallowed_tools: None, // Explicit tools list is already restrictive
+                is_built_in: true,
             },
         );
 

@@ -311,10 +311,10 @@ fn build_subagent_config(
     // Set up tool filtering for this sub-agent.
     // This blocks the task tool (preventing infinite nesting) and applies
     // any agent-specific tool restrictions.
-    config.subagent_tool_filter = Some(if let Some(tools) = &agent_config.tools {
-        crate::tools::filtering::SubAgentToolFilter::with_allowed_tools(tools.clone())
-    } else {
-        crate::tools::filtering::SubAgentToolFilter::new()
+    config.subagent_tool_filter = Some(crate::tools::filtering::SubAgentToolFilter {
+        allowed_tools: agent_config.tools.clone(),
+        disallowed_tools: agent_config.disallowed_tools.clone(),
+        is_built_in: agent_config.is_built_in,
     });
 
     config

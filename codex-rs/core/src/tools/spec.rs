@@ -113,7 +113,7 @@ impl ToolsConfig {
 
         Self {
             shell_type,
-            edit_tool_type: model_family.edit_tool_type.clone(),
+            edit_tool_type: model_family.edit_tool_type,
             web_search_request: include_web_search_request,
             include_view_image_tool,
             experimental_supported_tools: model_family.experimental_supported_tools.clone(),
@@ -951,7 +951,7 @@ fn create_read_mcp_resource_tool() -> ToolSpec {
 /// autonomously handle complex, multi-step tasks.
 fn create_task_tool(
     agent_configs: &[AgentTypeConfig],
-    edit_tool_type: &Option<EditToolType>,
+    edit_tool_type: Option<EditToolType>,
 ) -> ToolSpec {
     let write_tool_name = get_write_tool_name(edit_tool_type);
 
@@ -1092,7 +1092,7 @@ pub static BASH_MAX_TIMEOUT_MS: Lazy<usize> =
 pub static BASH_DEFAULT_TIMEOUT_MS: Lazy<usize> =
     Lazy::new(|| env_usize("BASH_DEFAULT_TIMEOUT_MS", 120_000, *BASH_MAX_TIMEOUT_MS));
 
-fn get_write_tool_name(edit_tool_type: &Option<EditToolType>) -> &'static str {
+fn get_write_tool_name(edit_tool_type: Option<EditToolType>) -> &'static str {
     match edit_tool_type {
         Some(t) => match t {
             EditToolType::FileEdit => "write_file",
@@ -1102,7 +1102,7 @@ fn get_write_tool_name(edit_tool_type: &Option<EditToolType>) -> &'static str {
     }
 }
 
-fn get_edit_tool_name(edit_tool_type: &Option<EditToolType>) -> &'static str {
+fn get_edit_tool_name(edit_tool_type: Option<EditToolType>) -> &'static str {
     match edit_tool_type {
         Some(t) => match t {
             EditToolType::FileEdit => "edit_file",
@@ -1112,7 +1112,7 @@ fn get_edit_tool_name(edit_tool_type: &Option<EditToolType>) -> &'static str {
     }
 }
 
-fn render_bash_description(edit_tool_type: &Option<EditToolType>) -> String {
+fn render_bash_description(edit_tool_type: Option<EditToolType>) -> String {
     let bash_tool_name = BASH_TOOL_NAME;
     let glob_tool_name = GLOB_TOOL_NAME;
     let grep_tool_name = GREP_FILES_TOOL_NAME;
@@ -1184,7 +1184,7 @@ Usage notes:
     )
 }
 
-fn create_bash_tool(edit_tool_type: &Option<EditToolType>) -> ToolSpec {
+fn create_bash_tool(edit_tool_type: Option<EditToolType>) -> ToolSpec {
     let description = render_bash_description(edit_tool_type);
 
     let mut properties = BTreeMap::new();
@@ -1615,12 +1615,12 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
-    use crate::tools::handlers::TodoWriteHandler;
     use crate::tools::handlers::ReadFileHandler;
     use crate::tools::handlers::ShellCommandHandler;
     use crate::tools::handlers::ShellHandler;
     use crate::tools::handlers::TaskHandler;
     use crate::tools::handlers::TestSyncHandler;
+    use crate::tools::handlers::TodoWriteHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
     use crate::tools::handlers::WriteFileHandler;
@@ -1657,7 +1657,7 @@ pub(crate) fn build_specs(
             builder.push_spec(create_shell_command_tool());
         }
         ConfigShellToolType::Bash => {
-            builder.push_spec(create_bash_tool(&config.edit_tool_type));
+            builder.push_spec(create_bash_tool(config.edit_tool_type));
             let bash_handler = Arc::new(BashHandler);
             builder.register_handler(BASH_TOOL_NAME, bash_handler);
 
@@ -1750,28 +1750,32 @@ pub(crate) fn build_specs(
         }
     }
 
-    if config
-        .experimental_supported_tools
-        .contains(&GREP_FILES_TOOL_NAME.to_string())
+    // Core exploration tools - always available for all models
     {
         let grep_files_handler = Arc::new(GrepFilesHandler);
         builder.push_spec_with_parallel_support(create_grep_files_tool(), true);
         builder.register_handler(GREP_FILES_TOOL_NAME, grep_files_handler);
     }
 
-    if config
-        .experimental_supported_tools
-        .contains(&READ_FILE_TOOL_NAME.to_string())
     {
         let read_file_handler = Arc::new(ReadFileHandler);
         builder.push_spec_with_parallel_support(create_read_file_tool(), true);
         builder.register_handler(READ_FILE_TOOL_NAME, read_file_handler);
     }
 
+    // Experimental tools - available when explicitly enabled via experimental_supported_tools
+    // OR when a subagent filter explicitly allows them
+    let subagent_allows_list_dir = config
+        .subagent_filter
+        .as_ref()
+        .and_then(|f| f.allowed_tools.as_ref())
+        .is_some_and(|tools| tools.iter().any(|t| t == LIST_DIR_TOOL_NAME));
+
     if config
         .experimental_supported_tools
         .iter()
         .any(|tool| tool == LIST_DIR_TOOL_NAME)
+        || subagent_allows_list_dir
     {
         let list_dir_handler = Arc::new(ListDirHandler);
         builder.push_spec_with_parallel_support(create_list_dir_tool(), true);
@@ -1800,7 +1804,7 @@ pub(crate) fn build_specs(
     if let Some(agent_configs) = &config.agent_configs {
         let task_handler = Arc::new(TaskHandler);
         builder.push_spec_with_parallel_support(
-            create_task_tool(agent_configs, &config.edit_tool_type),
+            create_task_tool(agent_configs, config.edit_tool_type),
             true,
         );
         builder.register_handler(TASK_TOOL_NAME, task_handler);
