@@ -9,7 +9,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
-use crate::unified_exec::SessionStatusInfo;
+use crate::unified_exec::ProcessStatusInfo;
 
 pub struct BashOutputHandler;
 
@@ -51,7 +51,7 @@ impl ToolHandler for BashOutputHandler {
 
         let manager = &session.services.unified_exec_manager;
         let snapshot = manager
-            .get_session_output(&args.bash_id)
+            .get_process_output(&args.bash_id)
             .await
             .map_err(|e| {
                 FunctionCallError::RespondToModel(format!(
@@ -75,9 +75,9 @@ impl ToolHandler for BashOutputHandler {
         };
 
         let status_str = match snapshot.status {
-            SessionStatusInfo::Running => "running",
-            SessionStatusInfo::Exited if snapshot.exit_code == Some(0) => "completed",
-            SessionStatusInfo::Exited => "failed",
+            ProcessStatusInfo::Running => "running",
+            ProcessStatusInfo::Exited if snapshot.exit_code == Some(0) => "completed",
+            ProcessStatusInfo::Exited => "failed",
         };
 
         let response = serde_json::json!({

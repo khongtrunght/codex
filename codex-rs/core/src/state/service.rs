@@ -10,7 +10,7 @@ use crate::mcp_connection_manager::McpConnectionManager;
 use crate::models_manager::manager::ModelsManager;
 use crate::skills::SkillsManager;
 use crate::tools::sandboxing::ApprovalStore;
-use crate::unified_exec::UnifiedExecSessionManager;
+use crate::unified_exec::UnifiedExecProcessManager;
 use crate::user_notification::UserNotifier;
 use codex_otel::otel_manager::OtelManager;
 use tokio::sync::Mutex;
@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct SessionServices {
     pub(crate) mcp_connection_manager: Arc<RwLock<McpConnectionManager>>,
     pub(crate) mcp_startup_cancellation_token: CancellationToken,
-    pub(crate) unified_exec_manager: UnifiedExecSessionManager,
+    pub(crate) unified_exec_manager: UnifiedExecProcessManager,
     pub(crate) notifier: UserNotifier,
     /// The rollout recorder is wrapped in Arc to allow sharing with subagents.
     /// Subagents use SharedSubagentContext to write ResponseItems to their unified file

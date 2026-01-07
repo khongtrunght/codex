@@ -48,7 +48,7 @@ impl ToolHandler for KillShellHandler {
 
         let manager = &session.services.unified_exec_manager;
         let result = manager
-            .terminate_session(&args.shell_id)
+            .terminate_process(&args.shell_id)
             .await
             .map_err(|e| {
                 FunctionCallError::RespondToModel(format!(
