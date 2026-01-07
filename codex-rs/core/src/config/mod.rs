@@ -99,6 +99,10 @@ pub struct Config {
     /// Model used specifically for review sessions. Defaults to "gpt-5.1-codex-max".
     pub review_model: String,
 
+    /// Small/fast model for lightweight tasks (e.g., explore agents).
+    /// Falls back to main model if not configured.
+    pub small_model: String,
+
     /// Size of the context window for the model, in tokens.
     pub model_context_window: Option<i64>,
 
@@ -678,6 +682,8 @@ pub struct ConfigToml {
     pub model: Option<String>,
     /// Review model override used by the `/review` feature.
     pub review_model: Option<String>,
+    /// Small/fast model for lightweight tasks (e.g., explore agents).
+    pub small_model: Option<String>,
 
     /// Provider to use from the model_providers map.
     pub model_provider: Option<String>,
@@ -1306,6 +1312,12 @@ impl Config {
             .or(cfg.review_model)
             .unwrap_or_else(default_review_model);
 
+        // Small model for lightweight tasks; falls back to main model if not set.
+        let small_model = cfg
+            .small_model
+            .or_else(|| model.clone())
+            .unwrap_or_default();
+
         let check_for_update_on_startup = cfg.check_for_update_on_startup.unwrap_or(true);
 
         // Ensure that every field of ConfigRequirements is applied to the final
@@ -1325,6 +1337,7 @@ impl Config {
         let config = Self {
             model,
             review_model,
+            small_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
             model_provider_id,
@@ -3165,6 +3178,7 @@ model_verbosity = "high"
             Config {
                 model: Some("o3".to_string()),
                 review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
+                small_model: "o3".to_string(),
                 model_context_window: None,
                 model_auto_compact_token_limit: None,
                 model_provider_id: "openai".to_string(),
@@ -3250,6 +3264,7 @@ model_verbosity = "high"
         let expected_gpt3_profile_config = Config {
             model: Some("gpt-3.5-turbo".to_string()),
             review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
+            small_model: "gpt-3.5-turbo".to_string(),
             model_context_window: None,
             model_auto_compact_token_limit: None,
             model_provider_id: "openai-chat-completions".to_string(),
@@ -3350,6 +3365,7 @@ model_verbosity = "high"
         let expected_zdr_profile_config = Config {
             model: Some("o3".to_string()),
             review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
+            small_model: "o3".to_string(),
             model_context_window: None,
             model_auto_compact_token_limit: None,
             model_provider_id: "openai".to_string(),
@@ -3436,6 +3452,7 @@ model_verbosity = "high"
         let expected_gpt5_profile_config = Config {
             model: Some("gpt-5.1".to_string()),
             review_model: OPENAI_DEFAULT_REVIEW_MODEL.to_string(),
+            small_model: "gpt-5.1".to_string(),
             model_context_window: None,
             model_auto_compact_token_limit: None,
             model_provider_id: "openai".to_string(),

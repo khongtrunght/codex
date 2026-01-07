@@ -19,6 +19,7 @@ use crate::codex::TurnContext;
 use crate::codex_delegate::run_codex_conversation_one_shot;
 use crate::config::Config;
 use crate::function_tool::FunctionCallError;
+use crate::model_tier::ModelTier;
 use crate::protocol::EventMsg;
 use crate::protocol::SubAgentBeginEvent;
 use crate::protocol::SubAgentEndEvent;
@@ -46,7 +47,7 @@ struct TaskParams {
     /// Optional session ID to resume from a previous task.
     #[serde(default)]
     resume: Option<String>,
-    /// Optional model override (e.g., "sonnet", "opus", "haiku").
+    /// Optional model tier override ("default", "small", "inherit") or direct model slug.
     #[serde(default)]
     model: Option<String>,
 }
@@ -272,23 +273,29 @@ fn build_subagent_config(
 ) -> Config {
     let mut config = parent_config.clone();
 
-    // Apply model override if specified in agent config or params
-    if let Some(model_str) = params.model.as_ref().or(agent_config.model.as_ref()) {
-        // Parse "provider:model" format or just model name
-        if let Some((_provider, model)) = model_str.split_once(':') {
-            // Full format with provider - just use the model part for now
-            config.model = Some(model.to_string());
+    // Resolve model based on tier or explicit override from params
+    let resolved_model = if let Some(model_str) = params.model.as_ref() {
+        // Explicit model override from Task tool params
+        if let Ok(tier) = model_str.parse::<ModelTier>() {
+            // Tier keyword -> resolve from config
+            match tier {
+                ModelTier::Default => parent_config.model.clone(),
+                ModelTier::Small => Some(parent_config.small_model.clone()),
+                ModelTier::Inherit => parent_config.model.clone(), // Use parent's current model
+            }
         } else {
-            // Just model name - map common aliases
-            let mapped_model = match model_str.as_str() {
-                "sonnet" => "claude-sonnet-4-5-20250929",
-                "opus" => "claude-opus-4-5-20251101",
-                "haiku" => "claude-haiku-4-5-20251001",
-                other => other,
-            };
-            config.model = Some(mapped_model.to_string());
+            // Direct model slug - use as-is
+            Some(model_str.clone()) //TODO: consider remove this 
         }
-    }
+    } else {
+        // No override - use agent's configured tier
+        match agent_config.model_tier {
+            ModelTier::Default => parent_config.model.clone(),
+            ModelTier::Small => Some(parent_config.small_model.clone()),
+            ModelTier::Inherit => parent_config.model.clone(), // Use parent's current model
+        }
+    };
+    config.model = resolved_model;
 
     // Build augmented system prompt for sub-agent
     // Use agent's custom prompt or fall back to default

@@ -42,6 +42,7 @@ pub use mcp_connection_manager::SandboxState;
 mod mcp_tool_call;
 mod message_history;
 mod model_provider_info;
+pub mod model_tier;
 pub mod parse_command;
 pub mod path_utils;
 pub mod plan_file;

@@ -4,6 +4,7 @@
 //! that can be spawned by the Task tool. Each agent type can have its own model,
 //! tools, system prompt, and other settings.
 
+use crate::model_tier::ModelTier;
 use crate::prompt_template::ExploreAgentPrompt;
 use crate::prompt_template::PlanSubagentPrompt;
 use crate::prompt_template::ToolConfig;
@@ -35,9 +36,10 @@ pub struct AgentTypeConfig {
     /// This helps the model understand when to use this agent type.
     pub description: String,
 
-    /// Model override in "provider:model" format (e.g., "anthropic:claude-sonnet-4-20250514").
-    /// If None, inherits from parent session.
-    pub model: Option<String>,
+    /// Which model tier this agent uses (Default or Small).
+    /// Default = use config.model, Small = use config.small_model.
+    #[serde(default)]
+    pub model_tier: ModelTier,
 
     /// System prompt additions for this agent type.
     /// This is appended to the parent session's instructions.
@@ -103,10 +105,10 @@ impl AgentTypeRegistry {
             AgentTypeConfig {
                 name: "general".to_string(),
                 description:
-                    r#"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."#
+                    r#"General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you."#
                         .to_string()
                 ,
-                model: None,
+                model_tier: ModelTier::Default,
                 system_prompt: None,
                 tools: None,
                 max_steps: Some(50),
@@ -128,7 +130,7 @@ impl AgentTypeRegistry {
                 description:
                     r#"Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions."#.to_string()
                 ,
-                model: None,
+                model_tier: ModelTier::Small, // Use small/fast model for exploration
                 system_prompt: Some(
                     ExploreAgentPrompt { tools: explore_tools }
                         .to_string()
@@ -156,7 +158,7 @@ impl AgentTypeRegistry {
                 description:
                     r#""Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs."#.to_string()
                 ,
-                model: None,
+                model_tier: ModelTier::Inherit,
                 system_prompt: Some(
                     PlanSubagentPrompt { tools: plan_tools }.to_string()
                 ),

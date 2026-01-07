@@ -1054,7 +1054,7 @@ assistant: "I'm going to use the {TASK_TOOL_NAME} tool to launch the greeting-re
         "model".to_string(),
         JsonSchema::String {
             description: Some(
-                "Optional model override (e.g., 'sonnet', 'opus', 'haiku')".to_string(),
+                "Optional model to use for this agent. If not specified, inherits from parent. Use 'default' for main model, 'small' for small/fast model. Prefer small for quick, straightforward tasks to minimize cost and latency.".to_string(),
             ),
         },
     );
