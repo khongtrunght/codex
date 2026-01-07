@@ -9,8 +9,8 @@ use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
 use crate::tools::registry::ToolRegistryBuilder;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::EditToolType;
-use once_cell::sync::Lazy;
 use codex_protocol::openai_models::ModelInfo;
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -74,7 +74,6 @@ pub(crate) struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
     pub edit_tool_type: Option<EditToolType>,
     pub web_search_request: bool,
-    pub include_view_image_tool: bool,
     pub experimental_supported_tools: Vec<String>,
     /// Descriptions of available agent types for the Task tool.
     /// If None, the task tool will not be registered.
@@ -96,7 +95,6 @@ impl ToolsConfig {
             features,
         } = params;
         let include_web_search_request = features.enabled(Feature::WebSearchRequest);
-        let include_view_image_tool = features.enabled(Feature::ViewImageTool);
 
         let shell_type = if !features.enabled(Feature::ShellTool) {
             ConfigShellToolType::Disabled
@@ -115,7 +113,6 @@ impl ToolsConfig {
             shell_type,
             edit_tool_type: model_info.edit_tool_type,
             web_search_request: include_web_search_request,
-            include_view_image_tool,
             experimental_supported_tools: model_info.experimental_supported_tools.clone(),
             agent_configs: None,
             subagent_filter: None,
@@ -1795,10 +1792,8 @@ pub(crate) fn build_specs(
         builder.push_spec(ToolSpec::WebSearch {});
     }
 
-    if config.include_view_image_tool {
-        builder.push_spec_with_parallel_support(create_view_image_tool(), true);
-        builder.register_handler(VIEW_IMAGE_TOOL_NAME, view_image_handler);
-    }
+    builder.push_spec_with_parallel_support(create_view_image_tool(), true);
+    builder.register_handler(VIEW_IMAGE_TOOL_NAME, view_image_handler);
 
     // Task tool for spawning sub-agents
     if let Some(agent_configs) = &config.agent_configs {
@@ -1942,7 +1937,6 @@ mod tests {
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
-        features.enable(Feature::ViewImageTool);
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
@@ -2287,7 +2281,6 @@ mod tests {
         let config = test_config();
         let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
-        features.disable(Feature::ViewImageTool);
         features.enable(Feature::UnifiedExec);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
@@ -2306,8 +2299,7 @@ mod tests {
     fn test_test_model_info_includes_sync_tool() {
         let config = test_config();
         let model_info = ModelsManager::construct_model_info_offline("test-gpt-5-codex", &config);
-        let mut features = Features::with_defaults();
-        features.disable(Feature::ViewImageTool);
+        let features = Features::with_defaults();
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &model_info,
             features: &features,
