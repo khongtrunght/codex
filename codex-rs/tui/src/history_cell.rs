@@ -28,10 +28,17 @@ use base64::Engine;
 use codex_common::format_env_display::format_env_display;
 use codex_core::config::Config;
 use codex_core::config::types::McpServerTransportConfig;
+use codex_core::protocol::EventMsg;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::McpAuthStatus;
 use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_core::protocol::SubAgentBeginEvent;
+use codex_core::protocol::SubAgentEndEvent;
+use codex_core::protocol::SubAgentTokenUsage;
+use codex_protocol::models::LocalShellAction;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::RolloutItem;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
 use codex_protocol::todo_tool::StepStatus;
@@ -1750,6 +1757,909 @@ fn format_mcp_invocation<'a>(invocation: McpInvocation) -> Line<'a> {
         ")".into(),
     ];
     invocation_spans.into()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SubAgentCell - Compact view for sub-agent tasks
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Status of a sub-agent task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SubAgentStatus {
+    Running,
+    Completed,
+    Error,
+}
+
+/// Extracted tool call info for rendering (computed from raw events)
+#[derive(Debug, Clone)]
+pub(crate) struct ToolCallInfo {
+    pub tool_name: String,
+    pub arguments: String,
+    pub title: Option<String>,
+    pub output: Option<String>,
+}
+
+/// Cell displaying a sub-agent task with compact view.
+/// Stores raw events and computes display information at render time.
+#[derive(Debug)]
+pub(crate) struct SubAgentCell {
+    session_id: String,
+    agent_type: String,
+    description: String,
+    /// The detailed prompt given to the sub-agent.
+    prompt: Option<String>,
+    /// The final output/response from the sub-agent.
+    output: Option<String>,
+    status: SubAgentStatus,
+    start_time: Option<Instant>,
+    /// Whether this is a resumed session.
+    resumed: bool,
+
+    // Statistics
+    tool_uses_count: usize,
+    token_usage: Option<SubAgentTokenUsage>,
+    duration_ms: Option<u64>,
+
+    /// Raw events from the sub-agent (stored as-is, processed at render time).
+    raw_events: Vec<RolloutItem>,
+
+    // UI state
+    expanded: bool,
+    animations_enabled: bool,
+}
+
+impl SubAgentCell {
+    /// Format token usage in a human-readable format.
+    pub fn format_tokens(&self) -> String {
+        match &self.token_usage {
+            Some(usage) if usage.total_tokens > 0 => {
+                let k = usage.total_tokens as f64 / 1000.0;
+                if k >= 1.0 {
+                    format!("{k:.1}k tokens")
+                } else {
+                    let tokens = usage.total_tokens;
+                    format!("{tokens} tokens")
+                }
+            }
+            _ => "-- tokens".to_string(),
+        }
+    }
+
+    /// Add a raw event from the sub-agent.
+    pub fn add_raw_event(&mut self, event: RolloutItem) {
+        // Update tool count for function calls
+        if let RolloutItem::ResponseItem(ResponseItem::FunctionCall { .. })
+        | RolloutItem::ResponseItem(ResponseItem::LocalShellCall { .. }) = &event
+        {
+            self.tool_uses_count += 1;
+        }
+
+        self.raw_events.push(event);
+    }
+
+    /// Mark the sub-agent as complete with final statistics.
+    pub fn complete(&mut self, end_event: &SubAgentEndEvent) {
+        self.status = if end_event.success {
+            SubAgentStatus::Completed
+        } else {
+            SubAgentStatus::Error
+        };
+        self.duration_ms = Some(end_event.duration_ms);
+        self.token_usage = end_event.token_usage.clone();
+        // Tool count is now derived from raw_events instead of tool_summary
+        self.tool_uses_count = self.extract_tool_calls().len();
+        self.output = Some(end_event.output.clone());
+        self.start_time = None;
+    }
+
+    /// Mark the sub-agent as interrupted/failed when the turn is cancelled.
+    pub fn mark_interrupted(&mut self) {
+        self.status = SubAgentStatus::Error;
+        // Calculate duration from start time if available
+        if let Some(start) = self.start_time {
+            self.duration_ms = Some(start.elapsed().as_millis() as u64);
+        }
+        self.output = Some("interrupted".to_string());
+        self.start_time = None;
+    }
+
+    /// Get the session ID for this sub-agent.
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// Extract tool calls with their outputs from raw events (computed at render time).
+    pub fn extract_tool_calls(&self) -> Vec<ToolCallInfo> {
+        use std::collections::HashMap as StdHashMap;
+
+        // First pass: collect all outputs by call_id
+        let mut outputs: StdHashMap<String, String> = StdHashMap::new();
+        for event in &self.raw_events {
+            if let RolloutItem::ResponseItem(ResponseItem::FunctionCallOutput { call_id, output }) =
+                event
+            {
+                outputs.insert(call_id.clone(), output.content.clone());
+            }
+        }
+
+        // Extract tool calls
+        let mut tool_calls = Vec::new();
+        for event in &self.raw_events {
+            match event {
+                // ResponseItem::FunctionCall (from model/history)
+                RolloutItem::ResponseItem(ResponseItem::FunctionCall {
+                    name,
+                    arguments,
+                    call_id,
+                    ..
+                }) => {
+                    let title = extract_title_from_arguments(name, arguments);
+                    let output = outputs.get(call_id).cloned();
+                    tool_calls.push(ToolCallInfo {
+                        tool_name: name.clone(),
+                        arguments: arguments.clone(),
+                        title,
+                        output,
+                    });
+                }
+                // ResponseItem::LocalShellCall (from model/history)
+                RolloutItem::ResponseItem(ResponseItem::LocalShellCall {
+                    action, call_id, ..
+                }) => {
+                    let (title, args) = match action {
+                        LocalShellAction::Exec(exec) => {
+                            let cmd = strip_bash_lc_and_escape(&exec.command);
+                            (Some(cmd.clone()), cmd)
+                        }
+                    };
+                    let output = call_id.as_ref().and_then(|id| outputs.get(id).cloned());
+                    tool_calls.push(ToolCallInfo {
+                        tool_name: "Bash".to_string(),
+                        arguments: args,
+                        title,
+                        output,
+                    });
+                }
+                // EventMsg (from live sessions and persisted history)
+                RolloutItem::EventMsg(ev) => match ev {
+                    EventMsg::ExecCommandBegin(begin) => {
+                        let cmd = strip_bash_lc_and_escape(&begin.command);
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: "shell".to_string(),
+                            arguments: cmd.clone(),
+                            title: Some(cmd),
+                            output: None,
+                        });
+                    }
+                    EventMsg::McpToolCallBegin(begin) => {
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: begin.invocation.tool.clone(),
+                            arguments: begin.invocation.server.clone(),
+                            title: Some(begin.invocation.server.clone()),
+                            output: None,
+                        });
+                    }
+                    EventMsg::PatchApplyBegin(begin) => {
+                        let paths: Vec<String> = begin
+                            .changes
+                            .keys()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        let title = if paths.len() == 1 {
+                            paths[0].clone()
+                        } else {
+                            format!("{} files", paths.len())
+                        };
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: "patch".to_string(),
+                            arguments: title.clone(),
+                            title: Some(title),
+                            output: None,
+                        });
+                    }
+                    EventMsg::WebSearchBegin(_begin) => {
+                        tool_calls.push(ToolCallInfo {
+                            tool_name: "web_search".to_string(),
+                            arguments: String::new(),
+                            title: None,
+                            output: None,
+                        });
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+        tool_calls
+    }
+
+    /// Accumulate token usage from a forwarded TokenCount event.
+    pub fn accumulate_tokens(&mut self, input_delta: u64, output_delta: u64) {
+        let usage = self.token_usage.get_or_insert(SubAgentTokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+        });
+        usage.input_tokens = usage.input_tokens.saturating_add(input_delta);
+        usage.output_tokens = usage.output_tokens.saturating_add(output_delta);
+        usage.total_tokens = usage.input_tokens + usage.output_tokens;
+    }
+
+    /// Get the current status.
+    pub fn status(&self) -> SubAgentStatus {
+        self.status
+    }
+
+    /// Get a human-readable status text for the current state.
+    pub fn current_status_text(&self) -> String {
+        // For completed agents, show "Done" regardless of raw_events
+        if self.status == SubAgentStatus::Completed {
+            return "Done".to_string();
+        }
+        if self.status == SubAgentStatus::Error {
+            return "Error".to_string();
+        }
+
+        // For running agents, show last tool activity
+        let tool_calls = self.extract_tool_calls();
+        if tool_calls.is_empty() {
+            "Initializing...".to_string()
+        } else if let Some(last) = tool_calls.last() {
+            format!(
+                "{}: {}",
+                last.tool_name,
+                last.title.as_deref().unwrap_or("")
+            )
+        } else {
+            "Working...".to_string()
+        }
+    }
+
+    /// Toggle the expanded state of the cell.
+    #[allow(dead_code)]
+    pub fn toggle_expanded(&mut self) {
+        self.expanded = !self.expanded;
+    }
+}
+
+impl HistoryCell for SubAgentCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_with_expanded(width, self.expanded)
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        self.calculate_height(self.expanded)
+    }
+}
+
+impl SubAgentCell {
+    /// Internal rendering with explicit expanded flag.
+    fn render_with_expanded(&self, width: u16, show_expanded: bool) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Status bullet
+        let bullet = match self.status {
+            SubAgentStatus::Completed => "•".green().bold(),
+            SubAgentStatus::Error => "•".red().bold(),
+            SubAgentStatus::Running => spinner(
+                Some(self.start_time.unwrap_or(Instant::now())),
+                self.animations_enabled,
+            ),
+        };
+
+        // Format: "• AgentType(Description) (ctrl+o to expand/collapse)"
+        let desc_width = (width as usize).saturating_sub(30).max(20);
+        let truncated_desc = if self.description.len() > desc_width {
+            format!("{}…", &self.description[..desc_width.saturating_sub(1)])
+        } else {
+            self.description.clone()
+        };
+
+        let hint = if show_expanded {
+            "(ctrl+o to collapse)"
+        } else {
+            "(ctrl+o to expand)"
+        };
+
+        let header = format!("{}({}) {}", self.agent_type, truncated_desc, hint);
+        lines.push(Line::from(vec![bullet, " ".into(), header.into()]));
+
+        let tool_calls = self.extract_tool_calls();
+        let tool_word = if self.tool_uses_count == 1 { "tool use" } else { "tool uses" };
+        let duration_text = self
+            .duration_ms
+            .map(|ms| format!(" · {}", format_duration(Duration::from_millis(ms))))
+            .unwrap_or_default();
+
+        if show_expanded {
+            // EXPANDED: Show Prompt, tool calls with outputs, Response, Done
+
+            // Prompt section
+            if let Some(prompt) = &self.prompt {
+                lines.push(Line::from(vec!["  ├ ".dim(), "Prompt:".green().bold()]));
+                for line in prompt.lines().take(3) {
+                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(6));
+                    lines.push(Line::from(vec!["  │   ".dim(), truncated.into()]));
+                }
+            }
+
+            // Tool calls with outputs
+            for call in tool_calls.iter() {
+                let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
+                let available = (width as usize).saturating_sub(6 + call.tool_name.len() + 2);
+                lines.push(Line::from(vec![
+                    "  ├ ".dim(),
+                    call.tool_name.clone().bold(),
+                    format!("({})", truncate_to_n_chars(display_arg, available)).into(),
+                ]));
+                if let Some(output) = &call.output {
+                    for line in output.lines().take(3) {
+                        let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(6));
+                        lines.push(Line::from(vec!["  │   ".dim(), truncated.dim()]));
+                    }
+                }
+            }
+
+            // Response section
+            if let Some(output) = &self.output {
+                lines.push(Line::from(vec!["  ├ ".dim(), "Response:".green().bold()]));
+                for line in output.lines().take(5) {
+                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(6));
+                    lines.push(Line::from(vec!["  │   ".dim(), truncated.into()]));
+                }
+            }
+
+            // Done line
+            let done_text = format!(
+                "Done ({} {} · {}{})",
+                self.tool_uses_count, tool_word, self.format_tokens(), duration_text
+            );
+            lines.push(Line::from(vec!["  └ ".dim(), done_text.dim()]));
+        } else {
+            // COLLAPSED: Show current tool (running) or Done stats
+            let second_line = if self.status == SubAgentStatus::Running {
+                if let Some(last_call) = tool_calls.last() {
+                    let display_arg = last_call.title.as_deref().unwrap_or(&last_call.arguments);
+                    format!("{}({})", last_call.tool_name, truncate_to_n_chars(display_arg, 60))
+                } else if self.resumed {
+                    "Resumed...".to_string()
+                } else {
+                    "Running...".to_string()
+                }
+            } else {
+                format!(
+                    "Done ({} {} · {}{})",
+                    self.tool_uses_count, tool_word, self.format_tokens(), duration_text
+                )
+            };
+            lines.push(Line::from(vec!["  └ ".dim(), second_line.dim()]));
+        }
+
+        lines
+    }
+
+    /// Render this agent as part of a group (RunningAgentsGroup or SubAgentGroupCell).
+    pub(crate) fn render_in_group(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        is_last: bool,
+        width: u16,
+        show_expanded: bool,
+        animations_enabled: bool,
+    ) {
+        // Tree prefix for agent header
+        let tree_prefix = if is_last { "└─ " } else { "├─ " };
+        let continuation = if is_last { "   " } else { "│  " };
+
+        // Agent bullet based on status
+        let agent_bullet = match self.status {
+            SubAgentStatus::Running => spinner(self.start_time, animations_enabled),
+            SubAgentStatus::Completed => "•".green().bold(),
+            SubAgentStatus::Error => "•".red().bold(),
+        };
+
+        // Agent header: "AgentType(Description)" format
+        let agent_type_display = {
+            let mut chars = self.agent_type.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => self.agent_type.clone(),
+            }
+        };
+        let desc = truncate_description(&self.description, (width as usize).saturating_sub(20));
+        let header = format!("{agent_type_display}({desc})");
+
+        lines.push(Line::from(vec![
+            tree_prefix.dim(),
+            agent_bullet,
+            " ".into(),
+            header.into(),
+        ]));
+
+        // If collapsed, show status line with stats
+        if !show_expanded {
+            let status_text = self.current_status_text();
+            let stats = format!(
+                "{} · {} tool uses · {}",
+                status_text,
+                self.tool_uses_count,
+                self.format_tokens()
+            );
+            lines.push(Line::from(vec![
+                format!("{continuation}└ ").dim(),
+                stats.dim(),
+            ]));
+        }
+
+        // If expanded, show full details
+        if show_expanded {
+            let tool_calls = self.extract_tool_calls();
+
+            // Show prompt (if available)
+            if let Some(prompt) = &self.prompt {
+                lines.push(Line::from(vec![
+                    format!("{continuation}├  ").dim(),
+                    "Prompt:".green().bold(),
+                ]));
+                let prompt_lines: Vec<&str> = prompt.lines().take(3).collect();
+                for (i, line) in prompt_lines.iter().enumerate() {
+                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
+                    let is_last_prompt_line = i == prompt_lines.len() - 1
+                        && tool_calls.is_empty()
+                        && self.output.is_none();
+                    let prefix = if is_last_prompt_line && self.status != SubAgentStatus::Completed
+                    {
+                        format!("{continuation}└    ")
+                    } else {
+                        format!("{continuation}│    ")
+                    };
+                    lines.push(Line::from(vec![prefix.dim(), truncated.into()]));
+                }
+            }
+
+            // Show tool calls with outputs
+            for (j, call) in tool_calls.iter().enumerate() {
+                let is_last_tool = j == tool_calls.len() - 1
+                    && self.output.is_none()
+                    && self.status != SubAgentStatus::Completed;
+
+                let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
+                let prefix_width = 4;
+                let available_for_args = (width as usize)
+                    .saturating_sub(prefix_width + call.tool_name.len() + 2);
+                let arg_display = truncate_to_n_chars(display_arg, available_for_args);
+                lines.push(Line::from(vec![
+                    format!("{continuation}├  ").dim(),
+                    call.tool_name.clone().bold(),
+                    format!("({arg_display})").into(),
+                ]));
+
+                // Show output if available
+                if let Some(output) = &call.output {
+                    let output_lines: Vec<&str> = output.lines().take(3).collect();
+                    for (i, line) in output_lines.iter().enumerate() {
+                        let truncated =
+                            truncate_to_n_chars(line, (width as usize).saturating_sub(8));
+                        let is_last_output = i == output_lines.len() - 1 && is_last_tool;
+                        let prefix = if is_last_output {
+                            format!("{continuation}└    ")
+                        } else {
+                            format!("{continuation}│    ")
+                        };
+                        lines.push(Line::from(vec![prefix.dim(), truncated.dim()]));
+                    }
+                }
+            }
+
+            // Show response (if available)
+            if let Some(output) = &self.output {
+                lines.push(Line::from(vec![
+                    format!("{continuation}├  ").dim(),
+                    "Response:".green().bold(),
+                ]));
+                let response_lines: Vec<&str> = output.lines().take(5).collect();
+                for (i, line) in response_lines.iter().enumerate() {
+                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
+                    let is_last_response =
+                        i == response_lines.len() - 1 && self.status != SubAgentStatus::Completed;
+                    let prefix = if is_last_response {
+                        format!("{continuation}└    ")
+                    } else {
+                        format!("{continuation}│    ")
+                    };
+                    lines.push(Line::from(vec![prefix.dim(), truncated.into()]));
+                }
+            }
+
+            // Show Done line with duration (only for completed agents)
+            if self.status == SubAgentStatus::Completed {
+                let duration_str = self
+                    .duration_ms
+                    .map(|ms| format!(" · {}", format_duration(Duration::from_millis(ms))))
+                    .unwrap_or_default();
+                let done_text = format!(
+                    "Done ({} tool uses · {}{})",
+                    self.tool_uses_count,
+                    self.format_tokens(),
+                    duration_str,
+                );
+                lines.push(Line::from(vec![
+                    format!("{continuation}└  ").dim(),
+                    done_text.into(),
+                ]));
+            }
+        }
+    }
+
+    /// Calculate height with explicit expanded flag.
+    fn calculate_height(&self, show_expanded: bool) -> u16 {
+        let base = 2; // Header + status line
+        if show_expanded {
+            let tool_calls = self.extract_tool_calls();
+            let mut height = base;
+            // Prompt lines (label + up to 3 lines of content)
+            if self.prompt.is_some() {
+                height += 1 + self
+                    .prompt
+                    .as_ref()
+                    .map(|p| p.lines().take(3).count())
+                    .unwrap_or(0) as u16;
+            }
+            // Tool calls with outputs
+            for call in &tool_calls {
+                height += 1; // Tool call line
+                if let Some(output) = &call.output {
+                    height += output.lines().take(3).count() as u16;
+                }
+            }
+            // Response lines (label + up to 5 lines of content)
+            if self.output.is_some() {
+                height += 1 + self
+                    .output
+                    .as_ref()
+                    .map(|o| o.lines().take(5).count())
+                    .unwrap_or(0) as u16;
+            }
+            // Done line (for completed agents)
+            if self.status == SubAgentStatus::Completed {
+                height += 1;
+            }
+            height
+        } else {
+            base
+        }
+    }
+}
+
+/// Create a new SubAgentCell from a SubAgentBeginEvent.
+pub(crate) fn new_subagent_cell(
+    begin_event: SubAgentBeginEvent,
+    animations_enabled: bool,
+) -> SubAgentCell {
+    SubAgentCell {
+        session_id: begin_event.session_id,
+        agent_type: begin_event.agent_type,
+        description: begin_event.description,
+        prompt: begin_event.prompt.clone(),
+        output: None,
+        status: SubAgentStatus::Running,
+        start_time: Some(Instant::now()),
+        resumed: begin_event.resumed,
+        tool_uses_count: 0,
+        token_usage: None,
+        duration_ms: None,
+        raw_events: Vec::new(),
+        expanded: false,
+        animations_enabled,
+    }
+}
+
+/// Helper to extract a human-readable title from function call arguments.
+fn extract_title_from_arguments(tool_name: &str, arguments: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    match tool_name {
+        "Read" | "Write" | "Edit" => parsed.get("file_path")?.as_str().map(String::from),
+        "Glob" => parsed.get("pattern")?.as_str().map(String::from),
+        "Grep" => parsed.get("pattern")?.as_str().map(String::from),
+        "Bash" => {
+            let cmd = parsed.get("command")?.as_str()?;
+            Some(truncate_to_n_chars(cmd, 50))
+        }
+        _ => None,
+    }
+}
+
+/// Truncate a string to n characters with ellipsis if needed.
+fn truncate_to_n_chars(s: &str, n: usize) -> String {
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..n.saturating_sub(3)])
+    }
+}
+
+/// Format duration in a human-readable format.
+fn format_duration(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs < 60 {
+        format!("{}s", secs)
+    } else {
+        let mins = secs / 60;
+        let remaining_secs = secs % 60;
+        if remaining_secs == 0 {
+            format!("{}m", mins)
+        } else {
+            format!("{}m {}s", mins, remaining_secs)
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RunningAgentsGroup - Grouped view for parallel running agents
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Groups multiple running sub-agents under a single collapsible header.
+/// Used for displaying parallel running agents in a compact tree view.
+pub(crate) struct RunningAgentsGroup<'a> {
+    agents: Vec<&'a SubAgentCell>,
+    expanded: bool,
+    animations_enabled: bool,
+}
+
+impl<'a> RunningAgentsGroup<'a> {
+    /// Create a new group from a collection of sub-agent cells.
+    pub fn new(agents: Vec<&'a SubAgentCell>, expanded: bool, animations_enabled: bool) -> Self {
+        Self {
+            agents,
+            expanded,
+            animations_enabled,
+        }
+    }
+
+    /// Returns true if there are no agents to display.
+    pub fn is_empty(&self) -> bool {
+        self.agents.is_empty()
+    }
+
+    /// Render the group as a list of lines.
+    pub fn render_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if self.agents.is_empty() {
+            return Vec::new();
+        }
+
+        // Single agent case - render directly without group wrapper
+        if self.agents.len() == 1 {
+            return self.agents[0].render_with_expanded(width, self.expanded);
+        }
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Count running vs completed agents
+        let running_count = self
+            .agents
+            .iter()
+            .filter(|a| a.status() == SubAgentStatus::Running)
+            .count();
+        let total_count = self.agents.len();
+        let completed_count = total_count - running_count;
+
+        // Group header with running/total info
+        let bullet = spinner(None, self.animations_enabled);
+        let hint = if self.expanded {
+            "(ctrl+o to collapse)"
+        } else {
+            "(ctrl+o to expand)"
+        };
+
+        let header_text = if running_count == 0 {
+            // All completed, waiting to be moved to history
+            format!(
+                "{} {} completed {}",
+                total_count,
+                if total_count == 1 { "agent" } else { "agents" },
+                hint
+            )
+        } else if completed_count == 0 {
+            // All still running
+            format!(
+                "Running {} {}... {}",
+                total_count,
+                if total_count == 1 { "agent" } else { "agents" },
+                hint
+            )
+        } else {
+            // Mixed: some running, some completed
+            format!("Running {running_count} of {total_count} agents... {hint}")
+        };
+
+        lines.push(Line::from(vec![bullet, " ".into(), header_text.into()]));
+
+        // Render each agent with tree prefixes
+        let agent_count = self.agents.len();
+        for (i, agent) in self.agents.iter().enumerate() {
+            let is_last = i == agent_count - 1;
+            self.render_agent_in_group(&mut lines, agent, is_last, width);
+        }
+
+        lines
+    }
+
+    /// Render a single agent within the group with tree prefixes.
+    fn render_agent_in_group(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        agent: &SubAgentCell,
+        is_last: bool,
+        width: u16,
+    ) {
+        agent.render_in_group(
+            lines,
+            is_last,
+            width,
+            self.expanded,
+            self.animations_enabled,
+        );
+    }
+
+    /// Calculate the height needed to render the group.
+    pub fn calculate_height(&self) -> u16 {
+        if self.agents.is_empty() {
+            return 0;
+        }
+
+        // Single agent case - no group header
+        if self.agents.len() == 1 {
+            return self.agents[0].calculate_height(self.expanded);
+        }
+
+        let mut height: u16 = 1; // Group header
+
+        for agent in &self.agents {
+            height += agent.calculate_height(self.expanded);
+        }
+
+        height
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SubAgentGroupCell - History cell for grouped completed agents
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A history cell that groups multiple completed sub-agents together.
+/// Used to display completed parallel agents in a grouped view.
+#[derive(Debug)]
+pub(crate) struct SubAgentGroupCell {
+    cells: Vec<SubAgentCell>,
+    expanded: bool,
+}
+
+impl SubAgentGroupCell {
+    /// Create a new group from a collection of completed sub-agent cells.
+    pub fn new(cells: Vec<SubAgentCell>) -> Self {
+        Self {
+            cells,
+            expanded: false,
+        }
+    }
+
+    /// Render the group with an explicit expanded flag.
+    fn render_with_expanded(&self, width: u16, show_expanded: bool) -> Vec<Line<'static>> {
+        if self.cells.is_empty() {
+            return Vec::new();
+        }
+
+        // Single agent case - render directly without group wrapper
+        if self.cells.len() == 1 {
+            return self.cells[0].render_with_expanded(width, show_expanded);
+        }
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Count completed vs error
+        let completed_count = self
+            .cells
+            .iter()
+            .filter(|c| c.status() == SubAgentStatus::Completed)
+            .count();
+        let error_count = self
+            .cells
+            .iter()
+            .filter(|c| c.status() == SubAgentStatus::Error)
+            .count();
+        let total_count = self.cells.len();
+
+        // Group header: "• 4 agents completed (ctrl+o to expand)"
+        let bullet = if error_count > 0 {
+            "•".red().bold()
+        } else {
+            "•".green().bold()
+        };
+
+        let hint = if show_expanded {
+            "(ctrl+o to collapse)"
+        } else {
+            "(ctrl+o to expand)"
+        };
+
+        let status_text = if error_count > 0 {
+            format!("{completed_count} completed, {error_count} failed")
+        } else {
+            "completed".to_string()
+        };
+
+        let header_text = format!(
+            "{} {} {} {}",
+            total_count,
+            if total_count == 1 { "agent" } else { "agents" },
+            status_text,
+            hint
+        );
+
+        lines.push(Line::from(vec![bullet, " ".into(), header_text.into()]));
+
+        // Render each agent with tree prefixes
+        let agent_count = self.cells.len();
+        for (i, agent) in self.cells.iter().enumerate() {
+            let is_last = i == agent_count - 1;
+            self.render_agent_in_group(&mut lines, agent, is_last, width, show_expanded);
+        }
+
+        lines
+    }
+
+    /// Render a single agent within the group with tree prefixes.
+    fn render_agent_in_group(
+        &self,
+        lines: &mut Vec<Line<'static>>,
+        agent: &SubAgentCell,
+        is_last: bool,
+        width: u16,
+        show_expanded: bool,
+    ) {
+        // SubAgentGroupCell contains only completed agents, so animations are not needed
+        agent.render_in_group(lines, is_last, width, show_expanded, false);
+    }
+
+    /// Calculate height with explicit expanded flag.
+    fn calculate_height(&self, show_expanded: bool) -> u16 {
+        if self.cells.is_empty() {
+            return 0;
+        }
+
+        // Single agent case - no group header
+        if self.cells.len() == 1 {
+            return self.cells[0].calculate_height(show_expanded);
+        }
+
+        let mut height: u16 = 1; // Group header
+
+        for agent in &self.cells {
+            height += agent.calculate_height(show_expanded);
+        }
+
+        height
+    }
+}
+
+impl HistoryCell for SubAgentGroupCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_with_expanded(width, self.expanded)
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        self.calculate_height(self.expanded)
+    }
+}
+
+/// Truncate a description string to fit within the given width.
+fn truncate_description(desc: &str, max_len: usize) -> String {
+    if desc.len() > max_len && max_len > 3 {
+        format!("{}...", &desc[..max_len.saturating_sub(3)])
+    } else {
+        desc.to_string()
+    }
 }
 
 #[cfg(test)]

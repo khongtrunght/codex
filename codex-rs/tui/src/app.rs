@@ -2,6 +2,7 @@ use crate::app_backtrack::BacktrackState;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ApprovalRequest;
+use crate::tui_display_mode::TuiDisplayMode;
 use crate::chatwidget::ChatWidget;
 use crate::diff_render::DiffSummary;
 use crate::exec_command::strip_bash_lc_and_escape;
@@ -28,10 +29,12 @@ use codex_core::features::Feature;
 use codex_core::models_manager::manager::ModelsManager;
 use codex_core::models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
 use codex_core::models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
+use codex_core::protocol::AskForApproval;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::FinalOutput;
 use codex_core::protocol::ListSkillsResponseEvent;
 use codex_core::protocol::Op;
+use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionSource;
 use codex_core::protocol::SkillErrorInfo;
 use codex_core::protocol::TokenUsage;
@@ -316,6 +319,15 @@ pub(crate) struct App {
 
     // One-shot suppression of the next world-writable scan after user confirmation.
     skip_world_writable_scan_once: bool,
+
+    /// Current display mode for the TUI (affects permissions and workflow).
+    current_display_mode: TuiDisplayMode,
+    /// Initial approval policy to restore when cycling back to Default mode.
+    initial_approval_policy: AskForApproval,
+    /// Initial sandbox policy to restore when cycling back to Default mode.
+    initial_sandbox_policy: SandboxPolicy,
+    /// Whether bypass mode is available (depends on configuration).
+    is_bypass_available: bool,
 }
 
 impl App {
@@ -426,6 +438,15 @@ impl App {
         #[cfg(not(debug_assertions))]
         let upgrade_version = crate::updates::get_upgrade_version(&config);
 
+        // Save initial policies for mode cycling restoration
+        let initial_approval_policy = config.approval_policy.get().clone();
+        let initial_sandbox_policy = config.sandbox_policy.get().clone();
+        // Bypass is available only if user has dangerous full access configured
+        let is_bypass_available = matches!(
+            initial_sandbox_policy,
+            SandboxPolicy::DangerFullAccess
+        );
+
         let mut app = Self {
             server: conversation_manager.clone(),
             app_event_tx,
@@ -446,6 +467,10 @@ impl App {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
+            current_display_mode: TuiDisplayMode::Default,
+            initial_approval_policy,
+            initial_sandbox_policy,
+            is_bypass_available,
         };
 
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
@@ -1117,6 +1142,44 @@ impl App {
                         "E L I C I T A T I O N".to_string(),
                     ));
                 }
+                ApprovalRequest::EnterPlanMode { plan_file_path, .. } => {
+                    let _ = tui.enter_alt_screen();
+                    let paragraph = Paragraph::new(vec![
+                        Line::from("Enter plan mode to explore the codebase and design".bold()),
+                        Line::from("an implementation approach before making changes.".bold()),
+                        Line::from(""),
+                        Line::from(vec![
+                            "Plan file: ".into(),
+                            plan_file_path.display().to_string().italic(),
+                        ]),
+                    ])
+                    .wrap(Wrap { trim: false });
+                    self.overlay = Some(Overlay::new_static_with_renderables(
+                        vec![Box::new(paragraph)],
+                        "P L A N   M O D E".to_string(),
+                    ));
+                }
+                ApprovalRequest::ExitPlanMode { plan, plan_file_path, .. } => {
+                    let _ = tui.enter_alt_screen();
+                    let mut lines: Vec<Line<'static>> = vec![
+                        Line::from("Exit plan mode with the following plan:".bold()),
+                        Line::from(""),
+                        Line::from(vec![
+                            "Plan file: ".into(),
+                            plan_file_path.display().to_string().italic(),
+                        ]),
+                        Line::from(""),
+                    ];
+                    // Show the plan content
+                    for line in plan.lines() {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+                    self.overlay = Some(Overlay::new_static_with_renderables(
+                        vec![Box::new(paragraph)],
+                        "P L A N   R E V I E W".to_string(),
+                    ));
+                }
             },
         }
         Ok(true)
@@ -1191,6 +1254,14 @@ impl App {
                 // Delegate to helper for clarity; preserves behavior.
                 self.confirm_backtrack_from_main();
             }
+            // Shift+Tab cycles TUI display modes
+            KeyEvent {
+                code: KeyCode::BackTab,
+                kind: KeyEventKind::Press,
+                ..
+            } => {
+                self.cycle_display_mode(tui).await;
+            }
             KeyEvent {
                 kind: KeyEventKind::Press | KeyEventKind::Repeat,
                 ..
@@ -1207,6 +1278,80 @@ impl App {
                 // Ignore Release key events.
             }
         };
+    }
+
+    /// Cycle to the next TUI display mode (triggered by Shift+Tab).
+    async fn cycle_display_mode(&mut self, tui: &mut tui::Tui) {
+        let next_mode = self.current_display_mode.next_mode(self.is_bypass_available);
+
+        // Determine approval, sandbox, and session mode based on the new mode
+        let (approval_policy, sandbox_policy, session_mode) = match &next_mode {
+            TuiDisplayMode::Default => {
+                // Restore initial policies and default session mode
+                (
+                    Some(self.initial_approval_policy.clone()),
+                    Some(self.initial_sandbox_policy.clone()),
+                    Some(codex_protocol::session_mode::SessionMode::Default),
+                )
+            }
+            TuiDisplayMode::AcceptEdits => {
+                // AcceptEdits uses OnFailure approval (auto-approve in sandbox)
+                (
+                    Some(AskForApproval::OnFailure),
+                    None, // Keep current sandbox policy
+                    Some(codex_protocol::session_mode::SessionMode::Default),
+                )
+            }
+            TuiDisplayMode::Plan => {
+                // Plan mode - backend auto-generates slug if needed
+                (
+                    None, // Keep current approval policy
+                    None, // Keep current sandbox policy
+                    Some(codex_protocol::session_mode::SessionMode::Plan),
+                )
+            }
+            TuiDisplayMode::Bypass => {
+                // Bypass uses Never approval and DangerFullAccess sandbox
+                (
+                    Some(AskForApproval::Never),
+                    Some(SandboxPolicy::DangerFullAccess),
+                    Some(codex_protocol::session_mode::SessionMode::Default),
+                )
+            }
+        };
+
+        // Send Op::OverrideTurnContext to the backend
+        self.app_event_tx.send(AppEvent::CodexOp(
+            Op::OverrideTurnContext {
+                cwd: None,
+                approval_policy,
+                sandbox_policy,
+                model: None,
+                effort: None,
+                summary: None,
+                session_mode,
+            },
+        ));
+
+        tracing::debug!(
+            ?next_mode,
+            "Sent OverrideTurnContext for display mode change"
+        );
+
+        self.current_display_mode = next_mode.clone();
+
+        // Update the chat widget's footer indicator
+        self.chat_widget.set_display_mode(next_mode.clone());
+
+        // Log the mode change
+        tracing::info!(
+            mode = ?next_mode,
+            display_name = next_mode.display_name(),
+            "TUI display mode cycled"
+        );
+
+        // Request a frame redraw to update the UI
+        tui.frame_requester().schedule_frame();
     }
 
     #[cfg(target_os = "windows")]
@@ -1280,7 +1425,7 @@ mod tests {
             app_event_tx,
             chat_widget,
             auth_manager,
-            config,
+            config: config.clone(),
             current_model,
             active_profile: None,
             file_search,
@@ -1295,6 +1440,10 @@ mod tests {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
+            current_display_mode: TuiDisplayMode::Default,
+            initial_approval_policy: config.approval_policy.get().clone(),
+            initial_sandbox_policy: config.sandbox_policy.get().clone(),
+            is_bypass_available: false,
         }
     }
 
@@ -1320,7 +1469,7 @@ mod tests {
                 app_event_tx,
                 chat_widget,
                 auth_manager,
-                config,
+                config: config.clone(),
                 current_model,
                 active_profile: None,
                 file_search,
@@ -1335,6 +1484,10 @@ mod tests {
                 pending_update_action: None,
                 suppress_shutdown_complete: false,
                 skip_world_writable_scan_once: false,
+                current_display_mode: TuiDisplayMode::Default,
+                initial_approval_policy: config.approval_policy.get().clone(),
+                initial_sandbox_policy: config.sandbox_policy.get().clone(),
+                is_bypass_available: false,
             },
             rx,
             op_rx,

@@ -439,6 +439,10 @@ async fn make_chatwidget_manual(
         current_rollout_path: None,
         is_plan_mode: false,
         plan_file_path: None,
+        running_subagents: HashMap::new(),
+        pending_completed_subagents: Vec::new(),
+        verbose_mode: false,
+        pre_plan_display_mode: None,
     };
     (widget, rx, op_rx)
 }

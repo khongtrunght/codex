@@ -21,6 +21,8 @@ use std::time::Duration;
 mod approval_overlay;
 pub(crate) use approval_overlay::ApprovalOverlay;
 pub(crate) use approval_overlay::ApprovalRequest;
+mod ask_user_question_overlay;
+pub(crate) use ask_user_question_overlay::AskUserQuestionOverlay;
 mod bottom_pane_view;
 mod chat_composer;
 mod chat_composer_history;
@@ -150,6 +152,15 @@ impl BottomPane {
 
     pub fn skills(&self) -> Option<&Vec<SkillMetadata>> {
         self.composer.skills()
+    }
+
+    pub fn set_display_mode(&mut self, mode: crate::tui_display_mode::TuiDisplayMode) {
+        self.composer.set_display_mode(mode);
+        self.request_redraw();
+    }
+
+    pub fn display_mode(&self) -> &crate::tui_display_mode::TuiDisplayMode {
+        self.composer.display_mode()
     }
 
     #[cfg(test)]
@@ -393,6 +404,12 @@ impl BottomPane {
     pub(crate) fn show_selection_view(&mut self, params: list_selection_view::SelectionViewParams) {
         let view = list_selection_view::ListSelectionView::new(params, self.app_event_tx.clone());
         self.push_view(Box::new(view));
+    }
+
+    /// Push an AskUserQuestion overlay for handling multi-question interactions.
+    pub(crate) fn push_ask_user_question(&mut self, overlay: AskUserQuestionOverlay) {
+        self.pause_status_timer_for_modal();
+        self.push_view(Box::new(overlay));
     }
 
     /// Update the queued messages preview shown above the composer.

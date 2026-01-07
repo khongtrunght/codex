@@ -20,11 +20,14 @@ use codex_core::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
+use codex_core::protocol::AskUserQuestionRequestEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
+use codex_core::protocol::EnterPlanModeApprovalRequestEvent;
+use codex_core::protocol::ExitPlanModeApprovalRequestEvent;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
 use codex_core::protocol::ErrorEvent;
@@ -61,10 +64,13 @@ use codex_core::protocol::TurnDiffEvent;
 use codex_core::protocol::UndoCompletedEvent;
 use codex_core::protocol::UndoStartedEvent;
 use codex_core::protocol::UserMessageEvent;
+use codex_core::protocol::SubAgentBeginEvent;
+use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::ViewImageToolCallEvent;
 use codex_core::protocol::WarningEvent;
 use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
+use codex_protocol::protocol::RolloutItem;
 use codex_core::skills::model::SkillMetadata;
 use codex_protocol::ConversationId;
 use codex_protocol::account::PlanType;
@@ -90,6 +96,8 @@ use tracing::debug;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ApprovalRequest;
+use crate::bottom_pane::AskUserQuestionOverlay;
+use crate::tui_display_mode::TuiDisplayMode;
 use crate::bottom_pane::BetaFeatureItem;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
@@ -113,6 +121,9 @@ use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::McpToolCallCell;
 use crate::history_cell::PlainHistoryCell;
+use crate::history_cell::RunningAgentsGroup;
+use crate::history_cell::SubAgentCell;
+use crate::history_cell::SubAgentGroupCell;
 use crate::markdown::append_markdown;
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
@@ -324,6 +335,12 @@ pub(crate) struct ChatWidget {
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
     running_commands: HashMap<String, RunningCommand>,
+    /// Active sub-agent cells, keyed by call_id
+    running_subagents: HashMap<String, SubAgentCell>,
+    /// Completed subagents pending to be added to history as a group
+    pending_completed_subagents: Vec<SubAgentCell>,
+    /// Global verbose mode - when true, expandable cells show full content (ctrl+o toggle)
+    verbose_mode: bool,
     suppressed_exec_calls: HashSet<String>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     task_complete_pending: bool,
@@ -356,6 +373,8 @@ pub(crate) struct ChatWidget {
     is_plan_mode: bool,
     // Path to plan file when in plan mode.
     plan_file_path: Option<String>,
+    // Display mode saved before entering plan mode, to restore after exiting.
+    pre_plan_display_mode: Option<TuiDisplayMode>,
     // Snapshot of token usage to restore after review mode exits.
     pre_review_token_info: Option<Option<TokenUsageInfo>>,
     // Whether to add a final message separator after the last message
@@ -700,6 +719,24 @@ impl ChatWidget {
     fn finalize_turn(&mut self) {
         // Ensure any spinner is replaced by a red ✗ and flushed into history.
         self.finalize_active_cell_as_failed();
+
+        // Also finalize any running subagents as interrupted
+        if !self.running_subagents.is_empty() || !self.pending_completed_subagents.is_empty() {
+            // Mark all running subagents as interrupted
+            for cell in self.running_subagents.values_mut() {
+                cell.mark_interrupted();
+            }
+            // Collect all subagents (running + pending completed) into a group
+            let mut all_cells: Vec<SubAgentCell> =
+                std::mem::take(&mut self.running_subagents).into_values().collect();
+            all_cells.extend(std::mem::take(&mut self.pending_completed_subagents));
+            // Add as a group to history
+            if !all_cells.is_empty() {
+                let group = SubAgentGroupCell::new(all_cells);
+                self.add_to_history(group);
+            }
+        }
+
         // Reset running state and clear streaming buffers.
         self.bottom_pane.set_task_running(false);
         self.running_commands.clear();
@@ -710,6 +747,13 @@ impl ChatWidget {
     }
     pub(crate) fn get_model_family(&self) -> ModelFamily {
         self.model_family.clone()
+    }
+
+    /// Check if global verbose mode is enabled.
+    /// Used by external code to query verbose state for rendering decisions.
+    #[allow(dead_code)]
+    pub(crate) fn is_verbose(&self) -> bool {
+        self.verbose_mode
     }
 
     fn on_error(&mut self, message: String) {
@@ -1454,6 +1498,9 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            running_subagents: HashMap::new(),
+            pending_completed_subagents: Vec::new(),
+            verbose_mode: false,
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -1472,6 +1519,7 @@ impl ChatWidget {
             is_review_mode: false,
             is_plan_mode: false,
             plan_file_path: None,
+            pre_plan_display_mode: None,
             pre_review_token_info: None,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
@@ -1542,6 +1590,9 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            running_subagents: HashMap::new(),
+            pending_completed_subagents: Vec::new(),
+            verbose_mode: false,
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -1560,6 +1611,7 @@ impl ChatWidget {
             is_review_mode: false,
             is_plan_mode: false,
             plan_file_path: None,
+            pre_plan_display_mode: None,
             pre_review_token_info: None,
             needs_final_message_separator: false,
             last_rendered_width: std::cell::Cell::new(None),
@@ -1581,6 +1633,18 @@ impl ChatWidget {
                 ..
             } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'c') => {
                 self.on_ctrl_c();
+                return;
+            }
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'o') => {
+                // Toggle global verbose mode (affects all expandable cells including
+                // history cells and running subagents group)
+                self.verbose_mode = !self.verbose_mode;
+                self.request_redraw();
                 return;
             }
             KeyEvent {
@@ -1977,7 +2041,19 @@ impl ChatWidget {
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
-        let Event { id, msg, .. } = event;
+        let Event {
+            id,
+            msg,
+            source_session_id,
+            parent_session_id: _,
+        } = event;
+
+        // Route forwarded events to the appropriate subagent cell
+        if let Some(ref source_id) = source_session_id {
+            self.handle_forwarded_event(source_id, &msg);
+            return;
+        }
+
         self.dispatch_event_msg(Some(id), msg, false);
     }
 
@@ -2095,18 +2171,24 @@ impl ChatWidget {
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
             EventMsg::EnteredPlanMode(ev) => self.on_entered_plan_mode(ev),
             EventMsg::ExitedPlanMode(ev) => self.on_exited_plan_mode(ev),
+            EventMsg::SubAgentBegin(ev) => self.on_subagent_begin(ev),
+            EventMsg::SubAgentEnd(ev) => self.on_subagent_end(ev),
             EventMsg::ContextCompacted(_) => self.on_agent_message("Context compacted".to_owned()),
+            EventMsg::EnterPlanModeApprovalRequest(ev) => {
+                self.on_enter_plan_mode_approval_request(ev);
+            }
+            EventMsg::ExitPlanModeApprovalRequest(ev) => {
+                self.on_exit_plan_mode_approval_request(ev);
+            }
+            EventMsg::AskUserQuestionRequest(ev) => {
+                self.on_ask_user_question_request(ev);
+            }
             EventMsg::RawResponseItem(_)
             | EventMsg::ItemStarted(_)
             | EventMsg::ItemCompleted(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
-            | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::SubAgentBegin(_)
-            | EventMsg::SubAgentEnd(_)
-            | EventMsg::EnterPlanModeApprovalRequest(_)
-            | EventMsg::ExitPlanModeApprovalRequest(_)
-            | EventMsg::AskUserQuestionRequest(_) => {}
+            | EventMsg::ReasoningRawContentDelta(_) => {}
         }
     }
 
@@ -2159,26 +2241,158 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn on_enter_plan_mode_approval_request(&mut self, ev: EnterPlanModeApprovalRequestEvent) {
+        let ev2 = ev.clone();
+        self.defer_or_handle(
+            |q| q.push_enter_plan_mode_approval(ev),
+            |s| s.handle_enter_plan_mode_approval_now(ev2),
+        );
+    }
+
+    fn on_exit_plan_mode_approval_request(&mut self, ev: ExitPlanModeApprovalRequestEvent) {
+        let ev2 = ev.clone();
+        self.defer_or_handle(
+            |q| q.push_exit_plan_mode_approval(ev),
+            |s| s.handle_exit_plan_mode_approval_now(ev2),
+        );
+    }
+
+    pub(crate) fn handle_enter_plan_mode_approval_now(
+        &mut self,
+        ev: EnterPlanModeApprovalRequestEvent,
+    ) {
+        self.flush_answer_stream_with_separator();
+
+        let request = ApprovalRequest::EnterPlanMode {
+            turn_id: ev.turn_id,
+            plan_file_path: ev.plan_file_path,
+        };
+        self.bottom_pane
+            .push_approval_request(request, &self.config.features);
+        self.request_redraw();
+    }
+
+    pub(crate) fn handle_exit_plan_mode_approval_now(
+        &mut self,
+        ev: ExitPlanModeApprovalRequestEvent,
+    ) {
+        self.flush_answer_stream_with_separator();
+
+        let request = ApprovalRequest::ExitPlanMode {
+            turn_id: ev.turn_id,
+            plan: ev.plan,
+            plan_file_path: ev.plan_file_path,
+        };
+        self.bottom_pane
+            .push_approval_request(request, &self.config.features);
+        self.request_redraw();
+    }
+
+    fn on_ask_user_question_request(&mut self, ev: AskUserQuestionRequestEvent) {
+        self.flush_answer_stream_with_separator();
+
+        let overlay = AskUserQuestionOverlay::new(
+            ev.call_id,
+            ev.questions,
+            self.app_event_tx.clone(),
+        );
+        self.bottom_pane.push_ask_user_question(overlay);
+        self.request_redraw();
+    }
+
     fn on_entered_plan_mode(&mut self, ev: EnteredPlanModeEvent) {
-        // Enter plan mode and show a status banner
+        // Flush any pending state to ensure clean transition
+        self.flush_answer_stream_with_separator();
+        self.flush_interrupt_queue();
+        self.flush_active_cell();
+
         self.is_plan_mode = true;
         self.plan_file_path = Some(ev.plan_file_path.clone());
+
+        // Save current display mode before entering plan mode
+        if self.pre_plan_display_mode.is_none() {
+            self.pre_plan_display_mode = Some(self.bottom_pane.display_mode().clone());
+        }
+        // Set display mode to Plan
+        self.bottom_pane.set_display_mode(TuiDisplayMode::Plan);
+
         let banner = format!(">> Plan mode started. Plan file: {} <<", ev.plan_file_path);
         self.add_to_history(history_cell::new_review_status_line(banner));
         self.request_redraw();
     }
 
     fn on_exited_plan_mode(&mut self, ev: ExitedPlanModeEvent) {
-        // Exit plan mode and show the final plan
+        // Flush any pending state to ensure clean transition
+        self.flush_answer_stream_with_separator();
+        self.flush_interrupt_queue();
+        self.flush_active_cell();
+
         self.is_plan_mode = false;
         self.plan_file_path = None;
-        // Show exit banner with plan summary
+
+        // Restore previous display mode
+        if let Some(prev_mode) = self.pre_plan_display_mode.take() {
+            self.bottom_pane.set_display_mode(prev_mode);
+        } else {
+            // Fallback to Default if no saved mode
+            self.bottom_pane.set_display_mode(TuiDisplayMode::Default);
+        }
+
         let banner = format!(
             "<< Plan mode finished. Plan saved to: {} >>",
             ev.plan_file_path
         );
         self.add_to_history(history_cell::new_review_status_line(banner));
         self.request_redraw();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // SubAgent event handlers
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    fn on_subagent_begin(&mut self, ev: SubAgentBeginEvent) {
+        self.flush_answer_stream_with_separator();
+
+        let call_id = ev.call_id.clone();
+        let cell = history_cell::new_subagent_cell(ev, self.config.animations);
+        self.running_subagents.insert(call_id, cell);
+        self.request_redraw();
+    }
+
+    fn on_subagent_end(&mut self, ev: SubAgentEndEvent) {
+        if let Some(mut cell) = self.running_subagents.remove(&ev.call_id) {
+            cell.complete(&ev);
+            self.pending_completed_subagents.push(cell);
+
+            // If all running subagents have completed, add them as a group to history
+            if self.running_subagents.is_empty() && !self.pending_completed_subagents.is_empty() {
+                let completed_cells = std::mem::take(&mut self.pending_completed_subagents);
+                let group_cell = SubAgentGroupCell::new(completed_cells);
+                self.add_to_history(group_cell);
+            }
+            self.request_redraw();
+        }
+    }
+
+    fn handle_forwarded_event(&mut self, source_session_id: &str, msg: &EventMsg) {
+        let cell = self
+            .running_subagents
+            .values_mut()
+            .find(|c| c.session_id() == source_session_id);
+
+        if let Some(cell) = cell {
+            cell.add_raw_event(RolloutItem::EventMsg(msg.clone()));
+
+            if let EventMsg::TokenCount(tc) = msg {
+                if let Some(info) = &tc.info {
+                    let last = &info.last_token_usage;
+                    let input_delta = last.input_tokens.max(0) as u64;
+                    let output_delta = last.output_tokens.max(0) as u64;
+                    cell.accumulate_tokens(input_delta, output_delta);
+                }
+            }
+            self.request_redraw();
+        }
     }
 
     fn on_user_message_event(&mut self, event: UserMessageEvent) {
@@ -3255,6 +3469,12 @@ impl ChatWidget {
         self.config.model_reasoning_effort = effort;
     }
 
+    /// Set the TUI display mode (for footer indicator).
+    pub(crate) fn set_display_mode(&mut self, mode: TuiDisplayMode) {
+        self.bottom_pane.set_display_mode(mode);
+        self.request_redraw();
+    }
+
     /// Set the model in the widget's config copy.
     pub(crate) fn set_model(&mut self, model: &str, model_family: ModelFamily) {
         self.session_header.set_model(model);
@@ -3552,6 +3772,26 @@ impl ChatWidget {
         };
         let mut flex = FlexRenderable::new();
         flex.push(1, active_cell_renderable);
+
+        // Render running and pending-completed subagent cells as a single grouped display.
+        // This shows completed agents alongside still-running ones for visibility.
+        let has_running = !self.running_subagents.is_empty();
+        let has_pending = !self.pending_completed_subagents.is_empty();
+        if has_running || has_pending {
+            let mut agents: Vec<&SubAgentCell> = self.running_subagents.values().collect();
+            agents.extend(self.pending_completed_subagents.iter());
+            let group_renderable = RunningAgentsGroupRenderable::new(
+                agents,
+                self.verbose_mode,
+                self.config.animations,
+            );
+            flex.push(
+                0,
+                RenderableItem::Owned(Box::new(group_renderable) as Box<dyn Renderable>)
+                    .inset(Insets::tlbr(1, 0, 0, 0)),
+            );
+        }
+
         flex.push(
             0,
             RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(1, 0, 0, 0)),
@@ -3763,6 +4003,38 @@ fn skills_for_cwd(cwd: &Path, skills_entries: &[SkillsListEntry]) -> Vec<SkillMe
                 .collect()
         })
         .unwrap_or_default()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RunningAgentsGroupRenderable - Wrapper to render running subagents
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Wrapper to render a group of running SubAgentCells as a single Renderable.
+struct RunningAgentsGroupRenderable<'a> {
+    group: RunningAgentsGroup<'a>,
+}
+
+impl<'a> RunningAgentsGroupRenderable<'a> {
+    fn new(agents: Vec<&'a SubAgentCell>, expanded: bool, animations_enabled: bool) -> Self {
+        Self {
+            group: RunningAgentsGroup::new(agents, expanded, animations_enabled),
+        }
+    }
+}
+
+impl Renderable for RunningAgentsGroupRenderable<'_> {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        if self.group.is_empty() {
+            return;
+        }
+        let lines = self.group.render_lines(area.width);
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        self.group.calculate_height()
+    }
 }
 
 fn find_skill_mentions(text: &str, skills: &[SkillMetadata]) -> Vec<SkillMetadata> {

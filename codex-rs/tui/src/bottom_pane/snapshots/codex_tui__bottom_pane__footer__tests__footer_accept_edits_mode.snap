@@ -1,0 +1,5 @@
+---
+source: tui/src/bottom_pane/footer.rs
+expression: terminal.backend()
+---
+"  ⏵⏵ Accept Edits (shift+tab to cycle) · 80% context left · ? for shortcuts     "

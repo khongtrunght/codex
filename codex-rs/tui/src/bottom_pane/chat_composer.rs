@@ -22,6 +22,7 @@ use super::command_popup::CommandPopup;
 use super::file_search_popup::FileSearchPopup;
 use super::footer::FooterMode;
 use super::footer::FooterProps;
+use super::footer::PermissionModeDisplay;
 use super::footer::esc_hint_mode;
 use super::footer::footer_height;
 use super::footer::render_footer;
@@ -30,6 +31,7 @@ use super::footer::toggle_shortcut_mode;
 use super::paste_burst::CharDecision;
 use super::paste_burst::PasteBurst;
 use super::skill_popup::SkillPopup;
+use crate::tui_display_mode::TuiDisplayMode;
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::bottom_pane::prompt_args::expand_custom_prompt;
 use crate::bottom_pane::prompt_args::expand_if_numeric_with_positional_args;
@@ -120,6 +122,8 @@ pub(crate) struct ChatComposer {
     context_window_used_tokens: Option<i64>,
     skills: Option<Vec<SkillMetadata>>,
     dismissed_skill_popup_token: Option<String>,
+    /// Current display mode for permission level
+    display_mode: TuiDisplayMode,
 }
 
 /// Popup state – at most one can be visible at any time.
@@ -168,6 +172,7 @@ impl ChatComposer {
             context_window_used_tokens: None,
             skills: None,
             dismissed_skill_popup_token: None,
+            display_mode: TuiDisplayMode::Default,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -176,6 +181,14 @@ impl ChatComposer {
 
     pub fn set_skill_mentions(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.skills = skills;
+    }
+
+    pub fn set_display_mode(&mut self, mode: TuiDisplayMode) {
+        self.display_mode = mode;
+    }
+
+    pub fn display_mode(&self) -> &TuiDisplayMode {
+        &self.display_mode
     }
 
     fn layout_areas(&self, area: Rect) -> [Rect; 3] {
@@ -1525,6 +1538,11 @@ impl ChatComposer {
     }
 
     fn footer_props(&self) -> FooterProps {
+        let permission_mode_display = if matches!(self.display_mode, TuiDisplayMode::Default) {
+            None
+        } else {
+            Some(PermissionModeDisplay::from_display_mode(&self.display_mode))
+        };
         FooterProps {
             mode: self.footer_mode(),
             esc_backtrack_hint: self.esc_backtrack_hint,
@@ -1532,6 +1550,7 @@ impl ChatComposer {
             is_task_running: self.is_task_running,
             context_window_percent: self.context_window_percent,
             context_window_used_tokens: self.context_window_used_tokens,
+            permission_mode_display,
         }
     }
 

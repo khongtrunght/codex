@@ -4,10 +4,12 @@ use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::render::line_utils::prefix_lines;
 use crate::status::format_tokens_compact;
+use crate::tui_display_mode::TuiDisplayMode;
 use crate::ui_consts::FOOTER_INDENT_COLS;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -22,6 +24,26 @@ pub(crate) struct FooterProps {
     pub(crate) is_task_running: bool,
     pub(crate) context_window_percent: Option<i64>,
     pub(crate) context_window_used_tokens: Option<i64>,
+    /// Permission mode display info (icon, name, color)
+    pub(crate) permission_mode_display: Option<PermissionModeDisplay>,
+}
+
+/// Display info for permission mode indicator
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PermissionModeDisplay {
+    pub(crate) icon: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) color: Color,
+}
+
+impl PermissionModeDisplay {
+    pub(crate) fn from_display_mode(mode: &TuiDisplayMode) -> PermissionModeDisplay {
+        PermissionModeDisplay {
+            icon: mode.icon(),
+            name: mode.display_name(),
+            color: mode.color(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,10 +107,12 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
             is_task_running: props.is_task_running,
         })],
         FooterMode::ShortcutSummary => {
-            let mut line = context_window_line(
+            let mut line = base_status_line(props);
+            let context = context_window_line(
                 props.context_window_percent,
                 props.context_window_used_tokens,
             );
+            line.extend(context.spans);
             line.push_span(" · ".dim());
             line.extend(vec![
                 key_hint::plain(KeyCode::Char('?')).into(),
@@ -110,11 +134,36 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
             shortcut_overlay_lines(state)
         }
         FooterMode::EscHint => vec![esc_hint_line(props.esc_backtrack_hint)],
-        FooterMode::ContextOnly => vec![context_window_line(
-            props.context_window_percent,
-            props.context_window_used_tokens,
-        )],
+        FooterMode::ContextOnly => {
+            let mut line = base_status_line(props);
+            let context = context_window_line(
+                props.context_window_percent,
+                props.context_window_used_tokens,
+            );
+            line.extend(context.spans);
+            vec![line]
+        }
     }
+}
+
+/// Build the base status line with permission mode indicator.
+/// This is the core status that should remain visible across most footer modes.
+fn base_status_line(props: FooterProps) -> Line<'static> {
+    let mut line = Line::from("");
+
+    // Show permission mode indicator (only if not Default)
+    if let Some(perm_display) = props.permission_mode_display {
+        if !perm_display.icon.is_empty() {
+            line.push_span(Span::styled(
+                format!("{} {}", perm_display.icon, perm_display.name),
+                ratatui::style::Style::default().fg(perm_display.color),
+            ));
+            line.push_span(" (shift+tab to cycle) ".dim());
+            line.push_span("· ".dim());
+        }
+    }
+
+    line
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -440,6 +489,7 @@ mod tests {
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
+                permission_mode_display: None,
             },
         );
 
@@ -452,6 +502,7 @@ mod tests {
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
+                permission_mode_display: None,
             },
         );
 
@@ -464,6 +515,7 @@ mod tests {
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
+                permission_mode_display: None,
             },
         );
 
@@ -476,6 +528,7 @@ mod tests {
                 is_task_running: true,
                 context_window_percent: None,
                 context_window_used_tokens: None,
+                permission_mode_display: None,
             },
         );
 
@@ -488,6 +541,7 @@ mod tests {
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
+                permission_mode_display: None,
             },
         );
 
@@ -500,6 +554,7 @@ mod tests {
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
+                permission_mode_display: None,
             },
         );
 
@@ -512,6 +567,7 @@ mod tests {
                 is_task_running: true,
                 context_window_percent: Some(72),
                 context_window_used_tokens: None,
+                permission_mode_display: None,
             },
         );
 
@@ -524,6 +580,42 @@ mod tests {
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: Some(123_456),
+                permission_mode_display: None,
+            },
+        );
+
+        // Test permission mode display
+        snapshot_footer(
+            "footer_accept_edits_mode",
+            FooterProps {
+                mode: FooterMode::ShortcutSummary,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: false,
+                context_window_percent: Some(80),
+                context_window_used_tokens: None,
+                permission_mode_display: Some(PermissionModeDisplay {
+                    icon: "⏵⏵",
+                    name: "Accept Edits",
+                    color: Color::Yellow,
+                }),
+            },
+        );
+
+        snapshot_footer(
+            "footer_plan_mode",
+            FooterProps {
+                mode: FooterMode::ShortcutSummary,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: false,
+                context_window_percent: Some(65),
+                context_window_used_tokens: None,
+                permission_mode_display: Some(PermissionModeDisplay {
+                    icon: "⏸",
+                    name: "Plan Mode",
+                    color: Color::Cyan,
+                }),
             },
         );
     }
