@@ -52,6 +52,34 @@ async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
     // Remaining preset order: gpt-5.1-codex-max, gpt-5.1-codex-mini, gpt-5.2
     let expected_models = vec![
         Model {
+            id: "openai/gpt-5.2-codex".to_string(),
+            model: "openai/gpt-5.2-codex".to_string(),
+            display_name: "openai/gpt-5.2-codex".to_string(),
+            description: "Latest frontier agentic coding model.".to_string(),
+            supported_reasoning_efforts: vec![
+                ReasoningEffortOption {
+                    reasoning_effort: ReasoningEffort::Low,
+                    description: "Fast responses with lighter reasoning".to_string(),
+                },
+                ReasoningEffortOption {
+                    reasoning_effort: ReasoningEffort::Medium,
+                    description: "Balances speed and reasoning depth for everyday tasks"
+                        .to_string(),
+                },
+                ReasoningEffortOption {
+                    reasoning_effort: ReasoningEffort::High,
+                    description: "Greater reasoning depth for complex problems".to_string(),
+                },
+                ReasoningEffortOption {
+                    reasoning_effort: ReasoningEffort::XHigh,
+                    description: "Extra high reasoning depth for complex problems".to_string(),
+                },
+            ],
+            default_reasoning_effort: ReasoningEffort::Medium,
+            // First model in list gets is_default: true (see manager.rs filter_visible_models)
+            is_default: true,
+        },
+        Model {
             id: "openai/gpt-5.1-codex-max".to_string(),
             model: "openai/gpt-5.1-codex-max".to_string(),
             display_name: "openai/gpt-5.1-codex-max".to_string(),
@@ -76,8 +104,7 @@ async fn list_models_returns_all_models_with_large_limit() -> Result<()> {
                 },
             ],
             default_reasoning_effort: ReasoningEffort::Medium,
-            // First model in list gets is_default: true (see manager.rs filter_visible_models)
-            is_default: true,
+            is_default: false,
         },
         Model {
             id: "openai/gpt-5.1-codex-mini".to_string(),
@@ -167,7 +194,7 @@ async fn list_models_pagination_works() -> Result<()> {
     // Models are ordered by priority: gpt-5.1-codex-max, gpt-5.1-codex-mini, gpt-5.2
     // Note: gpt-5.2-codex is excluded because it has supported_in_api: false
     assert_eq!(first_items.len(), 1);
-    assert_eq!(first_items[0].id, "openai/gpt-5.1-codex-max");
+    assert_eq!(first_items[0].id, "openai/gpt-5.2-codex");
     let next_cursor = first_cursor.ok_or_else(|| anyhow!("cursor for second page"))?;
 
     let second_request = mcp
@@ -189,7 +216,7 @@ async fn list_models_pagination_works() -> Result<()> {
     } = to_response::<ModelListResponse>(second_response)?;
 
     assert_eq!(second_items.len(), 1);
-    assert_eq!(second_items[0].id, "openai/gpt-5.1-codex-mini");
+    assert_eq!(second_items[0].id, "openai/gpt-5.1-codex-max");
     let third_cursor = second_cursor.ok_or_else(|| anyhow!("cursor for third page"))?;
 
     let third_request = mcp
@@ -211,8 +238,30 @@ async fn list_models_pagination_works() -> Result<()> {
     } = to_response::<ModelListResponse>(third_response)?;
 
     assert_eq!(third_items.len(), 1);
-    assert_eq!(third_items[0].id, "openai/gpt-5.2");
-    assert!(third_cursor.is_none());
+    assert_eq!(third_items[0].id, "openai/gpt-5.1-codex-mini");
+    let fourth_cursor = third_cursor.ok_or_else(|| anyhow!("cursor for fourth page"))?;
+
+    let fourth_request = mcp
+        .send_list_models_request(ModelListParams {
+            limit: Some(1),
+            cursor: Some(fourth_cursor.clone()),
+        })
+        .await?;
+
+    let fourth_response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(fourth_request)),
+    )
+    .await??;
+
+    let ModelListResponse {
+        data: fourth_items,
+        next_cursor: fourth_cursor,
+    } = to_response::<ModelListResponse>(fourth_response)?;
+
+    assert_eq!(fourth_items.len(), 1);
+    assert_eq!(fourth_items[0].id, "openai/gpt-5.2");
+    assert!(fourth_cursor.is_none());
     Ok(())
 }
 
