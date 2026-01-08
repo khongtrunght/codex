@@ -147,7 +147,12 @@ impl<'a> AnthropicRequestBuilder<'a> {
                     ..
                 } => {
                     // Map to assistant tool_use (like Go: case "function_call")
-                    let input: Value = serde_json::from_str(arguments).unwrap_or(json!({}));
+                    let input: Value = Self::convert_function_call_input(name, arguments);
+                    tracing::info!(
+                        "Anthropic tool_use input for call_id {}: {}",
+                        call_id,
+                        input
+                    );
                     messages.push(json!({
                         "role": "assistant",
                         "content": [{
@@ -188,16 +193,25 @@ impl<'a> AnthropicRequestBuilder<'a> {
                 }
 
                 ResponseItem::CustomToolCall {
-                    id, name, input, ..
+                    call_id, name, input, ..
                 } => {
                     // Map to assistant tool_use
+                    // input is a String - parse as JSON or wrap for apply_patch
+                    let tool_input = if name == "apply_patch" {
+                        // apply_patch needs {"input": "patch content"}
+                        json!({"input": input})
+                    } else {
+                        // Try to parse as JSON, fallback to wrapping
+                        serde_json::from_str(input).unwrap_or_else(|_| json!({"input": input}))
+                    };
+                    // Use call_id (not id) to match tool_result's tool_use_id
                     messages.push(json!({
                         "role": "assistant",
                         "content": [{
                             "type": "tool_use",
-                            "id": id,
+                            "id": call_id,
                             "name": name,
-                            "input": input
+                            "input": tool_input
                         }]
                     }));
                 }
@@ -373,6 +387,20 @@ impl<'a> AnthropicRequestBuilder<'a> {
                 }
             })
             .collect()
+    }
+
+    /// Convert function call arguments to Anthropic input format.
+    ///
+    /// For apply_patch: wrap in `{"input": ...}` since Anthropic expects object input.
+    /// For other tools: parse as JSON directly (original behavior).
+    fn convert_function_call_input(name: &str, arguments: &str) -> Value {
+        if name == "apply_patch" {
+            // apply_patch expects {"input": "patch content"}
+            json!({"input": arguments})
+        } else {
+            // Original behavior for other tools
+            serde_json::from_str(arguments).unwrap_or(json!({}))
+        }
     }
 
     /// Convert function call output to Anthropic content format.
@@ -915,5 +943,133 @@ mod tests {
             first_block.get("cache_control").is_none(),
             "First message should NOT have cache_control"
         );
+    }
+
+    #[test]
+    fn test_apply_patch_tool_input_format() {
+        // apply_patch tool should have input wrapped as {"input": "patch content"}
+        // NOT as a raw string
+        let patch_content = "*** Begin Patch\n*** Add File: temp.txt\n+hello world\n*** End Patch";
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Create a file".to_string(),
+                }],
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "apply_patch".to_string(),
+                arguments: patch_content.to_string(), // Raw patch string, not JSON
+                call_id: "call_patch_123".to_string(),
+            },
+        ];
+
+        let request = AnthropicRequestBuilder::new("claude-3-sonnet", "Be helpful", &input, &[])
+            .build()
+            .expect("should build");
+
+        let messages = request.body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+
+        // Check assistant message has tool_use with properly wrapped input
+        let tool_use = &messages[1]["content"][0];
+        assert_eq!(tool_use["type"], "tool_use");
+        assert_eq!(tool_use["name"], "apply_patch");
+
+        // CRITICAL: input must be an object {"input": "..."}, NOT a raw string
+        let tool_input = &tool_use["input"];
+        assert!(
+            tool_input.is_object(),
+            "apply_patch input must be an object, got: {}",
+            tool_input
+        );
+        assert_eq!(
+            tool_input["input"], patch_content,
+            "apply_patch input.input should contain the patch content"
+        );
+    }
+
+    #[test]
+    fn test_regular_tool_input_format() {
+        // Regular tools (not apply_patch) should parse JSON arguments directly
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "List files".to_string(),
+                }],
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                name: "shell".to_string(),
+                arguments: r#"{"command":"ls -la"}"#.to_string(),
+                call_id: "call_shell_123".to_string(),
+            },
+        ];
+
+        let request = AnthropicRequestBuilder::new("claude-3-sonnet", "Be helpful", &input, &[])
+            .build()
+            .expect("should build");
+
+        let messages = request.body["messages"].as_array().unwrap();
+        let tool_use = &messages[1]["content"][0];
+
+        assert_eq!(tool_use["type"], "tool_use");
+        assert_eq!(tool_use["name"], "shell");
+
+        // Regular tool input should be parsed JSON object
+        let tool_input = &tool_use["input"];
+        assert!(tool_input.is_object());
+        assert_eq!(tool_input["command"], "ls -la");
+    }
+
+    #[test]
+    fn test_custom_tool_call_apply_patch_format() {
+        // CustomToolCall with apply_patch should also wrap input correctly
+        // Use different id vs call_id to verify we use call_id for tool_use.id
+        let patch_content = "*** Begin Patch\n*** Add File: test.txt\n+hello\n*** End Patch";
+        let input = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "Create a file".to_string(),
+                }],
+            },
+            ResponseItem::CustomToolCall {
+                id: Some("internal_item_id".to_string()), // Internal ID (not used)
+                status: None,
+                call_id: "call_abc123".to_string(), // This should be used for tool_use.id
+                name: "apply_patch".to_string(),
+                input: patch_content.to_string(),
+            },
+        ];
+
+        let request = AnthropicRequestBuilder::new("claude-3-sonnet", "Be helpful", &input, &[])
+            .build()
+            .expect("should build");
+
+        let messages = request.body["messages"].as_array().unwrap();
+        let tool_use = &messages[1]["content"][0];
+
+        assert_eq!(tool_use["type"], "tool_use");
+        assert_eq!(tool_use["name"], "apply_patch");
+        // CRITICAL: tool_use.id must be call_id, not internal id
+        assert_eq!(
+            tool_use["id"], "call_abc123",
+            "tool_use.id should be call_id, not internal id"
+        );
+
+        // CRITICAL: input must be {"input": "..."}, NOT raw string
+        let tool_input = &tool_use["input"];
+        assert!(
+            tool_input.is_object(),
+            "CustomToolCall apply_patch input must be object, got: {}",
+            tool_input
+        );
+        assert_eq!(tool_input["input"], patch_content);
     }
 }
