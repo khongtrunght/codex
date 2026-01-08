@@ -25,6 +25,7 @@ use crate::model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use crate::model_provider_info::ModelProviderInfo;
 use crate::model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use crate::model_provider_info::built_in_model_providers;
+use crate::models_manager::parse_model_with_provider;
 use crate::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
 use crate::project_doc::LOCAL_PROJECT_DOC_FILENAME;
 use crate::protocol::AskForApproval;
@@ -1213,9 +1214,23 @@ impl Config {
             model_providers.entry(key).or_insert(provider);
         }
 
+        // Determine model first so we can extract provider from prefix
+        let model = model.or(config_profile.model.clone()).or(cfg.model.clone());
+
+        // Determine model_provider_id:
+        // 1. First check explicit model_provider config
+        // 2. Then extract from model prefix (e.g., "anthropic/claude-sonnet-4-5" -> "anthropic")
+        // 3. Fall back to "openai"
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
             .or(cfg.model_provider)
+            .or_else(|| {
+                // Extract provider from model prefix if present
+                model.as_ref().and_then(|m| {
+                    let (provider_key, _) = parse_model_with_provider(m);
+                    provider_key.map(|k| k.to_string())
+                })
+            })
             .unwrap_or_else(|| "openai".to_string());
         let model_provider = model_providers
             .get(&model_provider_id)
@@ -1271,8 +1286,6 @@ impl Config {
             });
 
         let forced_login_method = cfg.forced_login_method;
-
-        let model = model.or(config_profile.model).or(cfg.model);
 
         let compact_prompt = compact_prompt.or(cfg.compact_prompt).and_then(|value| {
             let trimmed = value.trim();
