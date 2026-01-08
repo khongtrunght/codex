@@ -68,13 +68,23 @@ pub fn write_models_cache(codex_home: &Path) -> std::io::Result<()> {
     write_models_cache_with_models(codex_home, models)
 }
 
-/// Write a models_cache.json file with specific models.
-/// Useful when tests need specific models to be available.
+/// Write a per-provider models cache file with specific models.
+/// Uses the new per-provider cache format: models_cache_{provider_key}.json
+/// Defaults to "openai" provider for backwards compatibility.
 pub fn write_models_cache_with_models(
     codex_home: &Path,
     models: Vec<ModelInfo>,
 ) -> std::io::Result<()> {
-    let cache_path = codex_home.join("models_cache.json");
+    write_models_cache_for_provider(codex_home, "openai", models)
+}
+
+/// Write a per-provider models cache file for a specific provider.
+pub fn write_models_cache_for_provider(
+    codex_home: &Path,
+    provider_key: &str,
+    models: Vec<ModelInfo>,
+) -> std::io::Result<()> {
+    let cache_path = codex_home.join(format!("models_cache_{}.json", provider_key));
     // DateTime<Utc> serializes to RFC3339 format by default with serde
     let fetched_at: DateTime<Utc> = Utc::now();
     let cache = json!({

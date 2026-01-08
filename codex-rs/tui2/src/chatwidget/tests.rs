@@ -971,9 +971,10 @@ fn get_available_model(chat: &ChatWidget, model: &str) -> ModelPreset {
         .models_manager
         .try_list_models(&chat.config)
         .expect("models lock available");
+    // Support both prefixed (e.g., "openai/gpt-5.1-codex-max") and unprefixed model names
     models
         .iter()
-        .find(|&preset| preset.model == model)
+        .find(|&preset| preset.model == model || preset.model.ends_with(&format!("/{}", model)))
         .cloned()
         .unwrap_or_else(|| panic!("{model} preset not found"))
 }

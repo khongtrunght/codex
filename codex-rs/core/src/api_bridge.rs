@@ -15,6 +15,7 @@ use crate::error::RetryLimitReachedError;
 use crate::error::UnexpectedResponseError;
 use crate::error::UsageLimitReachedError;
 use crate::model_provider_info::ModelProviderInfo;
+use crate::model_provider_info::WireApi;
 use crate::token_data::PlanType;
 
 pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
@@ -109,10 +110,16 @@ pub(crate) async fn auth_provider_from_auth(
     // Priority 1: Provider-specific env key
     // Use .ok().flatten() to treat missing env var as None, allowing fallback to auth/config
     if let Some(api_key) = provider.api_key().ok().flatten() {
+        // Anthropic API keys use x-api-key header, others use Bearer
+        let auth_scheme = if provider.wire_api == WireApi::Anthropic {
+            AuthScheme::ApiKey
+        } else {
+            AuthScheme::Bearer
+        };
         return Ok(CoreAuthProvider {
             token: Some(api_key),
             account_id: None,
-            auth_scheme: AuthScheme::Bearer, // Legacy always uses Bearer
+            auth_scheme,
             extra_headers: HeaderMap::new(),
         });
     }

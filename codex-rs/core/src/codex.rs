@@ -21,6 +21,7 @@ use crate::features::Feature;
 use crate::features::Features;
 use crate::models_manager::manager::ModelsManager;
 use crate::models_manager::model_family::ModelFamily;
+use crate::models_manager::parse_model_with_provider;
 use crate::parse_command::parse_command;
 use crate::parse_turn_item;
 use crate::stream_events_utils::HandleOutputCtx;
@@ -601,6 +602,8 @@ impl SessionConfiguration {
     pub(crate) fn apply(&self, updates: &SessionSettingsUpdate) -> ConstraintResult<Self> {
         let mut next_configuration = self.clone();
         if let Some(model) = updates.model.clone() {
+            // Model is stored with provider prefix (e.g., "local/gemini-claude-sonnet-4-5")
+            // Provider is derived from model when needed, not stored separately
             next_configuration.model = model;
         }
         if let Some(effort) = updates.reasoning_effort {
@@ -619,6 +622,26 @@ impl SessionConfiguration {
             next_configuration.cwd = cwd;
         }
         Ok(next_configuration)
+    }
+
+    /// Derive the actual provider from the model string.
+    /// Model can be prefixed like "local/gemini-claude-sonnet-4-5" or unprefixed.
+    /// If prefixed, lookup provider from config. Otherwise use the default provider.
+    pub(crate) fn get_provider(&self, config: &Config) -> ModelProviderInfo {
+        let (provider_key, _model_slug) = parse_model_with_provider(&self.model);
+        if let Some(key) = provider_key {
+            if let Some(provider) = config.model_providers.get(key) {
+                return provider.clone();
+            }
+        }
+        // Fallback to default provider stored in session_configuration
+        self.provider.clone()
+    }
+
+    /// Get the model slug without provider prefix.
+    pub(crate) fn get_model_slug(&self) -> &str {
+        let (_provider_key, model_slug) = parse_model_with_provider(&self.model);
+        model_slug
     }
 }
 
@@ -1247,16 +1270,20 @@ impl Session {
             }
         }
 
+        // Derive provider from prefixed model (e.g., "local/gemini-claude-sonnet-4-5")
+        let provider = session_configuration.get_provider(&per_turn_config);
+        let model_slug = session_configuration.get_model_slug();
+
         let model_family = self
             .services
             .models_manager
-            .construct_model_family(session_configuration.model.as_str(), &per_turn_config)
+            .construct_model_family(model_slug, &per_turn_config)
             .await;
 
         let mut turn_context: TurnContext = Self::make_turn_context(
             Some(Arc::clone(&self.services.auth_manager)),
             &self.services.otel_manager,
-            session_configuration.provider.clone(),
+            provider,
             &session_configuration,
             per_turn_config,
             model_family,
@@ -3799,10 +3826,11 @@ mod tests {
             attachments: crate::attachments::default_registry(),
         };
 
+        let provider = session_configuration.get_provider(&per_turn_config);
         let turn_context = Session::make_turn_context(
             Some(Arc::clone(&auth_manager)),
             &otel_manager,
-            session_configuration.provider.clone(),
+            provider,
             &session_configuration,
             per_turn_config,
             model_family,
@@ -3893,10 +3921,11 @@ mod tests {
             attachments: crate::attachments::default_registry(),
         };
 
+        let provider = session_configuration.get_provider(&per_turn_config);
         let turn_context = Arc::new(Session::make_turn_context(
             Some(Arc::clone(&auth_manager)),
             &otel_manager,
-            session_configuration.provider.clone(),
+            provider,
             &session_configuration,
             per_turn_config,
             model_family,

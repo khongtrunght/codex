@@ -208,12 +208,92 @@ pub struct ModelInfo {
     pub experimental_supported_tools: Vec<String>,
 }
 
+/// Simple model format returned by OpenAI-compatible APIs (e.g., ollama, lmstudio).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct SimpleModelInfo {
+    pub id: String,
+    #[serde(default)]
+    pub object: String,
+    #[serde(default)]
+    pub created: i64,
+    #[serde(default)]
+    pub owned_by: String,
+}
+
+impl From<SimpleModelInfo> for ModelInfo {
+    fn from(simple: SimpleModelInfo) -> Self {
+        ModelInfo {
+            slug: simple.id.clone(),
+            display_name: simple.id,
+            description: None,
+            default_reasoning_level: ReasoningEffort::default(),
+            supported_reasoning_levels: vec![],
+            shell_type: ConfigShellToolType::Default,
+            visibility: ModelVisibility::List,
+            minimal_client_version: ClientVersion(0, 0, 0),
+            supported_in_api: true,
+            priority: 100, // Lower priority than official models
+            upgrade: None,
+            base_instructions: None,
+            supports_reasoning_summaries: false,
+            support_verbosity: false,
+            default_verbosity: None,
+            apply_patch_tool_type: None,
+            truncation_policy: TruncationPolicyConfig::tokens(200_000),
+            supports_parallel_tool_calls: true,
+            context_window: None,
+            reasoning_summary_format: ReasoningSummaryFormat::default(),
+            experimental_supported_tools: vec![],
+        }
+    }
+}
+
 /// Response wrapper for `/models`.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, TS, JsonSchema, Default)]
+/// Supports both Codex format ({"models": [...]}) and OpenAI format ({"data": [...]}).
+#[derive(Debug, Serialize, Clone, PartialEq, Eq, TS, JsonSchema, Default)]
 pub struct ModelsResponse {
     pub models: Vec<ModelInfo>,
     #[serde(default)]
     pub etag: String,
+}
+
+impl<'de> serde::Deserialize<'de> for ModelsResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        // Try to deserialize as a generic JSON value first
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        // Check if it has a "models" field (Codex format)
+        if let Some(models) = value.get("models") {
+            let models: Vec<ModelInfo> =
+                serde_json::from_value(models.clone()).map_err(D::Error::custom)?;
+            let etag = value
+                .get("etag")
+                .and_then(|e| e.as_str())
+                .unwrap_or_default()
+                .to_string();
+            return Ok(ModelsResponse { models, etag });
+        }
+
+        // Check if it has a "data" field (OpenAI format)
+        if let Some(data) = value.get("data") {
+            let simple_models: Vec<SimpleModelInfo> =
+                serde_json::from_value(data.clone()).map_err(D::Error::custom)?;
+            let models: Vec<ModelInfo> = simple_models.into_iter().map(Into::into).collect();
+            return Ok(ModelsResponse {
+                models,
+                etag: String::new(),
+            });
+        }
+
+        Err(D::Error::custom(
+            "expected 'models' or 'data' field in response",
+        ))
+    }
 }
 
 // convert ModelInfo to ModelPreset

@@ -38,6 +38,7 @@ use codex_core::config::edit::ConfigEditsBuilder;
 #[cfg(target_os = "windows")]
 use codex_core::features::Feature;
 use codex_core::models_manager::manager::ModelsManager;
+use codex_core::models_manager::parse_model_with_provider;
 use codex_core::models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
 use codex_core::models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
 use codex_core::protocol::EventMsg;
@@ -1781,6 +1782,17 @@ impl App {
                 self.on_update_reasoning_effort(effort);
             }
             AppEvent::UpdateModel(model) => {
+                // Extract provider from prefixed model name (e.g., "ollama/llama3")
+                let (provider_key, _model_slug) = parse_model_with_provider(&model);
+
+                // Auto-switch provider if model has provider prefix
+                if let Some(key) = provider_key {
+                    if let Some(provider) = self.config.model_providers.get(key).cloned() {
+                        self.config.model_provider_id = key.to_string();
+                        self.config.model_provider = provider;
+                    }
+                }
+
                 let model_family = self
                     .server
                     .get_models_manager()

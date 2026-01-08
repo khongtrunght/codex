@@ -5,7 +5,9 @@ use codex_app_server_protocol::AuthMode;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelsResponse;
+use futures::future::join_all;
 use http::HeaderMap;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,37 +29,45 @@ use crate::model_provider_info::ModelProviderInfo;
 use crate::models_manager::model_family::ModelFamily;
 use crate::models_manager::model_presets::builtin_model_presets;
 
+// Legacy cache file (kept for backwards compatibility reference)
+#[allow(dead_code)]
 const MODEL_CACHE_FILE: &str = "models_cache.json";
-const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(300);
+const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(86400); // 24 hours
 const OPENAI_DEFAULT_API_MODEL: &str = "gpt-5.1-codex-max";
 const OPENAI_DEFAULT_CHATGPT_MODEL: &str = "gpt-5.2-codex";
 const CODEX_AUTO_BALANCED_MODEL: &str = "codex-auto-balanced";
 
 /// Coordinates remote model discovery plus cached metadata on disk.
+/// Supports fetching models from multiple providers concurrently.
 #[derive(Debug)]
 pub struct ModelsManager {
     // todo(aibrahim) merge available_models and model family creation into one struct
     local_models: Vec<ModelPreset>,
-    remote_models: RwLock<Vec<ModelInfo>>,
+    /// Remote models indexed by provider key (e.g., "openai", "ollama")
+    remote_models: RwLock<HashMap<String, Vec<ModelInfo>>>,
     auth_manager: Arc<AuthManager>,
-    etag: RwLock<Option<String>>,
+    /// ETags indexed by provider key for cache validation
+    etags: RwLock<HashMap<String, Option<String>>>,
     codex_home: PathBuf,
     cache_ttl: Duration,
-    provider: ModelProviderInfo,
 }
 
 impl ModelsManager {
     /// Construct a manager scoped to the provided `AuthManager`.
     pub fn new(auth_manager: Arc<AuthManager>) -> Self {
         let codex_home = auth_manager.codex_home().to_path_buf();
+        // Load bundled models as initial OpenAI models for backwards compatibility
+        let mut initial_models = HashMap::new();
+        if let Ok(bundled) = Self::load_remote_models_from_file() {
+            initial_models.insert("openai".to_string(), bundled);
+        }
         Self {
             local_models: builtin_model_presets(auth_manager.get_auth_mode()),
-            remote_models: RwLock::new(Self::load_remote_models_from_file().unwrap_or_default()),
+            remote_models: RwLock::new(initial_models),
             auth_manager,
-            etag: RwLock::new(None),
+            etags: RwLock::new(HashMap::new()),
             codex_home,
             cache_ttl: DEFAULT_MODEL_CACHE_TTL,
-            provider: ModelProviderInfo::create_openai_provider(),
         }
     }
 
@@ -65,59 +75,178 @@ impl ModelsManager {
     /// Construct a manager scoped to the provided `AuthManager` with a specific provider. Used for integration tests.
     pub fn with_provider(auth_manager: Arc<AuthManager>, provider: ModelProviderInfo) -> Self {
         let codex_home = auth_manager.codex_home().to_path_buf();
+        let mut initial_models = HashMap::new();
+        if let Ok(bundled) = Self::load_remote_models_from_file() {
+            initial_models.insert(provider.config_key.clone(), bundled);
+        }
         Self {
             local_models: builtin_model_presets(auth_manager.get_auth_mode()),
-            remote_models: RwLock::new(Self::load_remote_models_from_file().unwrap_or_default()),
+            remote_models: RwLock::new(initial_models),
             auth_manager,
-            etag: RwLock::new(None),
+            etags: RwLock::new(HashMap::new()),
             codex_home,
             cache_ttl: DEFAULT_MODEL_CACHE_TTL,
-            provider,
         }
     }
 
-    /// Fetch the latest remote models, using the on-disk cache when still fresh.
-    pub async fn refresh_available_models(&self, config: &Config) -> CoreResult<()> {
-        if !config.features.enabled(Feature::RemoteModels)
-            || self.auth_manager.get_auth_mode() == Some(AuthMode::ApiKey)
-        {
-            return Ok(());
-        }
-        if self.try_load_cache().await {
+    /// Fetch models from all configured providers concurrently.
+    /// Providers that fail to respond are silently skipped.
+    pub async fn refresh_all_providers(&self, config: &Config) -> CoreResult<()> {
+        if !config.features.enabled(Feature::RemoteModels) {
+            tracing::debug!("[refresh_all_providers] RemoteModels feature disabled, skipping");
             return Ok(());
         }
 
+        let providers: Vec<(String, ModelProviderInfo)> = config
+            .model_providers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        let provider_keys: Vec<&str> = providers.iter().map(|(k, _)| k.as_str()).collect();
+        tracing::debug!("[refresh_all_providers] Starting fetch for {} providers: {:?}",
+            providers.len(), provider_keys);
+
+        let fetch_futures: Vec<_> = providers
+            .into_iter()
+            .map(|(provider_key, provider_info)| {
+                self.fetch_provider_models(provider_key, provider_info, config)
+            })
+            .collect();
+
+        // Run all fetches concurrently, collecting results
+        let results = join_all(fetch_futures).await;
+
+        // Log errors but don't fail - unavailable providers just won't have models
+        for result in results {
+            if let Err(e) = result {
+                tracing::debug!("Provider fetch failed (skipping): {}", e);
+            }
+        }
+
+        tracing::debug!("[refresh_all_providers] Completed all provider fetches");
+
+        Ok(())
+    }
+
+    /// Fetch models from a single provider, respecting cache.
+    async fn fetch_provider_models(
+        &self,
+        provider_key: String,
+        provider: ModelProviderInfo,
+        _config: &Config,
+    ) -> CoreResult<()> {
+        tracing::debug!("[fetch_provider_models] Starting for provider: {}", provider_key);
+
+        // Skip API key mode - only fetch for ChatGPT auth or no-auth providers
+        let auth_mode = self.auth_manager.get_auth_mode();
+        tracing::debug!("[fetch_provider_models] {} - auth_mode: {:?}, requires_openai_auth: {}",
+            provider_key, auth_mode, provider.requires_openai_auth);
+
+        if auth_mode == Some(AuthMode::ApiKey) && provider.requires_openai_auth {
+            tracing::debug!("[fetch_provider_models] {} - SKIPPED: ApiKey mode with requires_openai_auth", provider_key);
+            return Ok(());
+        }
+
+        // Skip if provider requires auth we don't have
+        if provider.requires_openai_auth && auth_mode.is_none() {
+            tracing::debug!("[fetch_provider_models] {} - SKIPPED: requires_openai_auth but no auth_mode", provider_key);
+            return Ok(());
+        }
+
+        // Skip if required env_key is missing
+        if provider.env_key.is_some() && provider.api_key().is_err() {
+            tracing::debug!("[fetch_provider_models] {} - SKIPPED: env_key {:?} not set", provider_key, provider.env_key);
+            return Ok(());
+        }
+
+        // Try loading from per-provider cache first
+        if self.try_load_provider_cache(&provider_key).await {
+            tracing::debug!("[fetch_provider_models] {} - loaded from cache, skipping network fetch", provider_key);
+            return Ok(());
+        }
+
+        tracing::debug!("[fetch_provider_models] {} - proceeding to network fetch", provider_key);
+
+        // Fetch from network
         let auth = self.auth_manager.auth();
-        let api_provider = self.provider.to_api_provider(Some(AuthMode::ChatGPT))?;
-        let api_auth = auth_provider_from_auth(auth.clone(), &self.provider).await?;
+        let api_provider = match provider.to_api_provider(auth_mode) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::debug!("[fetch_provider_models] {} - ERROR creating api_provider: {:?}", provider_key, e);
+                return Err(e);
+            }
+        };
+        tracing::debug!("[fetch_provider_models] {} - api_provider base_url: {}", provider_key, api_provider.base_url);
+
+        let api_auth = match auth_provider_from_auth(auth.clone(), &provider).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::debug!("[fetch_provider_models] {} - ERROR creating api_auth: {:?}", provider_key, e);
+                return Err(e);
+            }
+        };
+
         let transport = ReqwestTransport::new(build_reqwest_client());
         let client = ModelsClient::new(transport, api_provider, api_auth);
 
         let client_version = format_client_version_to_whole();
-        let ModelsResponse { models, etag } = client
+        tracing::debug!("[fetch_provider_models] {} - calling list_models...", provider_key);
+
+        let ModelsResponse { models, etag } = match client
             .list_models(&client_version, HeaderMap::new())
             .await
-            .map_err(map_api_error)?;
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                tracing::debug!("[fetch_provider_models] {} - NETWORK ERROR: {:?}", provider_key, e);
+                return Err(map_api_error(e));
+            }
+        };
+
+        tracing::debug!("[fetch_provider_models] {} - SUCCESS: fetched {} models", provider_key, models.len());
 
         let etag = (!etag.is_empty()).then_some(etag);
 
-        self.apply_remote_models(models.clone()).await;
-        *self.etag.write().await = etag.clone();
-        self.persist_cache(&models, etag).await;
+        // Store with provider key
+        self.remote_models
+            .write()
+            .await
+            .insert(provider_key.clone(), models.clone());
+        self.etags
+            .write()
+            .await
+            .insert(provider_key.clone(), etag.clone());
+
+        // Persist to per-provider cache file
+        self.persist_provider_cache(&provider_key, &models, etag).await;
+
+        tracing::debug!("[fetch_provider_models] {} - stored and cached {} models", provider_key, models.len());
+
         Ok(())
     }
 
-    pub async fn list_models(&self, config: &Config) -> Vec<ModelPreset> {
-        if let Err(err) = self.refresh_available_models(config).await {
-            error!("failed to refresh available models: {err}");
-        }
-        let remote_models = self.remote_models(config).await;
-        self.build_available_models(remote_models)
+    /// Legacy method for backwards compatibility - refreshes only the current provider.
+    pub async fn refresh_available_models(&self, config: &Config) -> CoreResult<()> {
+        self.fetch_provider_models(
+            config.model_provider_id.clone(),
+            config.model_provider.clone(),
+            config,
+        )
+        .await
     }
 
+    /// List models from all providers with provider prefixes.
+    pub async fn list_models(&self, config: &Config) -> Vec<ModelPreset> {
+        if let Err(err) = self.refresh_all_providers(config).await {
+            error!("failed to refresh available models: {err}");
+        }
+        self.build_available_models_multi_provider(config).await
+    }
+
+    /// Non-blocking version - returns what's cached from all providers.
     pub fn try_list_models(&self, config: &Config) -> Result<Vec<ModelPreset>, TryLockError> {
-        let remote_models = self.try_get_remote_models(config)?;
-        Ok(self.build_available_models(remote_models))
+        self.try_build_available_models_multi_provider(config)
     }
 
     fn find_family_for_model(slug: &str) -> ModelFamily {
@@ -125,9 +254,29 @@ impl ModelsManager {
     }
 
     /// Look up the requested model family while applying remote metadata overrides.
+    /// Handles prefixed model names like "openai/gpt-4" by extracting the provider.
     pub async fn construct_model_family(&self, model: &str, config: &Config) -> ModelFamily {
-        Self::find_family_for_model(model)
-            .with_remote_overrides(self.remote_models(config).await)
+        let (provider_key, model_slug) = parse_model_with_provider(model);
+
+        // Get remote models from the correct provider
+        let remote_models = if let Some(key) = provider_key {
+            self.remote_models
+                .read()
+                .await
+                .get(key)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            self.remote_models
+                .read()
+                .await
+                .get(&config.model_provider_id)
+                .cloned()
+                .unwrap_or_default()
+        };
+
+        Self::find_family_for_model(model_slug)
+            .with_remote_overrides(remote_models)
             .with_config_overrides(config)
     }
 
@@ -140,12 +289,13 @@ impl ModelsManager {
         }
         // if codex-auto-balanced exists & signed in with chatgpt mode, return it, otherwise return the default model
         let auth_mode = self.auth_manager.get_auth_mode();
-        let remote_models = self.remote_models(config).await;
+        let available_models = self.build_available_models_multi_provider(config).await;
+        // Check for codex-auto-balanced with or without prefix
         if auth_mode == Some(AuthMode::ChatGPT)
-            && self
-                .build_available_models(remote_models)
-                .iter()
-                .any(|m| m.model == CODEX_AUTO_BALANCED_MODEL)
+            && available_models.iter().any(|m| {
+                m.model == CODEX_AUTO_BALANCED_MODEL
+                    || m.model.ends_with(&format!("/{}", CODEX_AUTO_BALANCED_MODEL))
+            })
         {
             return CODEX_AUTO_BALANCED_MODEL.to_string();
         } else if auth_mode == Some(AuthMode::ChatGPT) {
@@ -165,56 +315,24 @@ impl ModelsManager {
         Self::find_family_for_model(model).with_config_overrides(config)
     }
 
-    /// Replace the cached remote models and rebuild the derived presets list.
-    async fn apply_remote_models(&self, models: Vec<ModelInfo>) {
-        *self.remote_models.write().await = models;
-    }
-
-    fn load_remote_models_from_file() -> Result<Vec<ModelInfo>, std::io::Error> {
-        let file_contents = include_str!("../../models.json");
-        let response: ModelsResponse = serde_json::from_str(file_contents)?;
-        Ok(response.models)
-    }
-
-    /// Attempt to satisfy the refresh from the cache when it matches the provider and TTL.
-    async fn try_load_cache(&self) -> bool {
-        // todo(aibrahim): think if we should store fetched_at in ModelsManager so we don't always need to read the disk
-        let cache_path = self.cache_path();
-        let cache = match cache::load_cache(&cache_path).await {
-            Ok(cache) => cache,
-            Err(err) => {
-                error!("failed to load models cache: {err}");
-                return false;
-            }
-        };
-        let cache = match cache {
-            Some(cache) => cache,
-            None => return false,
-        };
-        if !cache.is_fresh(self.cache_ttl) {
-            return false;
-        }
-        let models = cache.models.clone();
-        *self.etag.write().await = cache.etag.clone();
-        self.apply_remote_models(models.clone()).await;
-        true
-    }
-
-    /// Serialize the latest fetch to disk for reuse across future processes.
-    async fn persist_cache(&self, models: &[ModelInfo], etag: Option<String>) {
-        let cache = ModelsCache {
-            fetched_at: Utc::now(),
-            etag,
-            models: models.to_vec(),
-        };
-        let cache_path = self.cache_path();
-        if let Err(err) = cache::save_cache(&cache_path, &cache).await {
-            error!("failed to write models cache: {err}");
+    #[cfg(any(test, feature = "test-support"))]
+    /// Test helper to get remote models for a specific provider.
+    pub async fn remote_models(&self, config: &Config) -> Vec<ModelInfo> {
+        if config.features.enabled(Feature::RemoteModels) {
+            self.remote_models
+                .read()
+                .await
+                .get(&config.model_provider_id)
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            Vec::new()
         }
     }
 
-    /// Merge remote model metadata into picker-ready presets, preserving existing entries.
-    fn build_available_models(&self, mut remote_models: Vec<ModelInfo>) -> Vec<ModelPreset> {
+    #[cfg(any(test, feature = "test-support"))]
+    /// Test helper to build available models without provider prefix (legacy behavior).
+    pub fn build_available_models(&self, mut remote_models: Vec<ModelInfo>) -> Vec<ModelPreset> {
         remote_models.sort_by(|a, b| a.priority.cmp(&b.priority));
 
         let remote_presets: Vec<ModelPreset> = remote_models.into_iter().map(Into::into).collect();
@@ -232,14 +350,7 @@ impl ModelsManager {
         merged_presets
     }
 
-    fn filter_visible_models(&self, models: Vec<ModelPreset>) -> Vec<ModelPreset> {
-        let chatgpt_mode = self.auth_manager.get_auth_mode() == Some(AuthMode::ChatGPT);
-        models
-            .into_iter()
-            .filter(|model| model.show_in_picker && (chatgpt_mode || model.supported_in_api))
-            .collect()
-    }
-
+    #[cfg(any(test, feature = "test-support"))]
     fn merge_presets(
         remote_presets: Vec<ModelPreset>,
         existing_presets: Vec<ModelPreset>,
@@ -265,24 +376,199 @@ impl ModelsManager {
         merged_presets
     }
 
-    async fn remote_models(&self, config: &Config) -> Vec<ModelInfo> {
-        if config.features.enabled(Feature::RemoteModels) {
-            self.remote_models.read().await.clone()
-        } else {
-            Vec::new()
+    fn load_remote_models_from_file() -> Result<Vec<ModelInfo>, std::io::Error> {
+        let file_contents = include_str!("../../models.json");
+        let response: ModelsResponse = serde_json::from_str(file_contents)?;
+        Ok(response.models)
+    }
+
+    /// Attempt to load models for a specific provider from cache.
+    async fn try_load_provider_cache(&self, provider_key: &str) -> bool {
+        let cache_path = self.cache_path_for_provider(provider_key);
+        tracing::debug!("[try_load_provider_cache] {} - checking cache at {:?}", provider_key, cache_path);
+
+        let cache = match cache::load_cache(&cache_path).await {
+            Ok(cache) => cache,
+            Err(err) => {
+                tracing::debug!("[try_load_provider_cache] {} - failed to load: {}", provider_key, err);
+                return false;
+            }
+        };
+        let cache = match cache {
+            Some(cache) => cache,
+            None => {
+                tracing::debug!("[try_load_provider_cache] {} - cache file not found", provider_key);
+                return false;
+            }
+        };
+        if !cache.is_fresh(self.cache_ttl) {
+            tracing::debug!("[try_load_provider_cache] {} - cache expired (fetched_at: {:?}, ttl: {:?})",
+                provider_key, cache.fetched_at, self.cache_ttl);
+            return false;
+        }
+        let models = cache.models.clone();
+        tracing::debug!("[try_load_provider_cache] {} - loaded {} models from cache", provider_key, models.len());
+        self.remote_models
+            .write()
+            .await
+            .insert(provider_key.to_string(), models);
+        self.etags
+            .write()
+            .await
+            .insert(provider_key.to_string(), cache.etag.clone());
+        true
+    }
+
+    /// Serialize the latest fetch to disk for a specific provider.
+    async fn persist_provider_cache(
+        &self,
+        provider_key: &str,
+        models: &[ModelInfo],
+        etag: Option<String>,
+    ) {
+        let cache = ModelsCache {
+            fetched_at: Utc::now(),
+            etag,
+            models: models.to_vec(),
+        };
+        let cache_path = self.cache_path_for_provider(provider_key);
+        if let Err(err) = cache::save_cache(&cache_path, &cache).await {
+            error!(
+                "failed to write provider cache for {}: {}",
+                provider_key, err
+            );
         }
     }
 
-    fn try_get_remote_models(&self, config: &Config) -> Result<Vec<ModelInfo>, TryLockError> {
-        if config.features.enabled(Feature::RemoteModels) {
-            Ok(self.remote_models.try_read()?.clone())
-        } else {
-            Ok(Vec::new())
+    /// Build models from all providers with provider prefixes (async version).
+    async fn build_available_models_multi_provider(&self, config: &Config) -> Vec<ModelPreset> {
+        if !config.features.enabled(Feature::RemoteModels) {
+            return self.build_local_models_only(config);
         }
+
+        let remote_models_map = self.remote_models.read().await.clone();
+        self.build_prefixed_models(remote_models_map, config)
     }
 
-    fn cache_path(&self) -> PathBuf {
-        self.codex_home.join(MODEL_CACHE_FILE)
+    /// Build models from all providers with provider prefixes (non-blocking version).
+    fn try_build_available_models_multi_provider(
+        &self,
+        config: &Config,
+    ) -> Result<Vec<ModelPreset>, TryLockError> {
+        if !config.features.enabled(Feature::RemoteModels) {
+            return Ok(self.build_local_models_only(config));
+        }
+
+        let remote_models_map = self.remote_models.try_read()?.clone();
+        Ok(self.build_prefixed_models(remote_models_map, config))
+    }
+
+    /// Build local models only (when remote models are disabled).
+    fn build_local_models_only(&self, config: &Config) -> Vec<ModelPreset> {
+        let provider_key = &config.model_provider_id;
+        let mut presets: Vec<ModelPreset> = self
+            .local_models
+            .clone()
+            .into_iter()
+            .map(|mut preset| {
+                preset.model = format!("{}/{}", provider_key, preset.model);
+                preset.display_name = format!("{}/{}", provider_key, preset.display_name);
+                preset
+            })
+            .collect();
+        presets = self.filter_visible_models(presets);
+
+        if !presets.iter().any(|p| p.is_default) {
+            if let Some(first) = presets.first_mut() {
+                first.is_default = true;
+            }
+        }
+        presets
+    }
+
+    /// Build prefixed models from remote models map.
+    fn build_prefixed_models(
+        &self,
+        remote_models_map: HashMap<String, Vec<ModelInfo>>,
+        config: &Config,
+    ) -> Vec<ModelPreset> {
+        let mut all_presets: Vec<ModelPreset> = Vec::new();
+        let mut seen_slugs: HashSet<String> = HashSet::new();
+
+        // Process remote models from each provider
+        for (provider_key, mut models) in remote_models_map {
+            models.sort_by(|a, b| a.priority.cmp(&b.priority));
+
+            for model in models {
+                let mut preset: ModelPreset = model.into();
+                let prefixed_model = format!("{}/{}", provider_key, preset.model);
+
+                // Skip duplicates
+                if seen_slugs.contains(&prefixed_model) {
+                    continue;
+                }
+                seen_slugs.insert(prefixed_model.clone());
+
+                preset.model = prefixed_model;
+                preset.display_name = format!("{}/{}", provider_key, preset.display_name);
+                preset.id = format!("{}/{}", provider_key, preset.id);
+                all_presets.push(preset);
+            }
+        }
+
+        // Add local/builtin presets for current provider if not already present
+        let provider_key = &config.model_provider_id;
+        for preset in self.local_models.clone() {
+            let prefixed_model = format!("{}/{}", provider_key, preset.model);
+            if seen_slugs.contains(&prefixed_model) {
+                continue;
+            }
+            seen_slugs.insert(prefixed_model.clone());
+
+            let mut new_preset = preset;
+            new_preset.model = prefixed_model;
+            new_preset.display_name = format!("{}/{}", provider_key, new_preset.display_name);
+            new_preset.id = format!("{}/{}", provider_key, new_preset.id);
+            new_preset.is_default = false; // Local presets are not default when we have remote
+            all_presets.push(new_preset);
+        }
+
+        // Note: Models are already sorted by priority within each provider.
+        // We don't re-sort here to preserve the priority ordering.
+
+        // Filter for visibility
+        all_presets = self.filter_visible_models(all_presets);
+
+        // Mark first as default if none is marked
+        if !all_presets.iter().any(|p| p.is_default) {
+            if let Some(first) = all_presets.first_mut() {
+                first.is_default = true;
+            }
+        }
+
+        all_presets
+    }
+
+    fn filter_visible_models(&self, models: Vec<ModelPreset>) -> Vec<ModelPreset> {
+        let chatgpt_mode = self.auth_manager.get_auth_mode() == Some(AuthMode::ChatGPT);
+        models
+            .into_iter()
+            .filter(|model| model.show_in_picker && (chatgpt_mode || model.supported_in_api))
+            .collect()
+    }
+
+    fn cache_path_for_provider(&self, provider_key: &str) -> PathBuf {
+        self.codex_home
+            .join(format!("models_cache_{}.json", provider_key))
+    }
+}
+
+/// Parse a prefixed model name like "openai/gpt-4" into (Some("openai"), "gpt-4").
+/// Returns (None, model) for legacy unprefixed names.
+pub fn parse_model_with_provider(model: &str) -> (Option<&str>, &str) {
+    match model.split_once('/') {
+        Some((provider, slug)) => (Some(provider), slug),
+        None => (None, model),
     }
 }
 
@@ -396,15 +682,18 @@ mod tests {
         .await;
 
         let codex_home = tempdir().expect("temp dir");
+        let provider = provider_for(server.uri());
         let mut config = ConfigBuilder::default()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await
             .expect("load default test config");
         config.features.enable(Feature::RemoteModels);
+        // Use the mock provider in config
+        config.model_provider_id = provider.config_key.clone();
+        config.model_provider = provider.clone();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-        let provider = provider_for(server.uri());
         let manager = ModelsManager::with_provider(auth_manager, provider);
 
         manager
@@ -415,13 +704,16 @@ mod tests {
         assert_eq!(cached_remote, remote_models);
 
         let available = manager.list_models(&config).await;
+        // Models now have provider prefix
+        let high_model = format!("{}/priority-high", config.model_provider_id);
+        let low_model = format!("{}/priority-low", config.model_provider_id);
         let high_idx = available
             .iter()
-            .position(|model| model.model == "priority-high")
+            .position(|model| model.model == high_model)
             .expect("priority-high should be listed");
         let low_idx = available
             .iter()
-            .position(|model| model.model == "priority-low")
+            .position(|model| model.model == low_model)
             .expect("priority-low should be listed");
         assert!(
             high_idx < low_idx,
@@ -453,18 +745,21 @@ mod tests {
         .await;
 
         let codex_home = tempdir().expect("temp dir");
+        let provider = provider_for(server.uri());
         let mut config = ConfigBuilder::default()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await
             .expect("load default test config");
         config.features.enable(Feature::RemoteModels);
+        // Use the mock provider in config
+        config.model_provider_id = provider.config_key.clone();
+        config.model_provider = provider.clone();
         let auth_manager = Arc::new(AuthManager::new(
             codex_home.path().to_path_buf(),
             false,
             AuthCredentialsStoreMode::File,
         ));
-        let provider = provider_for(server.uri());
         let manager = ModelsManager::with_provider(auth_manager, provider);
 
         manager
@@ -508,19 +803,22 @@ mod tests {
         .await;
 
         let codex_home = tempdir().expect("temp dir");
+        let provider = provider_for(server.uri());
         let mut config = ConfigBuilder::default()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await
             .expect("load default test config");
         config.features.enable(Feature::RemoteModels);
+        // Use the mock provider in config
+        config.model_provider_id = provider.config_key.clone();
+        config.model_provider = provider.clone();
         let auth_manager = Arc::new(AuthManager::new(
             codex_home.path().to_path_buf(),
             false,
             AuthCredentialsStoreMode::File,
         ));
-        let provider = provider_for(server.uri());
-        let manager = ModelsManager::with_provider(auth_manager, provider);
+        let manager = ModelsManager::with_provider(auth_manager, provider.clone());
 
         manager
             .refresh_available_models(&config)
@@ -528,7 +826,10 @@ mod tests {
             .expect("initial refresh succeeds");
 
         // Rewrite cache with an old timestamp so it is treated as stale.
-        let cache_path = codex_home.path().join(MODEL_CACHE_FILE);
+        // Cache is now per-provider
+        let cache_path = codex_home
+            .path()
+            .join(format!("models_cache_{}.json", provider.config_key));
         let contents =
             std::fs::read_to_string(&cache_path).expect("cache file should exist after refresh");
         let mut cache: ModelsCache =
@@ -583,16 +884,19 @@ mod tests {
         .await;
 
         let codex_home = tempdir().expect("temp dir");
+        let provider = provider_for(server.uri());
         let mut config = ConfigBuilder::default()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await
             .expect("load default test config");
         config.features.enable(Feature::RemoteModels);
+        // Use the mock provider in config
+        config.model_provider_id = provider.config_key.clone();
+        config.model_provider = provider.clone();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-        let provider = provider_for(server.uri());
-        let mut manager = ModelsManager::with_provider(auth_manager, provider);
+        let mut manager = ModelsManager::with_provider(auth_manager, provider.clone());
         manager.cache_ttl = Duration::ZERO;
 
         manager
@@ -619,12 +923,15 @@ mod tests {
         let available = manager
             .try_list_models(&config)
             .expect("models should be available");
+        // Models now have provider prefix
+        let expected_new = format!("{}/remote-new", provider.config_key);
+        let expected_old = format!("{}/remote-old", provider.config_key);
         assert!(
-            available.iter().any(|preset| preset.model == "remote-new"),
+            available.iter().any(|preset| preset.model == expected_new),
             "new remote model should be listed"
         );
         assert!(
-            !available.iter().any(|preset| preset.model == "remote-old"),
+            !available.iter().any(|preset| preset.model == expected_old),
             "removed remote model should not be listed"
         );
         assert_eq!(

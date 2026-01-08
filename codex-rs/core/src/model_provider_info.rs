@@ -280,31 +280,21 @@ pub const LMSTUDIO_OSS_PROVIDER_ID: &str = "lmstudio";
 pub const OLLAMA_OSS_PROVIDER_ID: &str = "ollama";
 
 /// Built-in default provider list.
+/// Only includes "openai" by default. Users can add other providers
+/// (ollama, lmstudio, anthropic, etc.) in config.toml under [model_providers.*].
 pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
     use ModelProviderInfo as P;
 
-    // We do not want to be in the business of adjucating which third-party
-    // providers are bundled with Codex CLI, so we only include the OpenAI and
-    // open source ("oss") providers by default. Users are encouraged to add to
-    // `model_providers` in config.toml to add their own providers.
-    [
-        ("openai", P::create_openai_provider()),
-        (
-            OLLAMA_OSS_PROVIDER_ID,
-            create_oss_provider(DEFAULT_OLLAMA_PORT, WireApi::Chat),
-        ),
-        (
-            LMSTUDIO_OSS_PROVIDER_ID,
-            create_oss_provider(DEFAULT_LMSTUDIO_PORT, WireApi::Responses),
-        ),
-    ]
-    .into_iter()
-    .map(|(k, mut v)| {
-        // Set config_key from the map key for credential storage lookup
-        v.config_key = k.to_string();
-        (k.to_string(), v)
-    })
-    .collect()
+    // Only include OpenAI by default to avoid slow timeouts from unreachable
+    // local providers. Users can add ollama, lmstudio, etc. in config.toml.
+    [("openai", P::create_openai_provider())]
+        .into_iter()
+        .map(|(k, mut v)| {
+            // Set config_key from the map key for credential storage lookup
+            v.config_key = k.to_string();
+            (k.to_string(), v)
+        })
+        .collect()
 }
 
 pub fn create_oss_provider(default_provider_port: u16, wire_api: WireApi) -> ModelProviderInfo {

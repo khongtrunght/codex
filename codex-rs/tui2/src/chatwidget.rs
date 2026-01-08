@@ -2392,7 +2392,12 @@ impl ChatWidget {
         let models = self.models_manager.try_list_models(&self.config).ok()?;
         models
             .iter()
-            .find(|preset| preset.model == NUDGE_MODEL_SLUG)
+            .find(|preset| {
+                // Support both prefixed ("provider/model") and unprefixed model names
+                let (_provider, model_slug) =
+                    codex_core::models_manager::parse_model_with_provider(&preset.model);
+                model_slug == NUDGE_MODEL_SLUG
+            })
             .cloned()
     }
 
@@ -2610,21 +2615,31 @@ impl ChatWidget {
             let description =
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
             let is_current = preset.model == current_model;
-            let single_supported_effort = preset.supported_reasoning_efforts.len() == 1;
+            // Auto-dismiss if 0 or 1 reasoning effort (no need to show reasoning popup)
+            let skip_reasoning_popup = preset.supported_reasoning_efforts.len() <= 1;
             let preset_for_action = preset.clone();
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                let preset_for_event = preset_for_action.clone();
-                tx.send(AppEvent::OpenReasoningPopup {
-                    model: preset_for_event,
-                });
-            })];
+            let default_effort = preset.default_reasoning_effort;
+            let model_for_action = preset.model.clone();
+
+            // If no reasoning choices, select model directly; otherwise open reasoning popup
+            let actions: Vec<SelectionAction> = if skip_reasoning_popup {
+                Self::model_selection_actions(model_for_action, Some(default_effort))
+            } else {
+                vec![Box::new(move |tx| {
+                    let preset_for_event = preset_for_action.clone();
+                    tx.send(AppEvent::OpenReasoningPopup {
+                        model: preset_for_event,
+                    });
+                })]
+            };
+
             items.push(SelectionItem {
                 name: preset.display_name.clone(),
                 description,
                 is_current,
                 is_default: preset.is_default,
                 actions,
-                dismiss_on_select: single_supported_effort,
+                dismiss_on_select: skip_reasoning_popup,
                 ..Default::default()
             });
         }
