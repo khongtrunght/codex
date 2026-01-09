@@ -4,8 +4,12 @@
 //! writing files. Uses the ToolOrchestrator for consistent approval and
 //! execution flow.
 
+use crate::protocol::FileChange;
+use crate::safety::SafetyCheck;
+use crate::safety::assess_patch_safety;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
+use crate::tools::sandboxing::ExecApprovalRequirement;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::Sandboxable;
 use crate::tools::sandboxing::SandboxablePreference;
@@ -13,8 +17,11 @@ use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::with_cached_approval;
+use codex_apply_patch::ApplyPatchAction;
+use codex_apply_patch::ApplyPatchFileChange;
 use codex_protocol::protocol::ReviewDecision;
 use futures::future::BoxFuture;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -71,6 +78,18 @@ impl Approvable<WriteFileRequest> for WriteFileRuntime {
         }
     }
 
+    /// Always return NeedsApproval so we can do the proper safety check in start_approval_async.
+    /// This ensures write_file matches apply_patch behavior.
+    fn exec_approval_requirement(
+        &self,
+        _req: &WriteFileRequest,
+    ) -> Option<ExecApprovalRequirement> {
+        Some(ExecApprovalRequirement::NeedsApproval {
+            reason: None,
+            proposed_execpolicy_amendment: None,
+        })
+    }
+
     fn start_approval_async<'a>(
         &'a mut self,
         req: &'a WriteFileRequest,
@@ -81,24 +100,81 @@ impl Approvable<WriteFileRequest> for WriteFileRuntime {
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
         let file_path = req.file_path.clone();
+        let new_content = req.content.clone();
         let retry_reason = ctx.retry_reason.clone();
 
         Box::pin(async move {
             with_cached_approval(&session.services, key, move || async move {
-                if let Some(reason) = retry_reason {
-                    session
-                        .request_command_approval(
-                            turn,
-                            call_id,
-                            vec!["write_file".to_string(), file_path.display().to_string()],
-                            file_path.parent().unwrap_or(&file_path).to_path_buf(),
-                            Some(reason),
-                            None,
+                // Determine if this is a new file or update
+                let (patch_change, protocol_change) = if file_path.exists() {
+                    // Existing file - generate diff
+                    if let Ok(old_content) = fs::read_to_string(&file_path).await {
+                        let unified_diff =
+                            diffy::create_patch(&old_content, &new_content).to_string();
+                        (
+                            ApplyPatchFileChange::Update {
+                                unified_diff: unified_diff.clone(),
+                                move_path: None,
+                                new_content: new_content.clone(),
+                            },
+                            FileChange::Update {
+                                unified_diff,
+                                move_path: None,
+                            },
                         )
-                        .await
+                    } else {
+                        (
+                            ApplyPatchFileChange::Add {
+                                content: new_content.clone(),
+                            },
+                            FileChange::Add {
+                                content: new_content.clone(),
+                            },
+                        )
+                    }
                 } else {
-                    // Auto-approve for write_file since we've already verified conditions
-                    ReviewDecision::Approved
+                    // New file
+                    (
+                        ApplyPatchFileChange::Add {
+                            content: new_content.clone(),
+                        },
+                        FileChange::Add {
+                            content: new_content.clone(),
+                        },
+                    )
+                };
+
+                // Build ApplyPatchAction for safety assessment (matching apply_patch behavior)
+                let mut patch_changes: HashMap<PathBuf, ApplyPatchFileChange> = HashMap::new();
+                patch_changes.insert(file_path.clone(), patch_change);
+                let action = ApplyPatchAction::new(patch_changes, turn.cwd.clone());
+
+                // Use assess_patch_safety like apply_patch does
+                match assess_patch_safety(
+                    &action,
+                    turn.approval_policy,
+                    &turn.sandbox_policy,
+                    &turn.cwd,
+                ) {
+                    SafetyCheck::AutoApprove { .. } => {
+                        // Auto-approve without going to TUI2
+                        ReviewDecision::Approved
+                    }
+                    SafetyCheck::AskUser => {
+                        // Build changes for TUI2 approval request
+                        let mut changes: HashMap<PathBuf, FileChange> = HashMap::new();
+                        changes.insert(file_path, protocol_change);
+
+                        // Send approval request to TUI2
+                        let rx = session
+                            .request_patch_approval(turn, call_id, changes, retry_reason, None)
+                            .await;
+                        rx.await.unwrap_or_default()
+                    }
+                    SafetyCheck::Reject { .. } => {
+                        // Reject the operation
+                        ReviewDecision::Denied
+                    }
                 }
             })
             .await
