@@ -100,6 +100,7 @@ pub use rollout::list::Cursor;
 pub use rollout::list::parse_cursor;
 pub use rollout::list::read_head_for_summary;
 mod function_tool;
+mod read_file_state;
 mod state;
 mod subagent_prompt;
 mod tasks;

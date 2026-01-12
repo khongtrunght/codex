@@ -96,12 +96,9 @@ impl ToolHandler for EditFileHandler {
             )));
         }
 
-        // Require the file to have been read first
-        if !turn.was_file_read(&path) {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "You must read the file before editing it. Use read_file on '{}' first.",
-                path.display()
-            )));
+        // Require the file to have been read first (session-level with mtime check)
+        if let Err(e) = session.validate_file_for_edit(&path, true).await {
+            return Err(FunctionCallError::RespondToModel(e.to_string()));
         }
 
         // Validate that old_string and new_string are different
@@ -187,6 +184,11 @@ impl ToolHandler for EditFileHandler {
                 let event_ctx =
                     ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
                 let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
+
+                // Update session state with new content and mtime
+                session
+                    .update_file_after_write(&path, actual_new_content.clone())
+                    .await;
 
                 let strategy_note = if output.strategy != MatchStrategy::Exact {
                     format!(" (matched using {} strategy)", output.strategy.name())

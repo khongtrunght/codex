@@ -78,14 +78,11 @@ impl ToolHandler for WriteFileHandler {
             return Err(FunctionCallError::RespondToModel(msg));
         }
 
-        // Check if file exists - if it does, require it to have been read first
+        // Check if file exists - if it does, require it to have been read first (session-level)
         // Also capture original content for diff display
         let original_content = if path.exists() {
-            if !turn.was_file_read(&path) {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "You must read the file before writing to it. Use read_file on '{}' first.",
-                    path.display()
-                )));
+            if let Err(e) = session.validate_file_for_edit(&path, true).await {
+                return Err(FunctionCallError::RespondToModel(e.to_string()));
             }
             // Read original content for diff generation
             tokio::fs::read_to_string(&path).await.ok()
@@ -168,8 +165,10 @@ impl ToolHandler for WriteFileHandler {
                     ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, Some(&tracker));
                 let _ = emitter.finish(event_ctx, Ok(exec_output)).await;
 
-                // Track that this file was written (mark as read so subsequent writes are allowed)
-                turn.mark_file_read(&path);
+                // Update session state with new content and mtime
+                session
+                    .update_file_after_write(&path, output.new_content.clone())
+                    .await;
 
                 Ok(ToolOutput::Function {
                     content: format!(

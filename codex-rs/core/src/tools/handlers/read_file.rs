@@ -96,7 +96,11 @@ impl ToolHandler for ReadFileHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, turn, .. } = invocation;
+        let ToolInvocation {
+            payload,
+            session,
+            ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -148,8 +152,21 @@ impl ToolHandler for ReadFileHandler {
             }
         };
 
-        // Track that this file was read for edit/write validation
-        turn.mark_file_read(&path);
+        // Track that this file was read for edit/write validation (session-level)
+        // Store the RAW file content (not the formatted "L1: ..." output)
+        let raw_content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+        session
+            .record_file_read(
+                &path,
+                raw_content,
+                if offset == 1 { None } else { Some(offset) },
+                if limit == defaults::limit() {
+                    None
+                } else {
+                    Some(limit)
+                },
+            )
+            .await;
 
         Ok(ToolOutput::Function {
             content: collected.join("\n"),

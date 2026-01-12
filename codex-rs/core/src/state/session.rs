@@ -9,6 +9,7 @@ use crate::context_manager::ContextManager;
 use crate::protocol::RateLimitSnapshot;
 use crate::protocol::TokenUsage;
 use crate::protocol::TokenUsageInfo;
+use crate::read_file_state::ReadFileState;
 use crate::truncate::TruncationPolicy;
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
@@ -18,6 +19,9 @@ pub(crate) struct SessionState {
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
     /// Session mode context (workflow state, not permissions).
     pub(crate) mode_context: SessionModeContext,
+    /// Session-level file read tracking for edit validation and mtime checking.
+    /// Tracks which files have been read, their content, and modification time.
+    pub(crate) read_file_state: ReadFileState,
 }
 
 impl SessionState {
@@ -29,6 +33,7 @@ impl SessionState {
             history,
             latest_rate_limits: None,
             mode_context: SessionModeContext::default(),
+            read_file_state: ReadFileState::new(),
         }
     }
 

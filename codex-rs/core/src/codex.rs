@@ -1,10 +1,8 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -514,9 +512,6 @@ pub(crate) struct TurnContext {
     pub(crate) tool_call_gate: Arc<ReadinessFlag>,
     pub(crate) exec_policy: Arc<RwLock<ExecPolicy>>,
     pub(crate) truncation_policy: TruncationPolicy,
-    /// Files that have been read during this turn.
-    /// Used to validate that files are read before being edited/written.
-    pub(crate) read_files: StdMutex<HashSet<PathBuf>>,
 }
 
 impl TurnContext {
@@ -530,25 +525,6 @@ impl TurnContext {
         self.compact_prompt
             .as_deref()
             .unwrap_or(compact::SUMMARIZATION_PROMPT)
-    }
-
-    /// Record that a file has been read during this turn.
-    pub(crate) fn mark_file_read(&self, path: &Path) {
-        if let Ok(canonical) = dunce::canonicalize(path)
-            && let Ok(mut files) = self.read_files.lock()
-        {
-            files.insert(canonical);
-        }
-    }
-
-    /// Check if a file has been read during this turn.
-    pub(crate) fn was_file_read(&self, path: &Path) -> bool {
-        if let Ok(canonical) = dunce::canonicalize(path)
-            && let Ok(files) = self.read_files.lock()
-        {
-            return files.contains(&canonical);
-        }
-        false
     }
 }
 
@@ -740,7 +716,6 @@ impl Session {
                 per_turn_config.as_ref(),
                 model_family.truncation_policy,
             ),
-            read_files: StdMutex::new(HashSet::new()),
         }
     }
 
@@ -1098,6 +1073,36 @@ impl Session {
     {
         let mut state = self.state.lock().await;
         state.get_or_create_plan_slug(generate).to_string()
+    }
+
+    // ========== Read File State Helper Methods ==========
+
+    /// Record that a file was read (session-level tracking for edit validation).
+    pub(crate) async fn record_file_read(
+        &self,
+        path: &Path,
+        content: String,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) {
+        let mut state = self.state.lock().await;
+        state.read_file_state.record_read(path, content, offset, limit);
+    }
+
+    /// Validate that a file can be edited (was read and not modified externally).
+    pub(crate) async fn validate_file_for_edit(
+        &self,
+        path: &Path,
+        check_mtime: bool,
+    ) -> Result<(), crate::read_file_state::FileValidationError> {
+        let state = self.state.lock().await;
+        state.read_file_state.validate_for_edit(path, check_mtime)
+    }
+
+    /// Update file state after a successful write operation.
+    pub(crate) async fn update_file_after_write(&self, path: &Path, new_content: String) {
+        let mut state = self.state.lock().await;
+        state.read_file_state.update_after_write(path, new_content);
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -2734,7 +2739,6 @@ async fn spawn_review_thread(
         tool_call_gate: Arc::new(ReadinessFlag::new()),
         exec_policy: parent_turn_context.exec_policy.clone(),
         truncation_policy: TruncationPolicy::new(&per_turn_config, model_family.truncation_policy),
-        read_files: StdMutex::new(HashSet::new()),
     };
 
     // Seed the child task with the review prompt as the initial user message.
