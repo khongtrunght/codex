@@ -118,6 +118,7 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
 use crate::history_cell::AgentMessageCell;
+use crate::history_cell::CompactBoundaryCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::McpToolCallCell;
 use crate::history_cell::PlainHistoryCell;
@@ -2181,7 +2182,9 @@ impl ChatWidget {
             EventMsg::ExitedPlanMode(ev) => self.on_exited_plan_mode(ev),
             EventMsg::SubAgentBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentEnd(ev) => self.on_subagent_end(ev),
-            EventMsg::ContextCompacted(_) => self.on_agent_message("Context compacted".to_owned()),
+            EventMsg::ContextCompacted(event) => {
+                self.add_to_history(CompactBoundaryCell::new(event.restored_files));
+            }
             EventMsg::EnterPlanModeApprovalRequest(ev) => {
                 self.on_enter_plan_mode_approval_request(ev);
             }

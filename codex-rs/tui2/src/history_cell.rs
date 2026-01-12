@@ -1477,6 +1477,63 @@ impl HistoryCell for FinalMessageSeparator {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CompactBoundaryCell - Displayed after conversation compaction
+// ─────────────────────────────────────────────────────────────────────────────
+
+use codex_core::protocol::RestoredFileInfo;
+
+/// Cell displaying a compaction boundary with restored files.
+/// Matches Claude Code's display:
+/// ```
+/// ═══════════════ Conversation compacted · ctrl+o for history ═══════════════
+/// L  Referenced file thoughts/shared/plans/2026-01-12-auto-compact-...md
+/// L  Read codex-rs/core/src/read_file_state.rs (337 lines)
+/// ```
+#[derive(Debug)]
+pub(crate) struct CompactBoundaryCell {
+    restored_files: Vec<RestoredFileInfo>,
+}
+
+impl CompactBoundaryCell {
+    pub(crate) fn new(restored_files: Vec<RestoredFileInfo>) -> Self {
+        Self { restored_files }
+    }
+}
+
+impl HistoryCell for CompactBoundaryCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        // Divider line with centered title
+        let title = " Conversation compacted · ctrl+o for history ";
+        let title_width = title.width();
+        let available_for_dividers = (width as usize).saturating_sub(title_width);
+        let left_divider_len = available_for_dividers / 2;
+        let right_divider_len = available_for_dividers.saturating_sub(left_divider_len);
+
+        let divider_line = format!(
+            "{}{}{}",
+            "═".repeat(left_divider_len),
+            title,
+            "═".repeat(right_divider_len)
+        );
+        lines.push(Line::from(divider_line).dim());
+
+        // Restored files
+        for file in &self.restored_files {
+            let line = if let Some(num_lines) = file.num_lines {
+                format!("L  Read {} ({} lines)", file.path, num_lines)
+            } else {
+                format!("L  Referenced file {}", file.path)
+            };
+            lines.push(Line::from(line).dim());
+        }
+
+        lines
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SubAgentCell - Compact view for sub-agent tasks
 // ─────────────────────────────────────────────────────────────────────────────
 

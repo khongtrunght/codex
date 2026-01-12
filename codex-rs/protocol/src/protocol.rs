@@ -927,8 +927,23 @@ pub struct WarningEvent {
     pub message: String,
 }
 
+/// Information about a file restored after compaction for TUI display.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct ContextCompactedEvent;
+pub struct RestoredFileInfo {
+    /// Path to the file.
+    pub path: String,
+    /// Number of lines if content was restored, None if reference only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub num_lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ContextCompactedEvent {
+    /// Files restored after compaction.
+    #[serde(default)]
+    pub restored_files: Vec<RestoredFileInfo>,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct TaskCompleteEvent {

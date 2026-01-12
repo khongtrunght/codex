@@ -12,6 +12,7 @@ use crate::features::Feature;
 use crate::protocol::CompactedItem;
 use crate::protocol::ContextCompactedEvent;
 use crate::protocol::EventMsg;
+use crate::protocol::RestoredFileInfo;
 use crate::protocol::TaskStartedEvent;
 use crate::protocol::TurnContextItem;
 use crate::protocol::WarningEvent;
@@ -237,14 +238,44 @@ async fn run_compact_task_inner(
     // 1. Build file restoration attachment BEFORE clearing read_file_state
     let file_restore_attachment = sess.build_compact_file_restore().await;
 
-    // 2. Clear read_file_state after building attachment
+    // 2. Extract restored files info for TUI display
+    let restored_files: Vec<RestoredFileInfo> = file_restore_attachment
+        .as_ref()
+        .map(|attachment| {
+            if let ResponseItem::Attachment {
+                data: AttachmentData::CompactFileRestore { files },
+                ..
+            } = attachment
+            {
+                files
+                    .iter()
+                    .map(|f| match f {
+                        CompactRestoredFile::WithContent { path, num_lines, .. } => {
+                            RestoredFileInfo {
+                                path: path.clone(),
+                                num_lines: Some(*num_lines),
+                            }
+                        }
+                        CompactRestoredFile::ReferenceOnly { path } => RestoredFileInfo {
+                            path: path.clone(),
+                            num_lines: None,
+                        },
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+
+    // 3. Clear read_file_state after building attachment
     sess.clear_read_file_state().await;
 
-    // 3. Build compacted history with summary
+    // 4. Build compacted history with summary
     let initial_context = sess.build_initial_context(turn_context.as_ref());
     let mut new_history = build_compacted_history(initial_context, &user_messages, &summary_text);
 
-    // 4. Preserve ghost snapshots
+    // 5. Preserve ghost snapshots
     let ghost_snapshots: Vec<ResponseItem> = history_snapshot
         .iter()
         .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
@@ -252,7 +283,7 @@ async fn run_compact_task_inner(
         .collect();
     new_history.extend(ghost_snapshots);
 
-    // 5. Inject file restoration attachment into compacted history
+    // 6. Inject file restoration attachment into compacted history
     if let Some(attachment) = file_restore_attachment {
         new_history.push(attachment);
     }
@@ -266,7 +297,7 @@ async fn run_compact_task_inner(
     });
     sess.persist_rollout_items(&[rollout_item]).await;
 
-    let event = EventMsg::ContextCompacted(ContextCompactedEvent {});
+    let event = EventMsg::ContextCompacted(ContextCompactedEvent { restored_files });
     sess.send_event(&turn_context, event).await;
 
     let warning = EventMsg::Warning(WarningEvent {
