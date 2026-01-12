@@ -110,6 +110,14 @@ pub struct Config {
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
 
+    /// Percentage of context window to trigger auto compact (0-100).
+    /// Default: 60 (compact when 60% of context is used)
+    pub auto_compact_threshold_pct: Option<u8>,
+
+    /// Whether auto compact is enabled.
+    /// Default: true
+    pub auto_compact_enabled: bool,
+
     /// Key into the model_providers map that specifies which provider to use.
     pub model_provider_id: String,
 
@@ -694,6 +702,13 @@ pub struct ConfigToml {
 
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
+
+    /// Auto compact threshold percentage (0-100). Triggers compaction when
+    /// token usage exceeds this percentage of context window.
+    pub auto_compact_threshold_pct: Option<u8>,
+
+    /// Enable or disable auto compact. Default: true
+    pub auto_compact_enabled: Option<bool>,
 
     /// Default approval policy for executing commands.
     pub approval_policy: Option<AskForApproval>,
@@ -1353,6 +1368,8 @@ impl Config {
             small_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
+            auto_compact_threshold_pct: cfg.auto_compact_threshold_pct,
+            auto_compact_enabled: cfg.auto_compact_enabled.unwrap_or(true),
             model_provider_id,
             model_provider,
             cwd: resolved_cwd,
@@ -3194,6 +3211,8 @@ model_verbosity = "high"
                 small_model: "o3".to_string(),
                 model_context_window: None,
                 model_auto_compact_token_limit: None,
+                auto_compact_threshold_pct: None,
+                auto_compact_enabled: true,
                 model_provider_id: "openai".to_string(),
                 model_provider: fixture.openai_provider.clone(),
                 approval_policy: Constrained::allow_any(AskForApproval::Never),
@@ -3280,6 +3299,8 @@ model_verbosity = "high"
             small_model: "gpt-3.5-turbo".to_string(),
             model_context_window: None,
             model_auto_compact_token_limit: None,
+                auto_compact_threshold_pct: None,
+                auto_compact_enabled: true,
             model_provider_id: "openai-chat-completions".to_string(),
             model_provider: fixture.openai_chat_completions_provider.clone(),
             approval_policy: Constrained::allow_any(AskForApproval::UnlessTrusted),
@@ -3381,6 +3402,8 @@ model_verbosity = "high"
             small_model: "o3".to_string(),
             model_context_window: None,
             model_auto_compact_token_limit: None,
+                auto_compact_threshold_pct: None,
+                auto_compact_enabled: true,
             model_provider_id: "openai".to_string(),
             model_provider: fixture.openai_provider.clone(),
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
@@ -3468,6 +3491,8 @@ model_verbosity = "high"
             small_model: "gpt-5.1".to_string(),
             model_context_window: None,
             model_auto_compact_token_limit: None,
+                auto_compact_threshold_pct: None,
+                auto_compact_enabled: true,
             model_provider_id: "openai".to_string(),
             model_provider: fixture.openai_provider.clone(),
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),

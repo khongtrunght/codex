@@ -11,7 +11,9 @@ use crate::AuthManager;
 use crate::SandboxState;
 use crate::client_common::REVIEW_PROMPT;
 use crate::compact;
+use crate::compact::get_auto_compact_threshold;
 use crate::compact::run_inline_auto_compact_task;
+use crate::compact::should_auto_compact;
 use crate::compact::should_use_remote_compact_task;
 use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::exec_policy::load_exec_policy_for_features;
@@ -2804,15 +2806,42 @@ pub(crate) async fn run_task(
         return None;
     }
 
-    let auto_compact_limit = turn_context
+    // Get config for auto compact settings
+    let config = sess.get_config().await;
+    let context_window = turn_context
         .client
-        .get_model_family()
-        .auto_compact_token_limit()
-        .unwrap_or(i64::MAX);
-    let total_usage_tokens = sess.get_total_token_usage().await;
-    if total_usage_tokens >= auto_compact_limit {
+        .get_model_context_window()
+        .unwrap_or(200_000) as usize; // Default to 200k if not set
+    let total_usage_tokens = sess.get_total_token_usage().await as usize;
+
+    // Check if auto compact should trigger using configurable threshold
+    if should_auto_compact(
+        total_usage_tokens,
+        context_window,
+        config.model_auto_compact_token_limit,
+        config.auto_compact_threshold_pct,
+        config.auto_compact_enabled,
+    ) {
+        let threshold = get_auto_compact_threshold(
+            context_window,
+            config.model_auto_compact_token_limit,
+            config.auto_compact_threshold_pct,
+        );
+        tracing::info!(
+            total_usage_tokens,
+            threshold,
+            context_window,
+            "Auto compact triggered: token usage exceeds threshold"
+        );
         run_auto_compact(&sess, &turn_context).await;
     }
+
+    // Calculate auto_compact_limit for use in the turn loop
+    let auto_compact_limit = get_auto_compact_threshold(
+        context_window,
+        config.model_auto_compact_token_limit,
+        config.auto_compact_threshold_pct,
+    ) as i64;
     let event = EventMsg::TaskStarted(TaskStartedEvent {
         model_context_window: turn_context.client.get_model_context_window(),
     });
