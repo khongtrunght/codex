@@ -78,6 +78,26 @@ pub enum AttachmentData {
     /// Plan mode exit notification (when user exits plan mode via UI)
     /// plan_file_path is Some(path) if a plan was created, None otherwise
     PlanModeExit { plan_file_path: Option<String> },
+    /// File context restoration after compaction.
+    /// Injected once after compaction to restore recently read files.
+    CompactFileRestore { files: Vec<CompactRestoredFile> },
+}
+
+/// A file restored after compaction - either with content or as reference.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
+#[serde(tag = "restore_type", rename_all = "snake_case")]
+pub enum CompactRestoredFile {
+    /// File content was restored (within token limit).
+    /// TUI shows: "Read {path} (N lines)"
+    WithContent {
+        path: String,
+        content: String,
+        num_lines: usize,
+        truncated: bool,
+    },
+    /// File was too large to restore, just referenced.
+    /// TUI shows: "Referenced file {path}"
+    ReferenceOnly { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]

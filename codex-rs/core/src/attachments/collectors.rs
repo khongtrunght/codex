@@ -39,6 +39,8 @@ pub fn analyze_history_for_throttle(items: &[ResponseItem]) -> (usize, bool) {
                     found = false;
                     break;
                 }
+                // CompactFileRestore is not related to plan mode - skip it
+                AttachmentData::CompactFileRestore { .. } => {}
             }
             _ => {}
         }

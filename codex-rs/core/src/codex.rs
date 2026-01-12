@@ -1107,6 +1107,21 @@ impl Session {
         state.read_file_state.update_after_write(path, new_content);
     }
 
+    /// Build file restoration attachment from current read file state.
+    /// Called during compaction to prepare files for restoration.
+    pub(crate) async fn build_compact_file_restore(
+        &self,
+    ) -> Option<codex_protocol::models::ResponseItem> {
+        let state = self.state.lock().await;
+        crate::compact::build_compact_file_restore(&state.read_file_state)
+    }
+
+    /// Clear read file state after compaction.
+    pub(crate) async fn clear_read_file_state(&self) {
+        let mut state = self.state.lock().await;
+        state.read_file_state.clear();
+    }
+
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
         let turn_context = self.new_default_turn().await;
         match conversation_history {

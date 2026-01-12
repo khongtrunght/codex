@@ -216,6 +216,19 @@ impl ReadFileState {
     pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &ReadFileInfo)> {
         self.files.iter()
     }
+
+    /// Get the most recently read files for compaction restoration.
+    /// Sorted by mtime (most recent first).
+    pub fn get_recent_files(&self, limit: usize) -> Vec<(&PathBuf, &ReadFileInfo)> {
+        let mut files: Vec<_> = self.files.iter().collect();
+        files.sort_by(|a, b| b.1.mtime.cmp(&a.1.mtime));
+        files.into_iter().take(limit).collect()
+    }
+
+    /// Clear all tracked files (called after compaction).
+    pub fn clear(&mut self) {
+        self.files.clear();
+    }
 }
 
 #[cfg(test)]
@@ -332,5 +345,50 @@ mod tests {
         state.record_read(&file_path, "hello world".to_string(), None, None);
         assert!(!state.is_empty());
         assert_eq!(state.len(), 1);
+    }
+
+    #[test]
+    fn test_get_recent_files_sorted_by_mtime() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create files with different mtimes
+        let file1 = temp_dir.path().join("file1.txt");
+        fs::write(&file1, "content1").unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let file2 = temp_dir.path().join("file2.txt");
+        fs::write(&file2, "content2").unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let file3 = temp_dir.path().join("file3.txt");
+        fs::write(&file3, "content3").unwrap();
+
+        let mut state = ReadFileState::new();
+        state.record_read(&file1, "content1".to_string(), None, None);
+        state.record_read(&file2, "content2".to_string(), None, None);
+        state.record_read(&file3, "content3".to_string(), None, None);
+
+        // Should return most recent first
+        let recent = state.get_recent_files(2);
+        assert_eq!(recent.len(), 2);
+        assert!(recent[0].0.ends_with("file3.txt"));
+        assert!(recent[1].0.ends_with("file2.txt"));
+    }
+
+    #[test]
+    fn test_clear() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        fs::write(&file_path, "hello world").unwrap();
+
+        let mut state = ReadFileState::new();
+        state.record_read(&file_path, "hello world".to_string(), None, None);
+        assert_eq!(state.len(), 1);
+
+        state.clear();
+        assert!(state.is_empty());
+        assert_eq!(state.len(), 0);
     }
 }

@@ -3,6 +3,7 @@
 //! All attachment variants are defined here with their data and conversion logic.
 
 use codex_protocol::models::AttachmentData;
+use codex_protocol::models::CompactRestoredFile;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 
@@ -51,6 +52,9 @@ pub fn attachment_data_to_messages(
             generate_reentry_items(plan_file_path, tools)
         }
         AttachmentData::PlanModeExit { plan_file_path } => generate_exit_items(plan_file_path),
+        AttachmentData::CompactFileRestore { files } => {
+            generate_compact_file_restore_items(files)
+        }
     }
 }
 
@@ -198,6 +202,50 @@ fn wrap_in_system_reminder(contents: &str) -> ResponseItem {
             text: format!("<system-reminder>\n{contents}\n</system-reminder>"),
         }],
     }
+}
+
+// =============================================================================
+// Compact File Restore
+// =============================================================================
+
+/// Generate items for restored files after compaction.
+fn generate_compact_file_restore_items(files: &[CompactRestoredFile]) -> Vec<ResponseItem> {
+    if files.is_empty() {
+        return vec![];
+    }
+
+    let mut items = Vec::new();
+
+    for file in files {
+        match file {
+            CompactRestoredFile::WithContent {
+                path,
+                content,
+                truncated,
+                ..
+            } => {
+                // Full content restoration
+                let truncate_note = if *truncated {
+                    " truncated=\"true\""
+                } else {
+                    ""
+                };
+                let msg =
+                    format!("<file_context path=\"{path}\"{truncate_note}>\\n{content}\\n</file_context>");
+                items.push(wrap_in_system_reminder(&msg));
+            }
+            CompactRestoredFile::ReferenceOnly { path } => {
+                // Reference only - tell model to re-read if needed
+                let msg = format!(
+                    "Note: {path} was read before the last conversation was summarized, \
+                     but the contents are too large to include. Use read_file tool if you need to access it."
+                );
+                items.push(wrap_in_system_reminder(&msg));
+            }
+        }
+    }
+
+    items
 }
 
 #[cfg(test)]

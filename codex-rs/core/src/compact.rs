@@ -20,6 +20,8 @@ use crate::truncate::approx_token_count;
 use crate::truncate::truncate_text;
 use crate::util::backoff;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::AttachmentData;
+use codex_protocol::models::CompactRestoredFile;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
@@ -27,6 +29,8 @@ use codex_protocol::protocol::RolloutItem;
 use codex_protocol::user_input::UserInput;
 use futures::prelude::*;
 use tracing::error;
+
+use crate::read_file_state::ReadFileState;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
@@ -41,6 +45,15 @@ const DEFAULT_AUTO_COMPACT_THRESHOLD_PCT: u8 = 60;
 
 /// Buffer tokens to reserve for compaction overhead.
 const AUTO_COMPACT_BUFFER_TOKENS: usize = 5000;
+
+/// Maximum number of recent files to restore after compaction.
+const MAX_RECENT_FILES_TO_RESTORE: usize = 5;
+
+/// Maximum tokens per restored file. Files exceeding this become ReferenceOnly.
+const MAX_TOKENS_PER_RESTORED_FILE: usize = 5000;
+
+/// Maximum total tokens for all restored files combined.
+const MAX_TOTAL_RESTORE_TOKENS: usize = 50000;
 
 /// Get the effective auto compact threshold in tokens.
 ///
@@ -221,14 +234,29 @@ async fn run_compact_task_inner(
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
     let user_messages = collect_user_messages(&history_snapshot);
 
+    // 1. Build file restoration attachment BEFORE clearing read_file_state
+    let file_restore_attachment = sess.build_compact_file_restore().await;
+
+    // 2. Clear read_file_state after building attachment
+    sess.clear_read_file_state().await;
+
+    // 3. Build compacted history with summary
     let initial_context = sess.build_initial_context(turn_context.as_ref());
     let mut new_history = build_compacted_history(initial_context, &user_messages, &summary_text);
+
+    // 4. Preserve ghost snapshots
     let ghost_snapshots: Vec<ResponseItem> = history_snapshot
         .iter()
         .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
         .cloned()
         .collect();
     new_history.extend(ghost_snapshots);
+
+    // 5. Inject file restoration attachment into compacted history
+    if let Some(attachment) = file_restore_attachment {
+        new_history.push(attachment);
+    }
+
     sess.replace_history(new_history).await;
     sess.recompute_token_usage(&turn_context).await;
 
@@ -381,6 +409,51 @@ async fn drain_to_completed(
             Err(e) => return Err(e),
         }
     }
+}
+
+/// Build CompactFileRestore attachment from read file state.
+/// Called during compaction to restore recently read files.
+pub(crate) fn build_compact_file_restore(read_state: &ReadFileState) -> Option<ResponseItem> {
+    let recent_files = read_state.get_recent_files(MAX_RECENT_FILES_TO_RESTORE);
+
+    if recent_files.is_empty() {
+        return None;
+    }
+
+    let mut files = Vec::new();
+    let mut total_tokens = 0usize;
+
+    for (path, info) in recent_files {
+        let content_tokens = approx_token_count(&info.content);
+        let path_str = path.display().to_string();
+
+        if content_tokens > MAX_TOKENS_PER_RESTORED_FILE {
+            // Too large - reference only
+            files.push(CompactRestoredFile::ReferenceOnly { path: path_str });
+        } else if total_tokens + content_tokens <= MAX_TOTAL_RESTORE_TOKENS {
+            // Within budget - include content
+            let num_lines = info.content.lines().count();
+            files.push(CompactRestoredFile::WithContent {
+                path: path_str,
+                content: info.content.clone(),
+                num_lines,
+                truncated: false,
+            });
+            total_tokens += content_tokens;
+        } else {
+            // Would exceed total budget - reference only
+            files.push(CompactRestoredFile::ReferenceOnly { path: path_str });
+        }
+    }
+
+    if files.is_empty() {
+        return None;
+    }
+
+    Some(ResponseItem::Attachment {
+        data: AttachmentData::CompactFileRestore { files },
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    })
 }
 
 #[cfg(test)]
