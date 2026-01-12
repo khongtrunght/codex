@@ -1310,9 +1310,9 @@ impl App {
                 )
             }
             TuiDisplayMode::AcceptEdits => {
-                // AcceptEdits uses OnFailure approval (auto-approve in sandbox)
+                // AcceptEdits auto-approves in sandbox but still prompts for dangerous commands
                 (
-                    Some(AskForApproval::OnFailure),
+                    Some(AskForApproval::OnRequest),
                     None, // Keep current sandbox policy
                     Some(codex_protocol::session_mode::SessionMode::Default),
                 )
@@ -1326,9 +1326,9 @@ impl App {
                 )
             }
             TuiDisplayMode::Bypass => {
-                // Bypass uses Never approval and DangerFullAccess sandbox
+                // Bypass: full access, auto-approve but still prompt for dangerous commands and respect exec policy
                 (
-                    Some(AskForApproval::Never),
+                    Some(AskForApproval::OnRequest),
                     Some(SandboxPolicy::DangerFullAccess),
                     Some(codex_protocol::session_mode::SessionMode::Default),
                 )
