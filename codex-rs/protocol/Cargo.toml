@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 codex-git = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+dirs = { workspace = true }
 glob = { workspace = true }
 codex-utils-image = { workspace = true }
 icu_decimal = { workspace = true }

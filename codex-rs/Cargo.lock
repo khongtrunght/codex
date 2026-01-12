@@ -1686,6 +1686,7 @@ dependencies = [
  "codex-git",
  "codex-utils-absolute-path",
  "codex-utils-image",
+ "dirs",
  "glob",
  "icu_decimal",
  "icu_locale_core",

@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
+
+use dirs::home_dir;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -403,6 +405,21 @@ impl FromStr for SandboxPolicy {
     }
 }
 
+/// Returns the path to the Codex configuration directory.
+/// Uses `$CODEX_HOME` if set, otherwise defaults to `~/.codex`.
+///
+/// NOTE: Unlike find_codex_home() in codex-core, this does NOT require
+/// the path to exist (no canonicalize) since we're just setting up
+/// sandbox permissions for paths that may be created later.
+fn find_codex_home_for_sandbox() -> Option<PathBuf> {
+    if let Ok(val) = std::env::var("CODEX_HOME")
+        && !val.is_empty()
+    {
+        return Some(PathBuf::from(val));
+    }
+    home_dir().map(|h| h.join(".codex"))
+}
+
 impl SandboxPolicy {
     /// Returns a policy with read-only disk access and no network.
     pub fn new_read_only_policy() -> Self {
@@ -506,6 +523,23 @@ impl SandboxPolicy {
                         Err(e) => {
                             error!(
                                 "Ignoring invalid TMPDIR value {tmpdir:?} for sandbox writable root: {e}",
+                            );
+                        }
+                    }
+                }
+
+                // Include $CODEX_HOME/plans to allow Plan Mode to write plan files.
+                // This directory is used by plan_file.rs for storing session plans.
+                if let Some(codex_home) = find_codex_home_for_sandbox() {
+                    let plans_dir = codex_home.join("plans");
+                    match AbsolutePathBuf::from_absolute_path(&plans_dir) {
+                        Ok(plans_path) => {
+                            roots.push(plans_path);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Ignoring invalid CODEX_HOME/plans path {:?} for sandbox writable root: {}",
+                                plans_dir, e
                             );
                         }
                     }
@@ -2369,6 +2403,104 @@ mod tests {
             let event: Event = serde_json::from_str(json).unwrap();
             assert_eq!(event.source_session_id, None);
             assert_eq!(event.parent_session_id, None);
+        }
+    }
+
+    #[test]
+    fn workspace_write_includes_codex_home_plans() {
+        use std::env;
+        use tempfile::tempdir;
+
+        // Create a temp directory to use as CODEX_HOME
+        let temp_codex_home = tempdir().expect("create temp dir");
+
+        // Set CODEX_HOME
+        let original = env::var("CODEX_HOME").ok();
+        unsafe {
+            env::set_var("CODEX_HOME", temp_codex_home.path());
+        }
+
+        let policy = SandboxPolicy::WorkspaceWrite {
+            writable_roots: vec![],
+            network_access: false,
+            exclude_tmpdir_env_var: true,
+            exclude_slash_tmp: true,
+        };
+
+        let cwd = tempdir().expect("create cwd temp dir");
+        let roots = policy.get_writable_roots_with_cwd(cwd.path());
+
+        // Restore original CODEX_HOME
+        unsafe {
+            match original {
+                Some(val) => env::set_var("CODEX_HOME", val),
+                None => env::remove_var("CODEX_HOME"),
+            }
+        }
+
+        // Verify plans dir is in writable roots
+        let expected_plans_dir = temp_codex_home.path().join("plans");
+        let plans_in_roots = roots
+            .iter()
+            .any(|r| r.root.as_path() == expected_plans_dir);
+        assert!(
+            plans_in_roots,
+            "CODEX_HOME/plans should be in writable roots. Expected: {:?}, Got: {:?}",
+            expected_plans_dir,
+            roots.iter().map(|r| r.root.as_path()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn find_codex_home_for_sandbox_respects_env_var() {
+        use std::env;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().expect("create temp dir");
+        let original = env::var("CODEX_HOME").ok();
+
+        // Test with CODEX_HOME set
+        unsafe {
+            env::set_var("CODEX_HOME", temp_dir.path());
+        }
+        let result = find_codex_home_for_sandbox();
+        assert_eq!(result, Some(temp_dir.path().to_path_buf()));
+
+        // Restore original
+        unsafe {
+            match original {
+                Some(val) => env::set_var("CODEX_HOME", val),
+                None => env::remove_var("CODEX_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn find_codex_home_for_sandbox_falls_back_to_home_dir() {
+        use std::env;
+
+        let original = env::var("CODEX_HOME").ok();
+
+        // Unset CODEX_HOME to test fallback
+        unsafe {
+            env::remove_var("CODEX_HOME");
+        }
+
+        let result = find_codex_home_for_sandbox();
+
+        // Restore original
+        unsafe {
+            if let Some(val) = original {
+                env::set_var("CODEX_HOME", val);
+            }
+        }
+
+        // Should fall back to ~/.codex
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(result, Some(home.join(".codex")));
+        } else {
+            // If no home dir, result should be None
+            assert!(result.is_none());
         }
     }
 }
