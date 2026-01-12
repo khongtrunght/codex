@@ -225,6 +225,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
         .unwrap_or_default()
         .to_string();
     let tool_calls = json!(requests[0]["tools"].as_array());
+    let reasoning = json!(requests[0]["reasoning"]);
     let prompt_cache_key = requests[0]["prompt_cache_key"]
         .as_str()
         .unwrap_or_default()
@@ -275,9 +276,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "tools": tool_calls,
       "tool_choice": "auto",
       "parallel_tool_calls": false,
-      "reasoning": {
-        "summary": "auto"
-      },
+      "reasoning": reasoning,
       "store": false,
       "stream": true,
       "include": [
@@ -344,9 +343,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "tools": [],
       "tool_choice": "auto",
       "parallel_tool_calls": false,
-      "reasoning": {
-        "summary": "auto"
-      },
+      "reasoning": reasoning,
       "store": false,
       "stream": true,
       "include": [
@@ -404,9 +401,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "tools": tool_calls,
       "tool_choice": "auto",
       "parallel_tool_calls": false,
-      "reasoning": {
-        "summary": "auto"
-      },
+      "reasoning": reasoning,
       "store": false,
       "stream": true,
       "include": [
@@ -484,9 +479,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "tools": tool_calls,
       "tool_choice": "auto",
       "parallel_tool_calls": false,
-      "reasoning": {
-        "summary": "auto"
-      },
+      "reasoning": reasoning,
       "store": false,
       "stream": true,
       "include": [
@@ -564,9 +557,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "tools": tool_calls,
       "tool_choice": "auto",
       "parallel_tool_calls": false,
-      "reasoning": {
-        "summary": "auto"
-      },
+      "reasoning": reasoning,
       "store": false,
       "stream": true,
       "include": [
