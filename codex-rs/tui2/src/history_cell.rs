@@ -1592,7 +1592,6 @@ pub(crate) struct SubAgentCell {
     resumed: bool,
 
     // Statistics
-    tool_uses_count: usize,
     token_usage: Option<SubAgentTokenUsage>,
     duration_ms: Option<u64>,
 
@@ -1646,16 +1645,6 @@ impl SubAgentCell {
 
     /// Add a raw event from the sub-agent.
     pub fn add_raw_event(&mut self, event: codex_protocol::protocol::RolloutItem) {
-        use codex_protocol::models::ResponseItem;
-        use codex_protocol::protocol::RolloutItem;
-
-        // Update tool count for function calls
-        if let RolloutItem::ResponseItem(ResponseItem::FunctionCall { .. })
-        | RolloutItem::ResponseItem(ResponseItem::LocalShellCall { .. }) = &event
-        {
-            self.tool_uses_count += 1;
-        }
-
         self.raw_events.push(event);
     }
 
@@ -1668,8 +1657,6 @@ impl SubAgentCell {
         };
         self.duration_ms = Some(end_event.duration_ms);
         self.token_usage = end_event.token_usage.clone();
-        // Tool count is now derived from raw_events instead of tool_summary
-        self.tool_uses_count = self.extract_tool_calls().len();
         self.output = Some(end_event.output.clone());
         self.start_time = None;
     }
@@ -1806,6 +1793,11 @@ impl SubAgentCell {
         tool_calls
     }
 
+    /// Get the number of tool uses (computed from raw events).
+    pub fn tool_uses_count(&self) -> usize {
+        self.extract_tool_calls().len()
+    }
+
     /// Get the current status.
     pub fn status(&self) -> SubAgentStatus {
         self.status
@@ -1892,7 +1884,7 @@ impl SubAgentCell {
         lines.push(Line::from(vec![bullet, " ".into(), header.into()]));
 
         let tool_calls = self.extract_tool_calls();
-        let tool_word = if self.tool_uses_count == 1 { "tool use" } else { "tool uses" };
+        let tool_word = if tool_calls.len() == 1 { "tool use" } else { "tool uses" };
         let duration_text = self
             .duration_ms
             .map(|ms| format!(" · {}", format_duration(Duration::from_millis(ms))))
@@ -1939,7 +1931,7 @@ impl SubAgentCell {
             // Done line
             let done_text = format!(
                 "Done ({} {} · {}{})",
-                self.tool_uses_count, tool_word, self.format_tokens(), duration_text
+                tool_calls.len(), tool_word, self.format_tokens(), duration_text
             );
             lines.push(Line::from(vec!["  └ ".dim(), done_text.dim()]));
         } else {
@@ -1956,7 +1948,7 @@ impl SubAgentCell {
             } else {
                 format!(
                     "Done ({} {} · {}{})",
-                    self.tool_uses_count, tool_word, self.format_tokens(), duration_text
+                    tool_calls.len(), tool_word, self.format_tokens(), duration_text
                 )
             };
             lines.push(Line::from(vec!["  └ ".dim(), second_line.dim()]));
@@ -2011,7 +2003,7 @@ impl SubAgentCell {
             let stats = format!(
                 "{} · {} tool uses · {}",
                 status_text,
-                self.tool_uses_count,
+                self.tool_uses_count(),
                 self.format_tokens()
             );
             lines.push(Line::from(vec![
@@ -2112,7 +2104,7 @@ impl SubAgentCell {
                     .unwrap_or_default();
                 let done_text = format!(
                     "Done ({} tool uses · {}{})",
-                    self.tool_uses_count,
+                    self.tool_uses_count(),
                     self.format_tokens(),
                     duration_str,
                 );
@@ -2178,7 +2170,6 @@ pub(crate) fn new_subagent_cell(
         status: SubAgentStatus::Running,
         start_time: Some(Instant::now()),
         resumed: begin_event.resumed,
-        tool_uses_count: 0,
         token_usage: None,
         duration_ms: None,
         raw_events: Vec::new(),
