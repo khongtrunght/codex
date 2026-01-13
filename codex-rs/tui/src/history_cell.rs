@@ -1902,7 +1902,7 @@ pub(crate) struct SubAgentCell {
 
     // Statistics
     token_usage: Option<SubAgentTokenUsage>,
-    duration_ms: Option<u64>,
+    duration: Option<Duration>,
 
     /// Raw events from the sub-agent (stored as-is, processed at render time).
     raw_events: Vec<RolloutItem>,
@@ -1941,7 +1941,7 @@ impl SubAgentCell {
         } else {
             SubAgentStatus::Error
         };
-        self.duration_ms = Some(end_event.duration_ms);
+        self.duration = Some(Duration::from_millis(end_event.duration_ms));
         self.token_usage = end_event.token_usage.clone();
         self.output = Some(end_event.output.clone());
         self.start_time = None;
@@ -1952,7 +1952,7 @@ impl SubAgentCell {
         self.status = SubAgentStatus::Error;
         // Calculate duration from start time if available
         if let Some(start) = self.start_time {
-            self.duration_ms = Some(start.elapsed().as_millis() as u64);
+            self.duration = Some(start.elapsed());
         }
         self.output = Some("interrupted".to_string());
         self.start_time = None;
@@ -2178,8 +2178,8 @@ impl SubAgentCell {
             "tool uses"
         };
         let duration_text = self
-            .duration_ms
-            .map(|ms| format!(" · {}", format_duration(Duration::from_millis(ms))))
+            .duration
+            .map(|d| format!(" · {}", format_duration(d)))
             .unwrap_or_default();
 
         if show_expanded {
@@ -2396,8 +2396,8 @@ impl SubAgentCell {
             // Show Done line with duration (only for completed agents)
             if self.status == SubAgentStatus::Completed {
                 let duration_str = self
-                    .duration_ms
-                    .map(|ms| format!(" · {}", format_duration(Duration::from_millis(ms))))
+                    .duration
+                    .map(|d| format!(" · {}", format_duration(d)))
                     .unwrap_or_default();
                 let done_text = format!(
                     "Done ({} tool uses · {}{})",
@@ -2468,7 +2468,7 @@ pub(crate) fn new_subagent_cell(
         start_time: Some(Instant::now()),
         resumed: begin_event.resumed,
         token_usage: None,
-        duration_ms: None,
+        duration: None,
         raw_events: Vec::new(),
         expanded: false,
         animations_enabled,
