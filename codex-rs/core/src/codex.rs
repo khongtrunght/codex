@@ -1663,7 +1663,7 @@ impl Session {
         call_id: String,
         questions: Vec<AskUserQuestion>,
     ) -> AskUserQuestionResponse {
-        let sub_id = call_id.clone();
+        let sub_id = turn_context.sub_id.clone();
         let (tx, rx) = oneshot::channel();
         let event_id = sub_id.clone();
         let prev_entry = {
@@ -1677,7 +1677,7 @@ impl Session {
             }
         };
         if prev_entry.is_some() {
-            warn!("Overwriting existing pending question for call_id: {event_id}");
+            warn!("Overwriting existing pending question for sub_id: {event_id}");
         }
 
         let event = EventMsg::AskUserQuestionRequest(AskUserQuestionRequestEvent {
@@ -2236,8 +2236,8 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             } => {
                 handlers::resolve_elicitation(&sess, server_name, request_id, decision).await;
             }
-            Op::ResolveAskUserQuestion { call_id, response } => {
-                handlers::resolve_ask_user_question(&sess, call_id, response).await;
+            Op::ResolveAskUserQuestion { id, response } => {
+                handlers::resolve_ask_user_question(&sess, id, response).await;
             }
             Op::Shutdown => {
                 if handlers::shutdown(&sess, sub.id.clone()).await {
@@ -2417,10 +2417,10 @@ mod handlers {
     /// Propagate a user's AskUserQuestion response to the session.
     pub async fn resolve_ask_user_question(
         sess: &Arc<Session>,
-        call_id: String,
+        id: String,
         response: codex_protocol::protocol::AskUserQuestionResponse,
     ) {
-        sess.notify_ask_user_question(&call_id, response).await;
+        sess.notify_ask_user_question(&id, response).await;
     }
 
     /// Propagate a user's exec approval decision to the session.

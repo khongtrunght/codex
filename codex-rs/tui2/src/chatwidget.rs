@@ -1255,11 +1255,11 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_ask_user_question_request(&mut self, ev: AskUserQuestionRequestEvent) {
+    fn on_ask_user_question_request(&mut self, id: String, ev: AskUserQuestionRequestEvent) {
         self.flush_answer_stream_with_separator();
 
         let overlay = crate::bottom_pane::AskUserQuestionOverlay::new(
-            ev.call_id,
+            id,
             ev.questions,
             self.app_event_tx.clone(),
         );
@@ -2096,12 +2096,16 @@ impl ChatWidget {
             EventMsg::EnteredPlanMode(ev) => self.on_entered_plan_mode(ev),
             EventMsg::ExitedPlanMode(ev) => self.on_exited_plan_mode(ev),
             EventMsg::EnterPlanModeApprovalRequest(ev) => {
+                // TODO: Pass Event's id like exec/patch for consistency
                 self.on_enter_plan_mode_approval_request(ev);
             }
             EventMsg::ExitPlanModeApprovalRequest(ev) => {
+                // TODO: Pass Event's id like exec/patch for consistency
                 self.on_exit_plan_mode_approval_request(ev);
             }
-            EventMsg::AskUserQuestionRequest(ev) => self.on_ask_user_question_request(ev),
+            EventMsg::AskUserQuestionRequest(ev) => {
+                self.on_ask_user_question_request(id.unwrap_or_default(), ev)
+            }
         }
     }
 

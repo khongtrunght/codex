@@ -419,7 +419,7 @@ impl AskUserQuestionOverlay {
         };
         self.app_event_tx.send(AppEvent::CodexOp(
             Op::ResolveAskUserQuestion {
-                call_id: self.call_id.clone(),
+                id: self.call_id.clone(),
                 response,
             },
         ));

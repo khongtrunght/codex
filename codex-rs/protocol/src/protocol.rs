@@ -192,8 +192,8 @@ pub enum Op {
 
     /// Resolve an AskUserQuestion request with the user's answers.
     ResolveAskUserQuestion {
-        /// The tool call ID that initiated this question request.
-        call_id: String,
+        /// The event ID that initiated this question request.
+        id: String,
         /// The user's response containing answers to the questions.
         response: AskUserQuestionResponse,
     },

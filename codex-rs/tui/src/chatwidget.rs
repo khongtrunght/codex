@@ -2190,13 +2190,15 @@ impl ChatWidget {
                 ));
             }
             EventMsg::EnterPlanModeApprovalRequest(ev) => {
+                // TODO: Pass Event's id like exec/patch for consistency
                 self.on_enter_plan_mode_approval_request(ev);
             }
             EventMsg::ExitPlanModeApprovalRequest(ev) => {
+                // TODO: Pass Event's id like exec/patch for consistency
                 self.on_exit_plan_mode_approval_request(ev);
             }
             EventMsg::AskUserQuestionRequest(ev) => {
-                self.on_ask_user_question_request(ev);
+                self.on_ask_user_question_request(id.unwrap_or_default(), ev);
             }
             EventMsg::RawResponseItem(_)
             | EventMsg::ItemStarted(_)
@@ -2303,11 +2305,11 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_ask_user_question_request(&mut self, ev: AskUserQuestionRequestEvent) {
+    fn on_ask_user_question_request(&mut self, id: String, ev: AskUserQuestionRequestEvent) {
         self.flush_answer_stream_with_separator();
 
         let overlay =
-            AskUserQuestionOverlay::new(ev.call_id, ev.questions, self.app_event_tx.clone());
+            AskUserQuestionOverlay::new(id, ev.questions, self.app_event_tx.clone());
         self.bottom_pane.push_ask_user_question(overlay);
         self.request_redraw();
     }
