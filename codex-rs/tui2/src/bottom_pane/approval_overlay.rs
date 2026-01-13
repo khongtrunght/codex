@@ -486,13 +486,9 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                     ]),
                     Line::from(""),
                 ];
-                // Show first few lines of the plan as preview
-                let plan_lines: Vec<&str> = plan.lines().take(10).collect();
-                for line in plan_lines {
+                // Show full plan content
+                for line in plan.lines() {
                     lines.push(Line::from(line.to_string()));
-                }
-                if plan.lines().count() > 10 {
-                    lines.push(Line::from("...".dim()));
                 }
                 let header = Paragraph::new(lines).wrap(Wrap { trim: false });
                 Self {
