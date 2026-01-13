@@ -1484,7 +1484,7 @@ use codex_core::protocol::RestoredFileInfo;
 
 /// Cell displaying a compaction boundary with restored files.
 /// Matches Claude Code's display:
-/// ```
+/// ```text
 /// ═══════════════ Conversation compacted · ctrl+o for history ═══════════════
 /// L  Referenced file thoughts/shared/plans/2026-01-12-auto-compact-...md
 /// L  Read codex-rs/core/src/read_file_state.rs (337 lines)
@@ -1629,6 +1629,19 @@ impl SubAgentCell {
             }
             _ => "-- tokens".to_string(),
         }
+    }
+
+    pub fn set_token_usage_totals(&mut self, input_tokens: u64, output_tokens: u64) {
+        self.token_usage = Some(SubAgentTokenUsage {
+            input_tokens,
+            output_tokens,
+            total_tokens: input_tokens.saturating_add(output_tokens),
+        });
+    }
+
+    #[cfg(test)]
+    pub fn token_usage(&self) -> Option<&SubAgentTokenUsage> {
+        self.token_usage.as_ref()
     }
 
     /// Add a raw event from the sub-agent.
@@ -1791,18 +1804,6 @@ impl SubAgentCell {
             }
         }
         tool_calls
-    }
-
-    /// Accumulate token usage from a forwarded TokenCount event.
-    pub fn accumulate_tokens(&mut self, input_delta: u64, output_delta: u64) {
-        let usage = self.token_usage.get_or_insert(SubAgentTokenUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: 0,
-        });
-        usage.input_tokens = usage.input_tokens.saturating_add(input_delta);
-        usage.output_tokens = usage.output_tokens.saturating_add(output_delta);
-        usage.total_tokens = usage.input_tokens + usage.output_tokens;
     }
 
     /// Get the current status.

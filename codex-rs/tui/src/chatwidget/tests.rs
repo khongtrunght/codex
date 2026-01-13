@@ -37,6 +37,7 @@ use codex_core::protocol::RateLimitWindow;
 use codex_core::protocol::ReviewRequest;
 use codex_core::protocol::ReviewTarget;
 use codex_core::protocol::StreamErrorEvent;
+use codex_core::protocol::SubAgentBeginEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TaskStartedEvent;
 use codex_core::protocol::TerminalInteractionEvent;
@@ -3506,6 +3507,66 @@ async fn multiple_agent_messages_in_single_turn_emit_multiple_headers() {
     let first_idx = combined.find("First message").unwrap();
     let second_idx = combined.find("Second message").unwrap();
     assert!(first_idx < second_idx, "messages out of order: {combined}");
+}
+
+#[tokio::test]
+async fn subagent_token_count_uses_total_not_accumulated_parent() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
+    let call_id = "call-123";
+    let session_id = "sub-session";
+
+    chat.handle_codex_event(Event {
+        id: "sub-begin".into(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: call_id.to_string(),
+            agent_type: "explore".to_string(),
+            description: "test".to_string(),
+            prompt: None,
+            session_id: session_id.to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    let token_event = |input_tokens: i64, output_tokens: i64| Event {
+        id: "tok".into(),
+        msg: EventMsg::TokenCount(TokenCountEvent {
+            info: Some(TokenUsageInfo {
+                total_token_usage: TokenUsage {
+                    input_tokens,
+                    cached_input_tokens: 0,
+                    output_tokens,
+                    reasoning_output_tokens: 0,
+                    total_tokens: input_tokens + output_tokens,
+                },
+                last_token_usage: TokenUsage {
+                    input_tokens,
+                    cached_input_tokens: 0,
+                    output_tokens,
+                    reasoning_output_tokens: 0,
+                    total_tokens: input_tokens + output_tokens,
+                },
+                model_context_window: None,
+            }),
+            rate_limits: None,
+        }),
+        source_session_id: Some(session_id.to_string()),
+        parent_session_id: None,
+    };
+
+    chat.handle_codex_event(token_event(100, 50));
+    chat.handle_codex_event(token_event(150, 70));
+
+    let cell = chat
+        .running_subagents
+        .get(call_id)
+        .expect("subagent cell should exist");
+    let usage = cell.token_usage().expect("token usage should be set");
+
+    assert_eq!(usage.input_tokens, 150);
+    assert_eq!(usage.output_tokens, 70);
+    assert_eq!(usage.total_tokens, 220);
 }
 
 #[tokio::test]

@@ -3622,6 +3622,85 @@ async fn forwarded_events_update_subagent_cell() {
     );
 }
 
+#[tokio::test]
+async fn subagent_token_count_uses_total_not_accumulated() {
+    use codex_core::protocol::SubAgentBeginEvent;
+    use codex_core::protocol::TokenCountEvent;
+    use codex_core::protocol::TokenUsage;
+    use codex_core::protocol::TokenUsageInfo;
+
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
+
+    chat.handle_codex_event(Event {
+        id: "sub-001".to_string(),
+        msg: EventMsg::SubAgentBegin(SubAgentBeginEvent {
+            call_id: "call-123".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test task".to_string(),
+            prompt: None,
+            session_id: "task-abc".to_string(),
+            resumed: false,
+        }),
+        source_session_id: None,
+        parent_session_id: None,
+    });
+
+    let usage1 = TokenUsage {
+        input_tokens: 100,
+        cached_input_tokens: 0,
+        output_tokens: 50,
+        reasoning_output_tokens: 0,
+        total_tokens: 150,
+    };
+    let info1 = TokenUsageInfo {
+        total_token_usage: usage1.clone(),
+        last_token_usage: usage1,
+        model_context_window: Some(1000),
+    };
+    chat.handle_codex_event(Event {
+        id: "sub-002".to_string(),
+        msg: EventMsg::TokenCount(TokenCountEvent {
+            info: Some(info1),
+            rate_limits: None,
+        }),
+        source_session_id: Some("task-abc".to_string()),
+        parent_session_id: None,
+    });
+
+    let usage2 = TokenUsage {
+        input_tokens: 150,
+        cached_input_tokens: 0,
+        output_tokens: 70,
+        reasoning_output_tokens: 0,
+        total_tokens: 220,
+    };
+    let info2 = TokenUsageInfo {
+        total_token_usage: usage2.clone(),
+        last_token_usage: usage2,
+        model_context_window: Some(1000),
+    };
+    chat.handle_codex_event(Event {
+        id: "sub-003".to_string(),
+        msg: EventMsg::TokenCount(TokenCountEvent {
+            info: Some(info2),
+            rate_limits: None,
+        }),
+        source_session_id: Some("task-abc".to_string()),
+        parent_session_id: None,
+    });
+
+    let cell = chat
+        .running_subagents
+        .values()
+        .next()
+        .expect("subagent cell should exist");
+    let usage = cell.token_usage().expect("usage should be set");
+
+    assert_eq!(usage.input_tokens, 150);
+    assert_eq!(usage.output_tokens, 70);
+    assert_eq!(usage.total_tokens, 220);
+}
+
 /// Test that events with source_session_id are not dispatched to main history.
 #[tokio::test]
 async fn forwarded_events_not_in_main_history() {

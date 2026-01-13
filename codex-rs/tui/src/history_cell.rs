@@ -38,9 +38,9 @@ use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::SubAgentTokenUsage;
 use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseItem;
-use codex_protocol::protocol::RolloutItem;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::openai_models::ReasoningSummaryFormat;
+use codex_protocol::protocol::RolloutItem;
 use codex_protocol::todo_tool::StepStatus;
 use codex_protocol::todo_tool::TodoItem;
 use codex_protocol::todo_tool::TodoWriteArgs;
@@ -2078,21 +2078,24 @@ impl SubAgentCell {
         tool_calls
     }
 
-    /// Accumulate token usage from a forwarded TokenCount event.
-    pub fn accumulate_tokens(&mut self, input_delta: u64, output_delta: u64) {
-        let usage = self.token_usage.get_or_insert(SubAgentTokenUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: 0,
+    /// Set token usage to an absolute total.
+    pub fn set_token_usage_totals(&mut self, input_total: u64, output_total: u64) {
+        self.token_usage = Some(SubAgentTokenUsage {
+            input_tokens: input_total,
+            output_tokens: output_total,
+            total_tokens: input_total + output_total,
         });
-        usage.input_tokens = usage.input_tokens.saturating_add(input_delta);
-        usage.output_tokens = usage.output_tokens.saturating_add(output_delta);
-        usage.total_tokens = usage.input_tokens + usage.output_tokens;
     }
 
     /// Get the current status.
     pub fn status(&self) -> SubAgentStatus {
         self.status
+    }
+
+    /// Current token usage, if known.
+    #[cfg(test)]
+    pub fn token_usage(&self) -> Option<&SubAgentTokenUsage> {
+        self.token_usage.as_ref()
     }
 
     /// Get a human-readable status text for the current state.
@@ -2174,7 +2177,11 @@ impl SubAgentCell {
         lines.push(Line::from(vec![bullet, " ".into(), header.into()]));
 
         let tool_calls = self.extract_tool_calls();
-        let tool_word = if self.tool_uses_count == 1 { "tool use" } else { "tool uses" };
+        let tool_word = if self.tool_uses_count == 1 {
+            "tool use"
+        } else {
+            "tool uses"
+        };
         let duration_text = self
             .duration_ms
             .map(|ms| format!(" · {}", format_duration(Duration::from_millis(ms))))
@@ -2203,7 +2210,8 @@ impl SubAgentCell {
                 ]));
                 if let Some(output) = &call.output {
                     for line in output.lines().take(3) {
-                        let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(6));
+                        let truncated =
+                            truncate_to_n_chars(line, (width as usize).saturating_sub(6));
                         lines.push(Line::from(vec!["  │   ".dim(), truncated.dim()]));
                     }
                 }
@@ -2221,7 +2229,10 @@ impl SubAgentCell {
             // Done line
             let done_text = format!(
                 "Done ({} {} · {}{})",
-                self.tool_uses_count, tool_word, self.format_tokens(), duration_text
+                self.tool_uses_count,
+                tool_word,
+                self.format_tokens(),
+                duration_text
             );
             lines.push(Line::from(vec!["  └ ".dim(), done_text.dim()]));
         } else {
@@ -2229,7 +2240,11 @@ impl SubAgentCell {
             let second_line = if self.status == SubAgentStatus::Running {
                 if let Some(last_call) = tool_calls.last() {
                     let display_arg = last_call.title.as_deref().unwrap_or(&last_call.arguments);
-                    format!("{}({})", last_call.tool_name, truncate_to_n_chars(display_arg, 60))
+                    format!(
+                        "{}({})",
+                        last_call.tool_name,
+                        truncate_to_n_chars(display_arg, 60)
+                    )
                 } else if self.resumed {
                     "Resumed...".to_string()
                 } else {
@@ -2238,7 +2253,10 @@ impl SubAgentCell {
             } else {
                 format!(
                     "Done ({} {} · {}{})",
-                    self.tool_uses_count, tool_word, self.format_tokens(), duration_text
+                    self.tool_uses_count,
+                    tool_word,
+                    self.format_tokens(),
+                    duration_text
                 )
             };
             lines.push(Line::from(vec!["  └ ".dim(), second_line.dim()]));
@@ -2334,8 +2352,8 @@ impl SubAgentCell {
 
                 let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
                 let prefix_width = 4;
-                let available_for_args = (width as usize)
-                    .saturating_sub(prefix_width + call.tool_name.len() + 2);
+                let available_for_args =
+                    (width as usize).saturating_sub(prefix_width + call.tool_name.len() + 2);
                 let arg_display = truncate_to_n_chars(display_arg, available_for_args);
                 lines.push(Line::from(vec![
                     format!("{continuation}├  ").dim(),

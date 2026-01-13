@@ -413,15 +413,11 @@ async fn run_task_subagent(
                     EventMsg::TokenCount(tc) => {
                         if let Some(info) = &tc.info {
                             let mut usage = token_usage.lock().await;
-                            // Accumulate the last turn's usage into our totals
+                            // Use last turn's usage only (not accumulated)
                             let last = &info.last_token_usage;
                             // Use absolute values since tokens are i64 in protocol
-                            usage.input_tokens = usage
-                                .input_tokens
-                                .saturating_add(last.input_tokens.max(0) as u64);
-                            usage.output_tokens = usage
-                                .output_tokens
-                                .saturating_add(last.output_tokens.max(0) as u64);
+                            usage.input_tokens = last.input_tokens.max(0) as u64;
+                            usage.output_tokens = last.output_tokens.max(0) as u64;
                             usage.total_tokens = usage.input_tokens + usage.output_tokens;
                         }
                     }
@@ -472,30 +468,30 @@ mod tests {
     }
 
     #[test]
-    fn test_subagent_token_usage_accumulation() {
+    fn test_subagent_token_usage_last_turn_only() {
         let mut usage = SubAgentTokenUsage::default();
 
-        // Simulate accumulating tokens like we do in the event loop
+        // Simulate setting tokens like we do in the event loop (last turn only)
         let input1: i64 = 100;
         let output1: i64 = 50;
-        usage.input_tokens = usage.input_tokens.saturating_add(input1.max(0) as u64);
-        usage.output_tokens = usage.output_tokens.saturating_add(output1.max(0) as u64);
+        usage.input_tokens = input1.max(0) as u64;
+        usage.output_tokens = output1.max(0) as u64;
         usage.total_tokens = usage.input_tokens + usage.output_tokens;
 
         assert_eq!(usage.input_tokens, 100);
         assert_eq!(usage.output_tokens, 50);
         assert_eq!(usage.total_tokens, 150);
 
-        // Accumulate more
+        // New turn replaces previous values (not accumulated)
         let input2: i64 = 200;
         let output2: i64 = 75;
-        usage.input_tokens = usage.input_tokens.saturating_add(input2.max(0) as u64);
-        usage.output_tokens = usage.output_tokens.saturating_add(output2.max(0) as u64);
+        usage.input_tokens = input2.max(0) as u64;
+        usage.output_tokens = output2.max(0) as u64;
         usage.total_tokens = usage.input_tokens + usage.output_tokens;
 
-        assert_eq!(usage.input_tokens, 300);
-        assert_eq!(usage.output_tokens, 125);
-        assert_eq!(usage.total_tokens, 425);
+        assert_eq!(usage.input_tokens, 200);
+        assert_eq!(usage.output_tokens, 75);
+        assert_eq!(usage.total_tokens, 275);
     }
 
     #[test]
@@ -505,8 +501,8 @@ mod tests {
         // Negative values should be treated as 0
         let input: i64 = -100;
         let output: i64 = -50;
-        usage.input_tokens = usage.input_tokens.saturating_add(input.max(0) as u64);
-        usage.output_tokens = usage.output_tokens.saturating_add(output.max(0) as u64);
+        usage.input_tokens = input.max(0) as u64;
+        usage.output_tokens = output.max(0) as u64;
         usage.total_tokens = usage.input_tokens + usage.output_tokens;
 
         assert_eq!(usage.input_tokens, 0);

@@ -20,16 +20,15 @@ use codex_core::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
-use codex_core::protocol::AskUserQuestionRequestEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::AskUserQuestionRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
-use codex_core::protocol::EnterPlanModeApprovalRequestEvent;
-use codex_core::protocol::ExitPlanModeApprovalRequestEvent;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
+use codex_core::protocol::EnterPlanModeApprovalRequestEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
@@ -37,9 +36,8 @@ use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
 use codex_core::protocol::ExecCommandSource;
+use codex_core::protocol::ExitPlanModeApprovalRequestEvent;
 use codex_core::protocol::ExitedReviewModeEvent;
-use codex_protocol::session_mode::EnteredPlanModeEvent;
-use codex_protocol::session_mode::ExitedPlanModeEvent;
 use codex_core::protocol::ListCustomPromptsResponseEvent;
 use codex_core::protocol::ListSkillsResponseEvent;
 use codex_core::protocol::McpListToolsResponseEvent;
@@ -55,6 +53,8 @@ use codex_core::protocol::ReviewRequest;
 use codex_core::protocol::ReviewTarget;
 use codex_core::protocol::SkillsListEntry;
 use codex_core::protocol::StreamErrorEvent;
+use codex_core::protocol::SubAgentBeginEvent;
+use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::TaskCompleteEvent;
 use codex_core::protocol::TerminalInteractionEvent;
 use codex_core::protocol::TokenUsage;
@@ -64,18 +64,18 @@ use codex_core::protocol::TurnDiffEvent;
 use codex_core::protocol::UndoCompletedEvent;
 use codex_core::protocol::UndoStartedEvent;
 use codex_core::protocol::UserMessageEvent;
-use codex_core::protocol::SubAgentBeginEvent;
-use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::ViewImageToolCallEvent;
 use codex_core::protocol::WarningEvent;
 use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
-use codex_protocol::protocol::RolloutItem;
 use codex_core::skills::model::SkillMetadata;
 use codex_protocol::ConversationId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::protocol::RolloutItem;
+use codex_protocol::session_mode::EnteredPlanModeEvent;
+use codex_protocol::session_mode::ExitedPlanModeEvent;
 use codex_protocol::user_input::UserInput;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -97,7 +97,6 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::AskUserQuestionOverlay;
-use crate::tui_display_mode::TuiDisplayMode;
 use crate::bottom_pane::BetaFeatureItem;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
@@ -136,6 +135,7 @@ use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+use crate::tui_display_mode::TuiDisplayMode;
 mod interrupts;
 use self::interrupts::InterruptManager;
 mod agent;
@@ -728,8 +728,9 @@ impl ChatWidget {
                 cell.mark_interrupted();
             }
             // Collect all subagents (running + pending completed) into a group
-            let mut all_cells: Vec<SubAgentCell> =
-                std::mem::take(&mut self.running_subagents).into_values().collect();
+            let mut all_cells: Vec<SubAgentCell> = std::mem::take(&mut self.running_subagents)
+                .into_values()
+                .collect();
             all_cells.extend(std::mem::take(&mut self.pending_completed_subagents));
             // Add as a group to history
             if !all_cells.is_empty() {
@@ -2305,11 +2306,8 @@ impl ChatWidget {
     fn on_ask_user_question_request(&mut self, ev: AskUserQuestionRequestEvent) {
         self.flush_answer_stream_with_separator();
 
-        let overlay = AskUserQuestionOverlay::new(
-            ev.call_id,
-            ev.questions,
-            self.app_event_tx.clone(),
-        );
+        let overlay =
+            AskUserQuestionOverlay::new(ev.call_id, ev.questions, self.app_event_tx.clone());
         self.bottom_pane.push_ask_user_question(overlay);
         self.request_redraw();
     }
@@ -2397,12 +2395,13 @@ impl ChatWidget {
         if let Some(cell) = cell {
             cell.add_raw_event(RolloutItem::EventMsg(msg.clone()));
 
+            // Use last turn's usage only (not accumulated total)
             if let EventMsg::TokenCount(tc) = msg {
                 if let Some(info) = &tc.info {
                     let last = &info.last_token_usage;
-                    let input_delta = last.input_tokens.max(0) as u64;
-                    let output_delta = last.output_tokens.max(0) as u64;
-                    cell.accumulate_tokens(input_delta, output_delta);
+                    let input_tokens = last.input_tokens.max(0) as u64;
+                    let output_tokens = last.output_tokens.max(0) as u64;
+                    cell.set_token_usage_totals(input_tokens, output_tokens);
                 }
             }
             self.request_redraw();

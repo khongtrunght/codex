@@ -2246,14 +2246,14 @@ impl ChatWidget {
             // Store raw event for later processing
             cell.add_raw_event(RolloutItem::EventMsg(msg.clone()));
 
-            // Handle token accumulation specially
-            if let EventMsg::TokenCount(tc) = msg
-                && let Some(info) = &tc.info
-            {
-                let last = &info.last_token_usage;
-                let input_delta = last.input_tokens.max(0) as u64;
-                let output_delta = last.output_tokens.max(0) as u64;
-                cell.accumulate_tokens(input_delta, output_delta);
+            // Use last turn's usage only (not accumulated total)
+            if let EventMsg::TokenCount(tc) = msg {
+                if let Some(info) = &tc.info {
+                    let last = &info.last_token_usage;
+                    let input_tokens = last.input_tokens.max(0) as u64;
+                    let output_tokens = last.output_tokens.max(0) as u64;
+                    cell.set_token_usage_totals(input_tokens, output_tokens);
+                }
             }
             self.request_redraw();
         }
