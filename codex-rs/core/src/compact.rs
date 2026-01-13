@@ -297,7 +297,10 @@ async fn run_compact_task_inner(
     });
     sess.persist_rollout_items(&[rollout_item]).await;
 
-    let event = EventMsg::ContextCompacted(ContextCompactedEvent { restored_files });
+    let event = EventMsg::ContextCompacted(ContextCompactedEvent {
+        restored_files,
+        summary: Some(summary_text.clone()),
+    });
     sess.send_event(&turn_context, event).await;
 
     let warning = EventMsg::Warning(WarningEvent {

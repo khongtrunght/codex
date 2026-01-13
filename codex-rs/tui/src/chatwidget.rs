@@ -2183,7 +2183,10 @@ impl ChatWidget {
             EventMsg::SubAgentBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentEnd(ev) => self.on_subagent_end(ev),
             EventMsg::ContextCompacted(event) => {
-                self.add_to_history(CompactBoundaryCell::new(event.restored_files));
+                self.add_to_history(CompactBoundaryCell::new(
+                    event.restored_files,
+                    event.summary,
+                ));
             }
             EventMsg::EnterPlanModeApprovalRequest(ev) => {
                 self.on_enter_plan_mode_approval_request(ev);

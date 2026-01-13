@@ -943,6 +943,10 @@ pub struct ContextCompactedEvent {
     /// Files restored after compaction.
     #[serde(default)]
     pub restored_files: Vec<RestoredFileInfo>,
+    /// Compact summary text for display in ctrl+o history view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

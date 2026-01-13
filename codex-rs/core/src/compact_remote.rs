@@ -74,9 +74,10 @@ async fn run_remote_compact_task_inner_impl(
     sess.persist_rollout_items(&[RolloutItem::Compacted(compacted_item)])
         .await;
 
-    // Note: Remote compact doesn't restore files from read_file_state
+    // Note: Remote compact doesn't restore files from read_file_state or provide summary
     let event = EventMsg::ContextCompacted(ContextCompactedEvent {
         restored_files: Vec::new(),
+        summary: None,
     });
     sess.send_event(turn_context, event).await;
 

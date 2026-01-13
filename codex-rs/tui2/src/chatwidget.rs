@@ -2080,7 +2080,10 @@ impl ChatWidget {
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
             EventMsg::ContextCompacted(event) => {
-                self.add_to_history(CompactBoundaryCell::new(event.restored_files));
+                self.add_to_history(CompactBoundaryCell::new(
+                    event.restored_files,
+                    event.summary,
+                ));
             }
             EventMsg::RawResponseItem(_)
             | EventMsg::ItemStarted(_)

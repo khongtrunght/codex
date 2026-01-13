@@ -1771,20 +1771,39 @@ use codex_core::protocol::RestoredFileInfo;
 #[derive(Debug)]
 pub(crate) struct CompactBoundaryCell {
     restored_files: Vec<RestoredFileInfo>,
+    /// The compact summary text for display when user presses ctrl+o.
+    summary: Option<String>,
 }
 
 impl CompactBoundaryCell {
-    pub(crate) fn new(restored_files: Vec<RestoredFileInfo>) -> Self {
-        Self { restored_files }
+    pub(crate) fn new(restored_files: Vec<RestoredFileInfo>, summary: Option<String>) -> Self {
+        Self {
+            restored_files,
+            summary,
+        }
     }
 }
 
 impl HistoryCell for CompactBoundaryCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_boundary(width, false)
+    }
+
+    fn display_lines_verbose(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
+        self.render_boundary(width, verbose)
+    }
+}
+
+impl CompactBoundaryCell {
+    fn render_boundary(&self, width: u16, verbose: bool) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
         // Divider line with centered title
-        let title = " Conversation compacted · ctrl+o for history ";
+        let title = if verbose {
+            " Conversation compacted (showing summary) "
+        } else {
+            " Conversation compacted · ctrl+o for history "
+        };
         let title_width = title.width();
         let available_for_dividers = (width as usize).saturating_sub(title_width);
         let left_divider_len = available_for_dividers / 2;
@@ -1797,6 +1816,17 @@ impl HistoryCell for CompactBoundaryCell {
             "═".repeat(right_divider_len)
         );
         lines.push(Line::from(divider_line).dim());
+
+        // Show summary when in verbose mode
+        if verbose {
+            if let Some(ref summary) = self.summary {
+                lines.push(Line::from("").dim());
+                for line in summary.lines() {
+                    lines.push(Line::from(line.to_string()).dim());
+                }
+                lines.push(Line::from("").dim());
+            }
+        }
 
         // Restored files
         for file in &self.restored_files {
