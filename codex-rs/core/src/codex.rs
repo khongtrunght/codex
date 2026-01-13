@@ -528,6 +528,15 @@ impl TurnContext {
             .as_deref()
             .unwrap_or(compact::SUMMARIZATION_PROMPT)
     }
+
+    /// Returns a ToolConfig derived from this turn's configuration.
+    /// Used for expanding attachments before API calls.
+    pub(crate) fn tool_config(&self) -> ToolConfig {
+        ToolConfig::new(
+            self.tools_config.edit_tool_type,
+            self.tools_config.shell_type,
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -1088,7 +1097,9 @@ impl Session {
         limit: Option<usize>,
     ) {
         let mut state = self.state.lock().await;
-        state.read_file_state.record_read(path, content, offset, limit);
+        state
+            .read_file_state
+            .record_read(path, content, offset, limit);
     }
 
     /// Validate that a file can be edited (was read and not modified externally).

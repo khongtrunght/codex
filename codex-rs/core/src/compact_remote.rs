@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::Prompt;
+use crate::attachments::expand_attachments;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::error::Result as CodexResult;
@@ -41,8 +42,14 @@ async fn run_remote_compact_task_inner_impl(
     turn_context: &Arc<TurnContext>,
 ) -> CodexResult<()> {
     let mut history = sess.clone_history().await;
+    // Expand Attachment items to Message items before sending to API.
+    // The API doesn't support "attachment" as a type - attachments must be
+    // converted to valid message types (following the pattern in main turn flow).
+    // GhostSnapshots are already removed by get_history_for_prompt().
+    let history_items = history.get_history_for_prompt();
+    let input = expand_attachments(history_items, &turn_context.tool_config());
     let prompt = Prompt {
-        input: history.get_history_for_prompt(),
+        input,
         tools: vec![],
         parallel_tool_calls: false,
         base_instructions_override: turn_context.base_instructions.clone(),

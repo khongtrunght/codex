@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::ModelProviderInfo;
 use crate::Prompt;
+use crate::attachments::expand_attachments;
 use crate::client_common::ResponseEvent;
 use crate::codex::Session;
 use crate::codex::TurnContext;
@@ -169,7 +170,11 @@ async fn run_compact_task_inner(
     sess.persist_rollout_items(&[rollout_item]).await;
 
     loop {
-        let turn_input = history.get_history_for_prompt();
+        // Expand Attachment items to Message items before sending to API.
+        // The API doesn't support "attachment" as a type - attachments must be
+        // converted to valid message types (following the pattern in main turn flow).
+        let history_items = history.get_history_for_prompt();
+        let turn_input = expand_attachments(history_items, &turn_context.tool_config());
         let prompt = Prompt {
             input: turn_input.clone(),
             ..Default::default()
@@ -250,12 +255,12 @@ async fn run_compact_task_inner(
                 files
                     .iter()
                     .map(|f| match f {
-                        CompactRestoredFile::WithContent { path, num_lines, .. } => {
-                            RestoredFileInfo {
-                                path: path.clone(),
-                                num_lines: Some(*num_lines),
-                            }
-                        }
+                        CompactRestoredFile::WithContent {
+                            path, num_lines, ..
+                        } => RestoredFileInfo {
+                            path: path.clone(),
+                            num_lines: Some(*num_lines),
+                        },
                         CompactRestoredFile::ReferenceOnly { path } => RestoredFileInfo {
                             path: path.clone(),
                             num_lines: None,
@@ -678,8 +683,7 @@ mod tests {
 
         let context_window = 100_000;
         // Absolute limit should take priority over percentage config
-        let threshold =
-            get_auto_compact_threshold(context_window, Some(80_000), Some(50)); // 50% would be 45_000
+        let threshold = get_auto_compact_threshold(context_window, Some(80_000), Some(50)); // 50% would be 45_000
 
         assert_eq!(threshold, 80_000);
     }
