@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use crate::AuthManager;
 use crate::RolloutRecorder;
-use crate::exec_policy::ExecPolicyManager;
+use crate::agent::AgentControl;
 use crate::agent_types::AgentTypeRegistry;
 use crate::attachments::AttachmentRegistry;
+use crate::exec_policy::ExecPolicyManager;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::models_manager::manager::ModelsManager;
 use crate::skills::SkillsManager;
@@ -38,7 +39,8 @@ pub(crate) struct SessionServices {
     pub(crate) agent_type_registry: AgentTypeRegistry,
     /// Path to the codex home directory (e.g., ~/.codex).
     /// Used for persisting plans/todos.
-    pub(crate) codex_home: PathBuf,
+    pub(crate) codex_home: PathBuf, //TODO: check if we can remove this or turn to a method
     /// Registry for collecting attachments to inject into prompts.
     pub(crate) attachments: AttachmentRegistry,
+    pub(crate) agent_control: AgentControl,
 }

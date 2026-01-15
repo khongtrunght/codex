@@ -65,6 +65,7 @@ pub(crate) async fn run_codex_conversation_interactive(
         SessionSource::SubAgent(SubAgentSource::Review),
         source_session_id,
         shared_context,
+        parent_session.services.agent_control.clone(),
     )
     .await?;
     let codex = Arc::new(codex);
@@ -393,10 +394,7 @@ async fn handle_ask_user_question(
     };
 
     let _ = codex
-        .submit(Op::ResolveAskUserQuestion {
-            id,
-            response,
-        })
+        .submit(Op::ResolveAskUserQuestion { id, response })
         .await;
 }
 

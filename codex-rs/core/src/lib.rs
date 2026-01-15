@@ -17,6 +17,7 @@ pub mod codex;
 mod codex_conversation;
 mod compact_remote;
 pub use codex_conversation::CodexConversation;
+mod agent;
 mod codex_delegate;
 mod command_safety;
 pub mod config;

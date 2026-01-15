@@ -9,6 +9,7 @@ use std::sync::atomic::Ordering;
 
 use crate::AuthManager;
 use crate::SandboxState;
+use crate::agent::AgentControl;
 use crate::client_common::REVIEW_PROMPT;
 use crate::compact;
 use crate::compact::get_auto_compact_threshold;
@@ -218,7 +219,7 @@ fn maybe_push_chat_wire_api_deprecation(
 
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
-    pub async fn spawn(
+    pub(crate) async fn spawn(
         config: Config,
         auth_manager: Arc<AuthManager>,
         models_manager: Arc<ModelsManager>,
@@ -226,6 +227,7 @@ impl Codex {
         conversation_history: InitialHistory,
         session_source: SessionSource,
         source_session_id: Option<String>,
+        agent_control: AgentControl,
     ) -> CodexResult<CodexSpawnOk> {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -296,6 +298,7 @@ impl Codex {
             skills_manager,
             source_session_id,
             None, // No shared context for normal sessions
+            agent_control,
         )
         .await
         .map_err(|e| {
@@ -335,6 +338,7 @@ impl Codex {
         session_source: SessionSource,
         source_session_id: Option<String>,
         shared_subagent_context: Option<SharedSubagentContext>,
+        agent_control: AgentControl,
     ) -> CodexResult<CodexSpawnOk> {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -404,6 +408,7 @@ impl Codex {
             skills_manager,
             source_session_id,
             shared_subagent_context,
+            agent_control,
         )
         .await
         .map_err(|e| {
@@ -737,6 +742,7 @@ impl Session {
         skills_manager: Arc<SkillsManager>,
         source_session_id: Option<String>,
         shared_subagent_context: Option<SharedSubagentContext>,
+        agent_control: AgentControl,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -882,6 +888,7 @@ impl Session {
             agent_type_registry,
             codex_home: config.codex_home.clone(),
             attachments: crate::attachments::default_registry(),
+            agent_control,
         };
 
         let sess = Arc::new(Session {
@@ -1414,6 +1421,11 @@ impl Session {
         // Subagents persist their own events via SharedSubagentContext in persist_rollout_items().
         // When events are forwarded to parent (source_session_id is Some), they're already persisted.
         if event.source_session_id.is_none() {
+            self.services
+                .agent_control
+                .bus
+                .on_event(self.conversation_id, &event.msg)
+                .await;
             let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
             self.persist_rollout_items(&rollout_items).await;
         }
@@ -3946,6 +3958,7 @@ mod tests {
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));
+        let agent_control = AgentControl::default();
         let exec_policy = ExecPolicyManager::default();
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let session_configuration = SessionConfiguration {
@@ -3998,6 +4011,7 @@ mod tests {
             agent_type_registry,
             codex_home: config.codex_home.clone(),
             attachments: crate::attachments::default_registry(),
+            agent_control,
         };
 
         let provider = session_configuration.get_provider(&per_turn_config);
@@ -4042,6 +4056,7 @@ mod tests {
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));
+        let agent_control = AgentControl::default();
         let exec_policy = ExecPolicyManager::default();
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let session_configuration = SessionConfiguration {
@@ -4094,6 +4109,7 @@ mod tests {
             agent_type_registry,
             codex_home: config.codex_home.clone(),
             attachments: crate::attachments::default_registry(),
+            agent_control,
         };
 
         let provider = session_configuration.get_provider(&per_turn_config);
