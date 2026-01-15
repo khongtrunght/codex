@@ -78,7 +78,7 @@ prefix_rule(
     // `shell` tool calls.
     let linux_sandbox_exe_folder = TempDir::new()?;
     let codex_linux_sandbox_exe = if cfg!(target_os = "linux") {
-        let codex_linux_sandbox_exe = linux_sandbox_exe_folder.path().join("codex-linux-sandbox");
+        let codex_linux_sandbox_exe = linux_sandbox_exe_folder.path().join("zenith-linux-sandbox");
         let codex_cli = ensure_codex_cli()?;
         symlink(&codex_cli, &codex_linux_sandbox_exe)?;
         Some(codex_linux_sandbox_exe)
@@ -144,24 +144,24 @@ prefix_rule(
 }
 
 fn ensure_codex_cli() -> Result<PathBuf> {
-    let codex_cli = codex_utils_cargo_bin::cargo_bin("codex")?;
+    let codex_cli = codex_utils_cargo_bin::cargo_bin("zenith")?;
 
     let metadata = codex_cli.metadata().with_context(|| {
         format!(
-            "failed to read metadata for codex binary at {}",
+            "failed to read metadata for zenith binary at {}",
             codex_cli.display()
         )
     })?;
     ensure!(
         metadata.is_file(),
-        "expected codex binary at {} to be a file; run `cargo build -p codex-cli --bin codex` before this test",
+        "expected zenith binary at {} to be a file; run `cargo build -p codex-cli --bin zenith` before this test",
         codex_cli.display()
     );
 
     let mode = metadata.permissions().mode();
     ensure!(
         mode & 0o111 != 0,
-        "codex binary at {} is not executable (mode {mode:o}); run `cargo build -p codex-cli --bin codex` before this test",
+        "zenith binary at {} is not executable (mode {mode:o}); run `cargo build -p codex-cli --bin zenith` before this test",
         codex_cli.display()
     );
 
