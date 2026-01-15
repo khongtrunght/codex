@@ -10,6 +10,8 @@ use std::sync::atomic::Ordering;
 use crate::AuthManager;
 use crate::SandboxState;
 use crate::agent::AgentControl;
+use crate::agent::AgentStatus;
+use crate::agent::agent_status_from_event;
 use crate::client_common::REVIEW_PROMPT;
 use crate::compact;
 use crate::compact::get_auto_compact_threshold;
@@ -177,6 +179,8 @@ pub struct Codex {
     pub(crate) next_id: AtomicU64,
     pub(crate) tx_sub: Sender<Submission>,
     pub(crate) rx_event: Receiver<Event>,
+    // Last known status of the agent.
+    pub(crate) agent_status: Arc<RwLock<AgentStatus>>,
 }
 
 /// Wrapper returned by [`Codex::spawn`] containing the spawned [`Codex`],
@@ -285,6 +289,7 @@ impl Codex {
 
         // Generate a unique ID for the lifetime of this Codex session.
         let session_source_clone = session_configuration.session_source.clone();
+        let agent_status = Arc::new(RwLock::new(AgentStatus::PendingInit));
 
         let session = Session::new(
             session_configuration,
@@ -293,6 +298,7 @@ impl Codex {
             models_manager.clone(),
             exec_policy,
             tx_event.clone(),
+            Arc::clone(&agent_status),
             conversation_history,
             session_source_clone,
             skills_manager,
@@ -313,6 +319,7 @@ impl Codex {
             next_id: AtomicU64::new(0),
             tx_sub,
             rx_event,
+            agent_status,
         };
 
         Ok(CodexSpawnOk {
@@ -395,6 +402,7 @@ impl Codex {
 
         // Generate a unique ID for the lifetime of this Codex session.
         let session_source_clone = session_configuration.session_source.clone();
+        let agent_status = Arc::new(RwLock::new(AgentStatus::PendingInit));
 
         let session = Session::new(
             session_configuration,
@@ -403,6 +411,7 @@ impl Codex {
             models_manager.clone(),
             exec_policy,
             tx_event.clone(),
+            Arc::clone(&agent_status),
             conversation_history,
             session_source_clone,
             skills_manager,
@@ -423,6 +432,7 @@ impl Codex {
             next_id: AtomicU64::new(0),
             tx_sub,
             rx_event,
+            agent_status,
         };
 
         Ok(CodexSpawnOk {
@@ -460,6 +470,11 @@ impl Codex {
             .map_err(|_| CodexErr::InternalAgentDied)?;
         Ok(event)
     }
+
+    pub(crate) async fn agent_status(&self) -> AgentStatus {
+        let status = self.agent_status.read().await;
+        status.clone()
+    }
 }
 
 /// Context for an initialized model agent
@@ -479,6 +494,7 @@ pub(crate) struct SharedSubagentContext {
 pub(crate) struct Session {
     conversation_id: ConversationId,
     tx_event: Sender<Event>,
+    agent_status: Arc<RwLock<AgentStatus>>,
     state: Mutex<SessionState>,
     /// The set of enabled features should be invariant for the lifetime of the
     /// session.
@@ -737,6 +753,7 @@ impl Session {
         models_manager: Arc<ModelsManager>,
         exec_policy: ExecPolicyManager,
         tx_event: Sender<Event>,
+        agent_status: Arc<RwLock<AgentStatus>>,
         initial_history: InitialHistory,
         session_source: SessionSource,
         skills_manager: Arc<SkillsManager>,
@@ -894,6 +911,7 @@ impl Session {
         let sess = Arc::new(Session {
             conversation_id,
             tx_event: tx_event.clone(),
+            agent_status: Arc::clone(&agent_status),
             state: Mutex::new(state),
             features: config.features.clone(),
             active_turn: Mutex::new(None),
@@ -1421,11 +1439,11 @@ impl Session {
         // Subagents persist their own events via SharedSubagentContext in persist_rollout_items().
         // When events are forwarded to parent (source_session_id is Some), they're already persisted.
         if event.source_session_id.is_none() {
-            self.services
-                .agent_control
-                .bus
-                .on_event(self.conversation_id, &event.msg)
-                .await;
+            // Record the last known agent status.
+            if let Some(status) = agent_status_from_event(&event.msg) {
+                let mut guard = self.agent_status.write().await;
+                *guard = status;
+            }
             let rollout_items = vec![RolloutItem::EventMsg(event.msg.clone())];
             self.persist_rollout_items(&rollout_items).await;
         }
@@ -3960,6 +3978,7 @@ mod tests {
         let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));
         let agent_control = AgentControl::default();
         let exec_policy = ExecPolicyManager::default();
+        let agent_status = Arc::new(RwLock::new(AgentStatus::PendingInit));
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
@@ -4029,6 +4048,7 @@ mod tests {
         let session = Session {
             conversation_id,
             tx_event,
+            agent_status: Arc::clone(&agent_status),
             state: Mutex::new(state),
             features: config.features.clone(),
             active_turn: Mutex::new(None),
@@ -4058,6 +4078,7 @@ mod tests {
         let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));
         let agent_control = AgentControl::default();
         let exec_policy = ExecPolicyManager::default();
+        let agent_status = Arc::new(RwLock::new(AgentStatus::PendingInit));
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
@@ -4127,6 +4148,7 @@ mod tests {
         let session = Arc::new(Session {
             conversation_id,
             tx_event,
+            agent_status: Arc::clone(&agent_status),
             state: Mutex::new(state),
             features: config.features.clone(),
             active_turn: Mutex::new(None),

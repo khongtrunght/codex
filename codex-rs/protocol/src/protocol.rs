@@ -14,7 +14,6 @@ use std::time::Duration;
 
 use crate::ConversationId;
 use crate::approvals::ElicitationRequestEvent;
-use crate::session_mode::SessionMode;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::custom_prompts::CustomPrompt;
 use crate::items::TurnItem;
@@ -24,6 +23,7 @@ use crate::models::ResponseItem;
 use crate::num_format::format_with_separators;
 use crate::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crate::parse_command::ParsedCommand;
+use crate::session_mode::SessionMode;
 use crate::todo_tool::TodoWriteArgs;
 use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -766,6 +766,26 @@ pub enum EventMsg {
     AgentMessageContentDelta(AgentMessageContentDeltaEvent),
     ReasoningContentDelta(ReasoningContentDeltaEvent),
     ReasoningRawContentDelta(ReasoningRawContentDeltaEvent),
+}
+
+/// Agent lifecycle status, derived from emitted events.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS, Default)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum AgentStatus {
+    /// Agent is waiting for initialization.
+    #[default]
+    PendingInit,
+    /// Agent is currently running.
+    Running,
+    /// Agent is done. Contains the final assistant message.
+    Completed(Option<String>),
+    /// Agent encountered an error.
+    Errored(String),
+    /// Agent has been shutdowned.
+    Shutdown,
+    /// Agent is not found.
+    NotFound,
 }
 
 /// Codex errors that we expose to clients.
@@ -2540,9 +2560,7 @@ mod tests {
 
         // Verify plans dir is in writable roots
         let expected_plans_dir = temp_codex_home.path().join("plans");
-        let plans_in_roots = roots
-            .iter()
-            .any(|r| r.root.as_path() == expected_plans_dir);
+        let plans_in_roots = roots.iter().any(|r| r.root.as_path() == expected_plans_dir);
         assert!(
             plans_in_roots,
             "CODEX_HOME/plans should be in writable roots. Expected: {:?}, Got: {:?}",
