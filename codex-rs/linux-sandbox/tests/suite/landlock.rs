@@ -76,7 +76,7 @@ async fn run_cmd_output(
         exclude_tmpdir_env_var: true,
         exclude_slash_tmp: true,
     };
-    let sandbox_program = env!("CARGO_BIN_EXE_codex-linux-sandbox");
+    let sandbox_program = env!("CARGO_BIN_EXE_zenith-linux-sandbox");
     let codex_linux_sandbox_exe = Some(PathBuf::from(sandbox_program));
 
     process_exec_tool_call(
@@ -182,7 +182,7 @@ async fn assert_network_blocked(cmd: &[&str]) {
     };
 
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
-    let sandbox_program = env!("CARGO_BIN_EXE_codex-linux-sandbox");
+    let sandbox_program = env!("CARGO_BIN_EXE_zenith-linux-sandbox");
     let codex_linux_sandbox_exe: Option<PathBuf> = Some(PathBuf::from(sandbox_program));
     let result = process_exec_tool_call(
         params,

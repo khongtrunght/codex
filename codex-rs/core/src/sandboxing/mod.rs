@@ -57,7 +57,7 @@ pub enum SandboxPreference {
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SandboxTransformError {
-    #[error("missing codex-linux-sandbox executable path")]
+    #[error("missing zenith-linux-sandbox executable path")]
     MissingLinuxSandboxExecutable,
     #[cfg(not(target_os = "macos"))]
     #[error("seatbelt sandbox is only available on macOS")]
@@ -139,7 +139,7 @@ impl SandboxManager {
                 (
                     full_command,
                     HashMap::new(),
-                    Some("codex-linux-sandbox".to_string()),
+                    Some("zenith-linux-sandbox".to_string()),
                 )
             }
             // On Windows, the restricted token sandbox executes in-process via the

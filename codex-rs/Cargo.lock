@@ -1147,10 +1147,10 @@ dependencies = [
  "anyhow",
  "codex-apply-patch",
  "codex-core",
- "codex-linux-sandbox",
  "dotenvy",
  "tempfile",
  "tokio",
+ "zenith-linux-sandbox",
 ]
 
 [[package]]
@@ -1580,21 +1580,6 @@ version = "0.0.0"
 dependencies = [
  "keyring",
  "tracing",
-]
-
-[[package]]
-name = "codex-linux-sandbox"
-version = "0.0.0"
-dependencies = [
- "clap",
- "codex-core",
- "codex-utils-absolute-path",
- "landlock",
- "libc",
- "pretty_assertions",
- "seccompiler",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -8937,6 +8922,21 @@ dependencies = [
  "serde",
  "static_assertions",
  "zvariant",
+]
+
+[[package]]
+name = "zenith-linux-sandbox"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "codex-core",
+ "codex-utils-absolute-path",
+ "landlock",
+ "libc",
+ "pretty_assertions",
+ "seccompiler",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

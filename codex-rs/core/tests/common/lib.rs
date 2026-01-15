@@ -87,8 +87,8 @@ pub async fn load_default_config_for_test(codex_home: &TempDir) -> Config {
 fn default_test_overrides() -> ConfigOverrides {
     ConfigOverrides {
         codex_linux_sandbox_exe: Some(
-            codex_utils_cargo_bin::cargo_bin("codex-linux-sandbox")
-                .expect("should find binary for codex-linux-sandbox"),
+            codex_utils_cargo_bin::cargo_bin("zenith-linux-sandbox")
+                .expect("should find binary for zenith-linux-sandbox"),
         ),
         ..ConfigOverrides::default()
     }
