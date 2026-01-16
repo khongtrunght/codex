@@ -75,13 +75,6 @@ const REFRESH_TOKEN_UNKNOWN_MESSAGE: &str =
 const REFRESH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 pub const REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR: &str = "CODEX_REFRESH_TOKEN_URL_OVERRIDE";
 
-#[cfg(any(test, feature = "test-support"))]
-use once_cell::sync::Lazy;
-#[cfg(any(test, feature = "test-support"))]
-use tempfile::TempDir;
-#[cfg(any(test, feature = "test-support"))]
-static TEST_AUTH_TEMP_DIRS: Lazy<Mutex<Vec<TempDir>>> = Lazy::new(|| Mutex::new(Vec::new()));
-
 #[derive(Debug, Error)]
 pub enum RefreshTokenError {
     #[error("{0}")]
@@ -738,18 +731,13 @@ impl AuthManager {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    #[expect(clippy::expect_used)]
     /// Create an AuthManager with a specific CodexAuth, for testing only.
     pub fn from_auth_for_testing(auth: CodexAuth) -> Arc<Self> {
         let cached = CachedAuth { auth: Some(auth) };
-        let temp_dir = tempfile::tempdir().expect("temp codex home");
-        let codex_home = temp_dir.path().to_path_buf();
+        let codex_home = PathBuf::from("non-existent");
         let storage = create_auth_storage(codex_home.clone(), AuthCredentialsStoreMode::File);
         let loader = CredentialLoader::new(storage);
-        TEST_AUTH_TEMP_DIRS
-            .lock()
-            .expect("lock test codex homes")
-            .push(temp_dir);
+
         Arc::new(Self {
             codex_home,
             inner: RwLock::new(cached),
@@ -781,10 +769,6 @@ impl AuthManager {
     /// Current cached auth (clone). May be `None` if not logged in or load failed.
     pub fn auth(&self) -> Option<CodexAuth> {
         self.inner.read().ok().and_then(|c| c.auth.clone())
-    }
-
-    pub fn codex_home(&self) -> &Path {
-        &self.codex_home
     }
 
     /// Force a reload of the auth information from auth.json. Returns

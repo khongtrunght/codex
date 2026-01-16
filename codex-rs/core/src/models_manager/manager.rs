@@ -32,7 +32,7 @@ use crate::models_manager::model_presets::builtin_model_presets;
 // Legacy cache file (kept for backwards compatibility reference)
 #[allow(dead_code)]
 const MODEL_CACHE_FILE: &str = "models_cache.json";
-const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(86400); // 24 hours
+const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(300); // 5 minutes
 const OPENAI_DEFAULT_API_MODEL: &str = "gpt-5.1-codex-max";
 const OPENAI_DEFAULT_CHATGPT_MODEL: &str = "gpt-5.2-codex";
 const CODEX_AUTO_BALANCED_MODEL: &str = "codex-auto-balanced";
@@ -53,8 +53,7 @@ pub struct ModelsManager {
 
 impl ModelsManager {
     /// Construct a manager scoped to the provided `AuthManager`.
-    pub fn new(auth_manager: Arc<AuthManager>) -> Self {
-        let codex_home = auth_manager.codex_home().to_path_buf();
+    pub fn new(codex_home: PathBuf, auth_manager: Arc<AuthManager>) -> Self {
         // Load bundled models as initial OpenAI models for backwards compatibility
         let mut initial_models = HashMap::new();
         if let Ok(bundled) = Self::load_remote_models_from_file() {
@@ -72,8 +71,11 @@ impl ModelsManager {
 
     #[cfg(any(test, feature = "test-support"))]
     /// Construct a manager scoped to the provided `AuthManager` with a specific provider. Used for integration tests.
-    pub fn with_provider(auth_manager: Arc<AuthManager>, provider: ModelProviderInfo) -> Self {
-        let codex_home = auth_manager.codex_home().to_path_buf();
+    pub fn with_provider(
+        codex_home: PathBuf,
+        auth_manager: Arc<AuthManager>,
+        provider: ModelProviderInfo,
+    ) -> Self {
         let mut initial_models = HashMap::new();
         if let Ok(bundled) = Self::load_remote_models_from_file() {
             initial_models.insert(provider.config_key, bundled);
@@ -770,7 +772,8 @@ mod tests {
         config.model_provider = provider.clone();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-        let manager = ModelsManager::with_provider(auth_manager, provider);
+        let manager =
+            ModelsManager::with_provider(codex_home.path().to_path_buf(), auth_manager, provider);
 
         manager
             .refresh_available_models(&config)
@@ -836,7 +839,8 @@ mod tests {
             false,
             AuthCredentialsStoreMode::File,
         ));
-        let manager = ModelsManager::with_provider(auth_manager, provider);
+        let manager =
+            ModelsManager::with_provider(codex_home.path().to_path_buf(), auth_manager, provider);
 
         manager
             .refresh_available_models(&config)
@@ -894,7 +898,10 @@ mod tests {
             false,
             AuthCredentialsStoreMode::File,
         ));
-        let manager = ModelsManager::with_provider(auth_manager, provider.clone());
+        let provider = provider_for(server.uri());
+        let provider_config_key = provider.config_key.clone();
+        let manager =
+            ModelsManager::with_provider(codex_home.path().to_path_buf(), auth_manager, provider);
 
         manager
             .refresh_available_models(&config)
@@ -905,7 +912,7 @@ mod tests {
         // Cache is now per-provider
         let cache_path = codex_home
             .path()
-            .join(format!("models_cache_{}.json", provider.config_key));
+            .join(format!("models_cache_{}.json", provider_config_key));
         let contents =
             std::fs::read_to_string(&cache_path).expect("cache file should exist after refresh");
         let mut cache: ModelsCache =
@@ -972,7 +979,10 @@ mod tests {
         config.model_provider = provider.clone();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-        let mut manager = ModelsManager::with_provider(auth_manager, provider.clone());
+        let provider = provider_for(server.uri());
+        let provider_config_key = provider.config_key.clone();
+        let mut manager =
+            ModelsManager::with_provider(codex_home.path().to_path_buf(), auth_manager, provider);
         manager.cache_ttl = Duration::ZERO;
 
         manager
@@ -1000,8 +1010,8 @@ mod tests {
             .try_list_models(&config)
             .expect("models should be available");
         // Models now have provider prefix
-        let expected_new = format!("{}/remote-new", provider.config_key);
-        let expected_old = format!("{}/remote-old", provider.config_key);
+        let expected_new = format!("{}/remote-new", provider_config_key);
+        let expected_old = format!("{}/remote-old", provider_config_key);
         assert!(
             available.iter().any(|preset| preset.model == expected_new),
             "new remote model should be listed"
@@ -1024,10 +1034,12 @@ mod tests {
 
     #[test]
     fn build_available_models_picks_default_after_hiding_hidden_models() {
+        let codex_home = tempdir().expect("temp dir");
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let provider = provider_for("http://example.test".to_string());
-        let mut manager = ModelsManager::with_provider(auth_manager, provider);
+        let mut manager =
+            ModelsManager::with_provider(codex_home.path().to_path_buf(), auth_manager, provider);
         manager.local_models = Vec::new();
 
         let hidden_model = remote_model_with_visibility("hidden", "Hidden", 0, "hide");

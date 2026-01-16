@@ -3949,7 +3949,10 @@ mod tests {
         let conversation_id = ThreadId::default();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
-        let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));
+        let models_manager = Arc::new(ModelsManager::new(
+            config.codex_home.clone(),
+            auth_manager.clone(),
+        ));
         let agent_control = AgentControl::default();
         let exec_policy = ExecPolicyManager::default();
         let agent_status = Arc::new(RwLock::new(AgentStatus::PendingInit));
@@ -4049,7 +4052,10 @@ mod tests {
         let conversation_id = ThreadId::default();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
-        let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));
+        let models_manager = Arc::new(ModelsManager::new(
+            config.codex_home.clone(),
+            auth_manager.clone(),
+        ));
         let agent_control = AgentControl::default();
         let exec_policy = ExecPolicyManager::default();
         let agent_status = Arc::new(RwLock::new(AgentStatus::PendingInit));
