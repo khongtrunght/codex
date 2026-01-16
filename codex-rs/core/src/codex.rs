@@ -36,7 +36,7 @@ use crate::user_notification::UserNotifier;
 use crate::util::error_or_panic;
 use async_channel::Receiver;
 use async_channel::Sender;
-use codex_protocol::ConversationId;
+use codex_protocol::ThreadId;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::items::TurnItem;
 use codex_protocol::protocol::FileChange;
@@ -188,7 +188,9 @@ pub struct Codex {
 /// unique session id.
 pub struct CodexSpawnOk {
     pub codex: Codex,
-    pub conversation_id: ConversationId,
+    pub thread_id: ThreadId,
+    #[deprecated(note = "use thread_id")]
+    pub conversation_id: ThreadId,
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
@@ -311,7 +313,7 @@ impl Codex {
             error!("Failed to create session: {e:#}");
             map_session_init_error(&e, &config.codex_home)
         })?;
-        let conversation_id = session.conversation_id;
+        let thread_id = session.conversation_id;
 
         // This task will run until Op::Shutdown is received.
         tokio::spawn(submission_loop(session, config, rx_sub));
@@ -322,9 +324,11 @@ impl Codex {
             agent_status,
         };
 
+        #[allow(deprecated)]
         Ok(CodexSpawnOk {
             codex,
-            conversation_id,
+            thread_id,
+            conversation_id: thread_id,
         })
     }
 
@@ -435,8 +439,10 @@ impl Codex {
             agent_status,
         };
 
+        #[allow(deprecated)]
         Ok(CodexSpawnOk {
             codex,
+            thread_id: conversation_id,
             conversation_id,
         })
     }
@@ -492,7 +498,7 @@ pub(crate) struct SharedSubagentContext {
 }
 
 pub(crate) struct Session {
-    conversation_id: ConversationId,
+    conversation_id: ThreadId,
     tx_event: Sender<Event>,
     agent_status: Arc<RwLock<AgentStatus>>,
     state: Mutex<SessionState>,
@@ -511,7 +517,7 @@ pub(crate) struct Session {
     shared_subagent_context: Option<SharedSubagentContext>,
 }
 
-/// The context needed for a single turn of the conversation.
+/// The context needed for a single turn of the thread.
 #[derive(Debug)]
 pub(crate) struct TurnContext {
     pub(crate) sub_id: String,
@@ -679,7 +685,7 @@ impl Session {
         session_configuration: &SessionConfiguration,
         per_turn_config: Config,
         model_family: ModelFamily,
-        conversation_id: ConversationId,
+        conversation_id: ThreadId,
         sub_id: String,
     ) -> TurnContext {
         let otel_manager = otel_manager.clone().with_model(
@@ -778,7 +784,7 @@ impl Session {
             if let Some(ref ctx) = shared_subagent_context {
                 // Subagent: use a new conversation ID but don't create a rollout file.
                 // The rollout_path points to the unified subagent file (created by parent).
-                let conversation_id = ConversationId::default();
+                let conversation_id = ThreadId::default();
                 let recorder_guard = ctx.recorder.lock().await;
                 let path = recorder_guard
                     .as_ref()
@@ -792,7 +798,7 @@ impl Session {
                 // Normal session: create our own rollout recorder
                 let (conversation_id, rollout_params) = match &initial_history {
                     InitialHistory::New | InitialHistory::Forked(_) => {
-                        let conversation_id = ConversationId::default();
+                        let conversation_id = ThreadId::default();
                         (
                             conversation_id,
                             RolloutRecorderParams::new(
@@ -1018,7 +1024,7 @@ impl Session {
     }
 
     /// Get the conversation ID for this session.
-    pub(crate) fn conversation_id(&self) -> ConversationId {
+    pub(crate) fn conversation_id(&self) -> ThreadId {
         self.conversation_id
     }
 
@@ -3597,7 +3603,7 @@ mod tests {
 
         session
             .record_initial_history(InitialHistory::Resumed(ResumedHistory {
-                conversation_id: ConversationId::default(),
+                conversation_id: ThreadId::default(),
                 history: rollout_items,
                 rollout_path: PathBuf::from("/tmp/resume.jsonl"),
                 subagent_histories: std::collections::HashMap::new(),
@@ -3675,7 +3681,7 @@ mod tests {
 
         session
             .record_initial_history(InitialHistory::Resumed(ResumedHistory {
-                conversation_id: ConversationId::default(),
+                conversation_id: ThreadId::default(),
                 history: rollout_items,
                 rollout_path: PathBuf::from("/tmp/resume.jsonl"),
                 subagent_histories: Default::default(),
@@ -3949,7 +3955,7 @@ mod tests {
     }
 
     fn otel_manager(
-        conversation_id: ConversationId,
+        conversation_id: ThreadId,
         config: &Config,
         model_family: &ModelFamily,
         session_source: SessionSource,
@@ -3972,7 +3978,7 @@ mod tests {
         let codex_home = tempfile::tempdir().expect("create temp dir");
         let config = build_test_config(codex_home.path()).await;
         let config = Arc::new(config);
-        let conversation_id = ConversationId::default();
+        let conversation_id = ThreadId::default();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));
@@ -4072,7 +4078,7 @@ mod tests {
         let codex_home = tempfile::tempdir().expect("create temp dir");
         let config = build_test_config(codex_home.path()).await;
         let config = Arc::new(config);
-        let conversation_id = ConversationId::default();
+        let conversation_id = ThreadId::default();
         let auth_manager =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("Test API Key"));
         let models_manager = Arc::new(ModelsManager::new(auth_manager.clone()));

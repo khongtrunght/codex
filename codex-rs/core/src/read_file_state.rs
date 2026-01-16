@@ -6,7 +6,8 @@
 //! 3. Cache content for compaction recovery
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 /// Information about a file that was read during the session.
@@ -129,11 +130,12 @@ impl ReadFileState {
             }
         };
 
-        let info = self.files.get(&canonical).ok_or_else(|| {
-            FileValidationError::NotRead {
+        let info = self
+            .files
+            .get(&canonical)
+            .ok_or_else(|| FileValidationError::NotRead {
                 path: path.to_path_buf(),
-            }
-        })?;
+            })?;
 
         if check_mtime {
             if let Ok(metadata) = std::fs::metadata(path) {

@@ -1,7 +1,8 @@
 //! Attachment registry for collecting attachments.
 
 use codex_protocol::models::AttachmentData;
-use futures::future::{BoxFuture, join_all};
+use futures::future::BoxFuture;
+use futures::future::join_all;
 
 use crate::codex::Session;
 use crate::codex::TurnContext;
@@ -35,11 +36,7 @@ impl AttachmentRegistry {
     /// Collect all attachments from registered collectors.
     ///
     /// Collectors are executed in parallel and results are flattened.
-    pub async fn collect_all(
-        &self,
-        session: &Session,
-        turn: &TurnContext,
-    ) -> Vec<AttachmentData> {
+    pub async fn collect_all(&self, session: &Session, turn: &TurnContext) -> Vec<AttachmentData> {
         join_all(self.collectors.iter().map(|f| f(session, turn)))
             .await
             .into_iter()

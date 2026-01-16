@@ -60,10 +60,14 @@ impl From<&QuestionInput> for AskUserQuestion {
         AskUserQuestion {
             question: q.question.clone(),
             header: q.header.clone(),
-            options: q.options.iter().map(|o| AskUserQuestionOption {
-                label: o.label.clone(),
-                description: o.description.clone(),
-            }).collect(),
+            options: q
+                .options
+                .iter()
+                .map(|o| AskUserQuestionOption {
+                    label: o.label.clone(),
+                    description: o.description.clone(),
+                })
+                .collect(),
             multi_select: q.multi_select,
         }
     }

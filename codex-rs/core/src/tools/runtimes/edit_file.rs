@@ -191,22 +191,26 @@ impl ToolRuntime<EditFileRequest, EditFileOutput> for EditFileRuntime {
             .map_err(|e| ToolError::Rejected(format!("failed to read file: {e}")))?;
 
         // Try to replace with fallback matching strategies
-        let (new_content, strategy, count) =
-            match try_replace(&content, &req.old_string, &req.new_string, req.replace_all) {
-                Some(result) => result,
-                None => {
-                    let old_preview = if req.old_string.len() > 100 {
-                        format!("{}...", &req.old_string[..100])
-                    } else {
-                        req.old_string.clone()
-                    };
-                    return Err(ToolError::Rejected(format!(
-                        "old_string not found in file. The string:\n```\n{}\n```\nwas not found in {}",
-                        old_preview,
-                        req.file_path.display()
-                    )));
-                }
-            };
+        let (new_content, strategy, count) = match try_replace(
+            &content,
+            &req.old_string,
+            &req.new_string,
+            req.replace_all,
+        ) {
+            Some(result) => result,
+            None => {
+                let old_preview = if req.old_string.len() > 100 {
+                    format!("{}...", &req.old_string[..100])
+                } else {
+                    req.old_string.clone()
+                };
+                return Err(ToolError::Rejected(format!(
+                    "old_string not found in file. The string:\n```\n{}\n```\nwas not found in {}",
+                    old_preview,
+                    req.file_path.display()
+                )));
+            }
+        };
 
         // Write the new content
         fs::write(&req.file_path, &new_content)

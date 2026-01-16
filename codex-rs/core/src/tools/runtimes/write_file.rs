@@ -200,9 +200,9 @@ impl ToolRuntime<WriteFileRequest, WriteFileOutput> for WriteFileRuntime {
         // Ensure parent directory exists
         if let Some(parent) = req.file_path.parent() {
             if !parent.exists() {
-                fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| ToolError::Rejected(format!("failed to create directories: {e}")))?;
+                fs::create_dir_all(parent).await.map_err(|e| {
+                    ToolError::Rejected(format!("failed to create directories: {e}"))
+                })?;
             }
         }
 

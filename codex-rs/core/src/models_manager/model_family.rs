@@ -15,7 +15,10 @@ pub(crate) const CONTEXT_WINDOW_272K: i64 = 272_000;
 
 /// Renders the GeneralMainPrompt template with the given tool configuration.
 /// This provides a unified prompt for all model families.
-fn render_general_prompt(edit_tool: Option<EditToolType>, shell_tool: ConfigShellToolType) -> String {
+fn render_general_prompt(
+    edit_tool: Option<EditToolType>,
+    shell_tool: ConfigShellToolType,
+) -> String {
     let tools = ToolConfig::new(edit_tool, shell_tool);
     GeneralMainPrompt { tools }
         .render()

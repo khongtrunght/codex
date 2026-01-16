@@ -173,16 +173,18 @@ impl ToolHandler for WriteFileHandler {
                 Ok(ToolOutput::Function {
                     content: format!(
                         "Successfully wrote {} lines ({} bytes) to {}",
-                        output.lines, output.bytes, path.display()
+                        output.lines,
+                        output.bytes,
+                        path.display()
                     ),
                     content_items: None,
                     success: Some(true),
                 })
             }
             Err(ToolError::Rejected(msg)) => Err(FunctionCallError::RespondToModel(msg)),
-            Err(ToolError::Codex(err)) => {
-                Err(FunctionCallError::RespondToModel(format!("write failed: {err}")))
-            }
+            Err(ToolError::Codex(err)) => Err(FunctionCallError::RespondToModel(format!(
+                "write failed: {err}"
+            ))),
         }
     }
 }

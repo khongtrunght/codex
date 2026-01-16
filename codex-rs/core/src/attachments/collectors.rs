@@ -7,7 +7,8 @@ use futures::future::BoxFuture;
 use super::types::TURNS_BETWEEN_ATTACHMENTS;
 use crate::codex::Session;
 use crate::codex::TurnContext;
-use crate::plan_file::{plan_exists_with_slug, resolve_plan_file_path_with_slug};
+use crate::plan_file::plan_exists_with_slug;
+use crate::plan_file::resolve_plan_file_path_with_slug;
 
 /// Analyzes history to find turns since last attachment of given types.
 /// Returns (turns_since_attachment, found_previous_attachment).
@@ -41,7 +42,7 @@ pub fn analyze_history_for_throttle(items: &[ResponseItem]) -> (usize, bool) {
                 }
                 // CompactFileRestore is not related to plan mode - skip it
                 AttachmentData::CompactFileRestore { .. } => {}
-            }
+            },
             _ => {}
         }
     }

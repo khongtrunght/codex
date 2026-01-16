@@ -760,7 +760,7 @@ mod tests {
     #[serial(codex_api_key)]
     async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
         let codex_home = tempdir().unwrap();
-        let fake_jwt = write_auth_file(
+        let _fake_jwt = write_auth_file(
             AuthFileParams {
                 openai_api_key: None,
                 chatgpt_plan_type: "pro".to_string(),

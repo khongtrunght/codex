@@ -3,7 +3,8 @@
 //! This module provides a provider-agnostic way to select between different
 //! model tiers (Default, Small) that map to user-configured model slugs.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use std::fmt;
 use std::str::FromStr;
 

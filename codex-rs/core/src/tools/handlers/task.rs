@@ -16,7 +16,7 @@ use tracing::warn;
 use crate::agent_types::AgentTypeConfig;
 use crate::codex::Session;
 use crate::codex::TurnContext;
-use crate::codex_delegate::run_codex_conversation_one_shot;
+use crate::codex_delegate::run_codex_thread_one_shot;
 use crate::config::Config;
 use crate::function_tool::FunctionCallError;
 use crate::model_tier::ModelTier;
@@ -352,7 +352,7 @@ async fn run_task_subagent(
         // SharedSubagentContext creation and avoids trying to write to a non-existent file
         None
     };
-    let codex = run_codex_conversation_one_shot(
+    let codex = run_codex_thread_one_shot(
         config,
         Arc::clone(&parent_session.services.auth_manager),
         Arc::clone(&parent_session.services.models_manager),

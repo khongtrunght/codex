@@ -161,7 +161,8 @@ impl ToolHandler for EditFileHandler {
             Ok(output) => {
                 // Read the actual new content for accurate diff
                 let actual_new_content = fs::read_to_string(&path).await.unwrap_or_default();
-                let final_diff = diffy::create_patch(&original_content, &actual_new_content).to_string();
+                let final_diff =
+                    diffy::create_patch(&original_content, &actual_new_content).to_string();
                 let final_changes: HashMap<std::path::PathBuf, FileChange> = [(
                     path.clone(),
                     FileChange::Update {
@@ -213,12 +214,10 @@ impl ToolHandler for EditFileHandler {
                     success: Some(true),
                 })
             }
-            Err(ToolError::Rejected(msg)) => {
-                Err(FunctionCallError::RespondToModel(msg))
-            }
-            Err(ToolError::Codex(err)) => {
-                Err(FunctionCallError::RespondToModel(format!("edit failed: {err}")))
-            }
+            Err(ToolError::Rejected(msg)) => Err(FunctionCallError::RespondToModel(msg)),
+            Err(ToolError::Codex(err)) => Err(FunctionCallError::RespondToModel(format!(
+                "edit failed: {err}"
+            ))),
         }
     }
 }

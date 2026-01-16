@@ -2143,7 +2143,11 @@ impl SubAgentCell {
         lines.push(Line::from(vec![bullet, " ".into(), header.into()]));
 
         let tool_calls = self.extract_tool_calls();
-        let tool_word = if tool_calls.len() == 1 { "tool use" } else { "tool uses" };
+        let tool_word = if tool_calls.len() == 1 {
+            "tool use"
+        } else {
+            "tool uses"
+        };
         let duration_text = self
             .duration
             .map(|d| format!(" · {}", format_duration(d)))
@@ -2172,7 +2176,8 @@ impl SubAgentCell {
                 ]));
                 if let Some(output) = &call.output {
                     for line in output.lines().take(3) {
-                        let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(6));
+                        let truncated =
+                            truncate_to_n_chars(line, (width as usize).saturating_sub(6));
                         lines.push(Line::from(vec!["  │   ".dim(), truncated.dim()]));
                     }
                 }
@@ -2190,7 +2195,10 @@ impl SubAgentCell {
             // Done line
             let done_text = format!(
                 "Done ({} {} · {}{})",
-                tool_calls.len(), tool_word, self.format_tokens(), duration_text
+                tool_calls.len(),
+                tool_word,
+                self.format_tokens(),
+                duration_text
             );
             lines.push(Line::from(vec!["  └ ".dim(), done_text.dim()]));
         } else {
@@ -2198,7 +2206,11 @@ impl SubAgentCell {
             let second_line = if self.status == SubAgentStatus::Running {
                 if let Some(last_call) = tool_calls.last() {
                     let display_arg = last_call.title.as_deref().unwrap_or(&last_call.arguments);
-                    format!("{}({})", last_call.tool_name, truncate_to_n_chars(display_arg, 60))
+                    format!(
+                        "{}({})",
+                        last_call.tool_name,
+                        truncate_to_n_chars(display_arg, 60)
+                    )
                 } else if self.resumed {
                     "Resumed...".to_string()
                 } else {
@@ -2207,7 +2219,10 @@ impl SubAgentCell {
             } else {
                 format!(
                     "Done ({} {} · {}{})",
-                    tool_calls.len(), tool_word, self.format_tokens(), duration_text
+                    tool_calls.len(),
+                    tool_word,
+                    self.format_tokens(),
+                    duration_text
                 )
             };
             lines.push(Line::from(vec!["  └ ".dim(), second_line.dim()]));
@@ -2307,8 +2322,8 @@ impl SubAgentCell {
                 // Tool call header: ToolName(args) - tool name bold, path uses terminal width
                 let display_arg = call.title.as_deref().unwrap_or(&call.arguments);
                 let prefix_width = 4; // "├  " prefix
-                let available_for_args = (width as usize)
-                    .saturating_sub(prefix_width + call.tool_name.len() + 2); // 2 for "()"
+                let available_for_args =
+                    (width as usize).saturating_sub(prefix_width + call.tool_name.len() + 2); // 2 for "()"
                 let arg_display =
                     crate::text_formatting::center_truncate_path(display_arg, available_for_args);
                 lines.push(Line::from(vec![
@@ -4549,5 +4564,4 @@ mod tests {
             other => panic!("Expected EventMsg, got: {:?}", other),
         }
     }
-
 }

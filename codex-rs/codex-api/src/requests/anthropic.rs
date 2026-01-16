@@ -193,7 +193,10 @@ impl<'a> AnthropicRequestBuilder<'a> {
                 }
 
                 ResponseItem::CustomToolCall {
-                    call_id, name, input, ..
+                    call_id,
+                    name,
+                    input,
+                    ..
                 } => {
                     // Map to assistant tool_use
                     // input is a String - parse as JSON or wrap for apply_patch

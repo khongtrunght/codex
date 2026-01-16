@@ -158,8 +158,9 @@ mod tests {
     fn test_resolve_plan_file_path_with_slug_agent() {
         let path = resolve_plan_file_path_with_slug("test-happy-slug", Some("agent-123"));
 
-        assert!(path
-            .to_string_lossy()
-            .ends_with("test-happy-slug-agent-agent-123.md"));
+        assert!(
+            path.to_string_lossy()
+                .ends_with("test-happy-slug-agent-agent-123.md")
+        );
     }
 }

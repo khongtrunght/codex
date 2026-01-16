@@ -17,7 +17,7 @@ use tokio::time::timeout;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-// Helper to create a config.toml; mirrors create_conversation.rs
+// Helper to create a config.toml; mirrors create_thread
 fn create_config_toml(codex_home: &Path) -> std::io::Result<()> {
     let config_toml = codex_home.join("config.toml");
     std::fs::write(

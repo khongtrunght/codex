@@ -211,10 +211,7 @@ impl ApprovalOverlay {
                 ) => {
                     self.handle_plan_mode_decision(turn_id, decision.clone());
                 }
-                (
-                    ApprovalVariant::ExitPlanMode { turn_id },
-                    ApprovalDecision::Review(decision),
-                ) => {
+                (ApprovalVariant::ExitPlanMode { turn_id }, ApprovalDecision::Review(decision)) => {
                     self.handle_plan_mode_decision(turn_id, decision.clone());
                 }
                 _ => {}

@@ -53,7 +53,7 @@ impl TuiDisplayMode {
         match self {
             Self::Default => "",
             Self::AcceptEdits => "\u{23F5}\u{23F5}", // ⏵⏵
-            Self::Plan => "\u{23F8}",                 // ⏸
+            Self::Plan => "\u{23F8}",                // ⏸
             Self::Bypass => "\u{23F5}\u{23F5}",      // ⏵⏵
         }
     }

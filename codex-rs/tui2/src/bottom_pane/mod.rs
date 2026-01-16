@@ -50,10 +50,10 @@ pub(crate) enum CancellationEvent {
     NotHandled,
 }
 
+use crate::tui_display_mode::TuiDisplayMode;
 pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 use codex_protocol::custom_prompts::CustomPrompt;
-use crate::tui_display_mode::TuiDisplayMode;
 use codex_protocol::todo_tool::StepStatus;
 use codex_protocol::todo_tool::TodoWriteArgs;
 use ratatui::style::Stylize;

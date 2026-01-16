@@ -51,7 +51,7 @@ async fn set_default_model_persists_overrides() -> Result<()> {
     Ok(())
 }
 
-// Helper to create a config.toml; mirrors create_conversation.rs
+// Helper to create a config.toml; mirrors create_thread
 fn create_config_toml(codex_home: &Path) -> std::io::Result<()> {
     let config_toml = codex_home.join("config.toml");
     std::fs::write(

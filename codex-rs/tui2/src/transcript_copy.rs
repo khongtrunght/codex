@@ -637,8 +637,8 @@ mod tests {
             head: Some(TranscriptSelectionPoint::new(0, viewport_edge_col)),
         };
 
-        let out =
-            selection_to_copy_text_for_cells(&cells, selection, width, false).expect("expected text");
+        let out = selection_to_copy_text_for_cells(&cells, selection, width, false)
+            .expect("expected text");
         assert_eq!(out, "```\n    0123456789ABCDEFGHIJ\n```");
     }
 

@@ -104,8 +104,11 @@ impl ModelsManager {
             .collect();
 
         let provider_keys: Vec<&str> = providers.iter().map(|(k, _)| k.as_str()).collect();
-        tracing::debug!("[refresh_all_providers] Starting fetch for {} providers: {:?}",
-            providers.len(), provider_keys);
+        tracing::debug!(
+            "[refresh_all_providers] Starting fetch for {} providers: {:?}",
+            providers.len(),
+            provider_keys
+        );
 
         let fetch_futures: Vec<_> = providers
             .into_iter()
@@ -136,53 +139,88 @@ impl ModelsManager {
         provider: ModelProviderInfo,
         _config: &Config,
     ) -> CoreResult<()> {
-        tracing::debug!("[fetch_provider_models] Starting for provider: {}", provider_key);
+        tracing::debug!(
+            "[fetch_provider_models] Starting for provider: {}",
+            provider_key
+        );
 
         // Skip API key mode - only fetch for ChatGPT auth or no-auth providers
         let auth_mode = self.auth_manager.get_auth_mode();
-        tracing::debug!("[fetch_provider_models] {} - auth_mode: {:?}, requires_openai_auth: {}",
-            provider_key, auth_mode, provider.requires_openai_auth);
+        tracing::debug!(
+            "[fetch_provider_models] {} - auth_mode: {:?}, requires_openai_auth: {}",
+            provider_key,
+            auth_mode,
+            provider.requires_openai_auth
+        );
 
         if auth_mode == Some(AuthMode::ApiKey) && provider.requires_openai_auth {
-            tracing::debug!("[fetch_provider_models] {} - SKIPPED: ApiKey mode with requires_openai_auth", provider_key);
+            tracing::debug!(
+                "[fetch_provider_models] {} - SKIPPED: ApiKey mode with requires_openai_auth",
+                provider_key
+            );
             return Ok(());
         }
 
         // Skip if provider requires auth we don't have
         if provider.requires_openai_auth && auth_mode.is_none() {
-            tracing::debug!("[fetch_provider_models] {} - SKIPPED: requires_openai_auth but no auth_mode", provider_key);
+            tracing::debug!(
+                "[fetch_provider_models] {} - SKIPPED: requires_openai_auth but no auth_mode",
+                provider_key
+            );
             return Ok(());
         }
 
         // Skip if required env_key is missing
         if provider.env_key.is_some() && provider.api_key().is_err() {
-            tracing::debug!("[fetch_provider_models] {} - SKIPPED: env_key {:?} not set", provider_key, provider.env_key);
+            tracing::debug!(
+                "[fetch_provider_models] {} - SKIPPED: env_key {:?} not set",
+                provider_key,
+                provider.env_key
+            );
             return Ok(());
         }
 
         // Try loading from per-provider cache first
         if self.try_load_provider_cache(&provider_key).await {
-            tracing::debug!("[fetch_provider_models] {} - loaded from cache, skipping network fetch", provider_key);
+            tracing::debug!(
+                "[fetch_provider_models] {} - loaded from cache, skipping network fetch",
+                provider_key
+            );
             return Ok(());
         }
 
-        tracing::debug!("[fetch_provider_models] {} - proceeding to network fetch", provider_key);
+        tracing::debug!(
+            "[fetch_provider_models] {} - proceeding to network fetch",
+            provider_key
+        );
 
         // Fetch from network
         let auth = self.auth_manager.auth();
         let api_provider = match provider.to_api_provider(auth_mode) {
             Ok(p) => p,
             Err(e) => {
-                tracing::debug!("[fetch_provider_models] {} - ERROR creating api_provider: {:?}", provider_key, e);
+                tracing::debug!(
+                    "[fetch_provider_models] {} - ERROR creating api_provider: {:?}",
+                    provider_key,
+                    e
+                );
                 return Err(e);
             }
         };
-        tracing::debug!("[fetch_provider_models] {} - api_provider base_url: {}", provider_key, api_provider.base_url);
+        tracing::debug!(
+            "[fetch_provider_models] {} - api_provider base_url: {}",
+            provider_key,
+            api_provider.base_url
+        );
 
         let api_auth = match auth_provider_from_auth(auth.clone(), &provider).await {
             Ok(a) => a,
             Err(e) => {
-                tracing::debug!("[fetch_provider_models] {} - ERROR creating api_auth: {:?}", provider_key, e);
+                tracing::debug!(
+                    "[fetch_provider_models] {} - ERROR creating api_auth: {:?}",
+                    provider_key,
+                    e
+                );
                 return Err(e);
             }
         };
@@ -191,20 +229,29 @@ impl ModelsManager {
         let client = ModelsClient::new(transport, api_provider, api_auth);
 
         let client_version = format_client_version_to_whole();
-        tracing::debug!("[fetch_provider_models] {} - calling list_models...", provider_key);
+        tracing::debug!(
+            "[fetch_provider_models] {} - calling list_models...",
+            provider_key
+        );
 
-        let ModelsResponse { models, etag } = match client
-            .list_models(&client_version, HeaderMap::new())
-            .await
-        {
-            Ok(resp) => resp,
-            Err(e) => {
-                tracing::debug!("[fetch_provider_models] {} - NETWORK ERROR: {:?}", provider_key, e);
-                return Err(map_api_error(e));
-            }
-        };
+        let ModelsResponse { models, etag } =
+            match client.list_models(&client_version, HeaderMap::new()).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    tracing::debug!(
+                        "[fetch_provider_models] {} - NETWORK ERROR: {:?}",
+                        provider_key,
+                        e
+                    );
+                    return Err(map_api_error(e));
+                }
+            };
 
-        tracing::debug!("[fetch_provider_models] {} - SUCCESS: fetched {} models", provider_key, models.len());
+        tracing::debug!(
+            "[fetch_provider_models] {} - SUCCESS: fetched {} models",
+            provider_key,
+            models.len()
+        );
 
         let etag = (!etag.is_empty()).then_some(etag);
 
@@ -219,9 +266,14 @@ impl ModelsManager {
             .insert(provider_key.clone(), etag.clone());
 
         // Persist to per-provider cache file
-        self.persist_provider_cache(&provider_key, &models, etag).await;
+        self.persist_provider_cache(&provider_key, &models, etag)
+            .await;
 
-        tracing::debug!("[fetch_provider_models] {} - stored and cached {} models", provider_key, models.len());
+        tracing::debug!(
+            "[fetch_provider_models] {} - stored and cached {} models",
+            provider_key,
+            models.len()
+        );
 
         Ok(())
     }
@@ -294,7 +346,8 @@ impl ModelsManager {
         if auth_mode == Some(AuthMode::ChatGPT)
             && available_models.iter().any(|m| {
                 m.model == CODEX_AUTO_BALANCED_MODEL
-                    || m.model.ends_with(&format!("/{}", CODEX_AUTO_BALANCED_MODEL))
+                    || m.model
+                        .ends_with(&format!("/{}", CODEX_AUTO_BALANCED_MODEL))
             })
         {
             return CODEX_AUTO_BALANCED_MODEL.to_string();
@@ -385,29 +438,48 @@ impl ModelsManager {
     /// Attempt to load models for a specific provider from cache.
     async fn try_load_provider_cache(&self, provider_key: &str) -> bool {
         let cache_path = self.cache_path_for_provider(provider_key);
-        tracing::debug!("[try_load_provider_cache] {} - checking cache at {:?}", provider_key, cache_path);
+        tracing::debug!(
+            "[try_load_provider_cache] {} - checking cache at {:?}",
+            provider_key,
+            cache_path
+        );
 
         let cache = match cache::load_cache(&cache_path).await {
             Ok(cache) => cache,
             Err(err) => {
-                tracing::debug!("[try_load_provider_cache] {} - failed to load: {}", provider_key, err);
+                tracing::debug!(
+                    "[try_load_provider_cache] {} - failed to load: {}",
+                    provider_key,
+                    err
+                );
                 return false;
             }
         };
         let cache = match cache {
             Some(cache) => cache,
             None => {
-                tracing::debug!("[try_load_provider_cache] {} - cache file not found", provider_key);
+                tracing::debug!(
+                    "[try_load_provider_cache] {} - cache file not found",
+                    provider_key
+                );
                 return false;
             }
         };
         if !cache.is_fresh(self.cache_ttl) {
-            tracing::debug!("[try_load_provider_cache] {} - cache expired (fetched_at: {:?}, ttl: {:?})",
-                provider_key, cache.fetched_at, self.cache_ttl);
+            tracing::debug!(
+                "[try_load_provider_cache] {} - cache expired (fetched_at: {:?}, ttl: {:?})",
+                provider_key,
+                cache.fetched_at,
+                self.cache_ttl
+            );
             return false;
         }
         let models = cache.models.clone();
-        tracing::debug!("[try_load_provider_cache] {} - loaded {} models from cache", provider_key, models.len());
+        tracing::debug!(
+            "[try_load_provider_cache] {} - loaded {} models from cache",
+            provider_key,
+            models.len()
+        );
         self.remote_models
             .write()
             .await

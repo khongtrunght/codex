@@ -297,6 +297,7 @@ pub fn built_in_model_providers() -> HashMap<String, ModelProviderInfo> {
         .collect()
 }
 
+#[allow(dead_code)] // Maybe used in the future
 pub fn create_oss_provider(default_provider_port: u16, wire_api: WireApi) -> ModelProviderInfo {
     // These CODEX_OSS_ environment variables are experimental: we may
     // switch to reading values from config.toml instead.

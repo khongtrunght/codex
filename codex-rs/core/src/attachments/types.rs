@@ -25,10 +25,7 @@ pub const TURNS_BETWEEN_ATTACHMENTS: usize = 5;
 /// Convert AttachmentData to ResponseItem::Message items for API call.
 /// This follows the GhostSnapshot pattern: Attachment is stored in history,
 /// then expanded to Message items during get_history_for_prompt().
-pub fn attachment_data_to_messages(
-    data: &AttachmentData,
-    tools: &ToolConfig,
-) -> Vec<ResponseItem> {
+pub fn attachment_data_to_messages(data: &AttachmentData, tools: &ToolConfig) -> Vec<ResponseItem> {
     match data {
         AttachmentData::PlanMode {
             plan_file_path,
@@ -52,9 +49,7 @@ pub fn attachment_data_to_messages(
             generate_reentry_items(plan_file_path, tools)
         }
         AttachmentData::PlanModeExit { plan_file_path } => generate_exit_items(plan_file_path),
-        AttachmentData::CompactFileRestore { files } => {
-            generate_compact_file_restore_items(files)
-        }
+        AttachmentData::CompactFileRestore { files } => generate_compact_file_restore_items(files),
     }
 }
 
@@ -230,8 +225,9 @@ fn generate_compact_file_restore_items(files: &[CompactRestoredFile]) -> Vec<Res
                 } else {
                     ""
                 };
-                let msg =
-                    format!("<file_context path=\"{path}\"{truncate_note}>\\n{content}\\n</file_context>");
+                let msg = format!(
+                    "<file_context path=\"{path}\"{truncate_note}>\\n{content}\\n</file_context>"
+                );
                 items.push(wrap_in_system_reminder(&msg));
             }
             CompactRestoredFile::ReferenceOnly { path } => {

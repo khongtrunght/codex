@@ -251,7 +251,8 @@ impl AskUserQuestionOverlay {
             if self.is_in_text_input {
                 // Use custom text if provided
                 if !state.custom_text.is_empty() {
-                    self.answers.insert(q.question.clone(), state.custom_text.clone());
+                    self.answers
+                        .insert(q.question.clone(), state.custom_text.clone());
                     self.is_in_text_input = false;
                     self.auto_advance();
                 }
@@ -318,7 +319,8 @@ impl AskUserQuestionOverlay {
         }
 
         if !selected_labels.is_empty() {
-            self.answers.insert(q.question.clone(), selected_labels.join(", "));
+            self.answers
+                .insert(q.question.clone(), selected_labels.join(", "));
         }
     }
 
@@ -401,10 +403,7 @@ impl AskUserQuestionOverlay {
         self.send_response(true);
         // Show "User declined to answer questions" in the chat history
         self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-            history_cell::new_info_event(
-                "User declined to answer questions".to_string(),
-                None,
-            ),
+            history_cell::new_info_event("User declined to answer questions".to_string(), None),
         )));
         // Also send interrupt to stop the model from continuing
         self.app_event_tx.send(AppEvent::CodexOp(Op::Interrupt));
@@ -417,12 +416,11 @@ impl AskUserQuestionOverlay {
             answers: self.answers.clone(),
             cancelled,
         };
-        self.app_event_tx.send(AppEvent::CodexOp(
-            Op::ResolveAskUserQuestion {
+        self.app_event_tx
+            .send(AppEvent::CodexOp(Op::ResolveAskUserQuestion {
                 id: self.call_id.clone(),
                 response,
-            },
-        ));
+            }));
     }
 
     /// Check if all questions have been answered.
@@ -511,10 +509,8 @@ impl AskUserQuestionOverlay {
             let prefix = if is_focused { "\u{203A}" } else { " " };
 
             // Check if this option was the previous answer (for single-select)
-            let is_previous_answer = !q.multi_select
-                && existing_answer
-                    .map(|a| a == &opt.label)
-                    .unwrap_or(false);
+            let is_previous_answer =
+                !q.multi_select && existing_answer.map(|a| a == &opt.label).unwrap_or(false);
 
             // Check if this option is checked (for multi-select)
             let is_checked = q.multi_select
@@ -685,12 +681,10 @@ impl AskUserQuestionOverlay {
 
         // Warning if not all answered
         if !self.all_questions_answered() {
-            lines.push(
-                Line::from(vec![
-                    Span::raw(WARNING).yellow(),
-                    Span::raw(" You have not answered all questions").yellow(),
-                ])
-            );
+            lines.push(Line::from(vec![
+                Span::raw(WARNING).yellow(),
+                Span::raw(" You have not answered all questions").yellow(),
+            ]));
             lines.push(Line::from(""));
         }
 
@@ -716,8 +710,16 @@ impl AskUserQuestionOverlay {
         lines.push(Line::from(""));
 
         // Submit/Cancel options
-        let submit_prefix = if self.selection_idx == 0 { "\u{203A}" } else { " " };
-        let cancel_prefix = if self.selection_idx == 1 { "\u{203A}" } else { " " };
+        let submit_prefix = if self.selection_idx == 0 {
+            "\u{203A}"
+        } else {
+            " "
+        };
+        let cancel_prefix = if self.selection_idx == 1 {
+            "\u{203A}"
+        } else {
+            " "
+        };
 
         let submit_line = format!("{} 1. Submit answers", submit_prefix);
         let cancel_line = format!("{} 2. Cancel", cancel_prefix);
@@ -739,7 +741,8 @@ impl AskUserQuestionOverlay {
 
     /// Build the footer hint line.
     fn build_footer(&self) -> Line<'static> {
-        Line::from("Enter to select \u{00B7} Tab/Arrow keys to navigate \u{00B7} Esc to cancel").dim()
+        Line::from("Enter to select \u{00B7} Tab/Arrow keys to navigate \u{00B7} Esc to cancel")
+            .dim()
     }
 }
 

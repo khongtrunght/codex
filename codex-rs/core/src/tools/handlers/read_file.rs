@@ -97,9 +97,7 @@ impl ToolHandler for ReadFileHandler {
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
         let ToolInvocation {
-            payload,
-            session,
-            ..
+            payload, session, ..
         } = invocation;
 
         let arguments = match payload {

@@ -51,10 +51,22 @@ async fn resume_includes_initial_messages_from_rollout_events() -> Result<()> {
         .expect("expected initial messages to be present for resumed session");
     match initial_messages.as_slice() {
         [
-            Event { msg: EventMsg::UserMessage(first_user), .. },
-            Event { msg: EventMsg::TokenCount(_), .. },
-            Event { msg: EventMsg::AgentMessage(assistant_message), .. },
-            Event { msg: EventMsg::TokenCount(_), .. },
+            Event {
+                msg: EventMsg::UserMessage(first_user),
+                ..
+            },
+            Event {
+                msg: EventMsg::TokenCount(_),
+                ..
+            },
+            Event {
+                msg: EventMsg::AgentMessage(assistant_message),
+                ..
+            },
+            Event {
+                msg: EventMsg::TokenCount(_),
+                ..
+            },
         ] => {
             assert_eq!(first_user.message, "Record some messages");
             assert_eq!(assistant_message.message, "Completed first turn");
@@ -104,12 +116,30 @@ async fn resume_includes_initial_messages_from_reasoning_events() -> Result<()> 
         .expect("expected initial messages to be present for resumed session");
     match initial_messages.as_slice() {
         [
-            Event { msg: EventMsg::UserMessage(first_user), .. },
-            Event { msg: EventMsg::TokenCount(_), .. },
-            Event { msg: EventMsg::AgentReasoning(reasoning), .. },
-            Event { msg: EventMsg::AgentReasoningRawContent(raw), .. },
-            Event { msg: EventMsg::AgentMessage(assistant_message), .. },
-            Event { msg: EventMsg::TokenCount(_), .. },
+            Event {
+                msg: EventMsg::UserMessage(first_user),
+                ..
+            },
+            Event {
+                msg: EventMsg::TokenCount(_),
+                ..
+            },
+            Event {
+                msg: EventMsg::AgentReasoning(reasoning),
+                ..
+            },
+            Event {
+                msg: EventMsg::AgentReasoningRawContent(raw),
+                ..
+            },
+            Event {
+                msg: EventMsg::AgentMessage(assistant_message),
+                ..
+            },
+            Event {
+                msg: EventMsg::TokenCount(_),
+                ..
+            },
         ] => {
             assert_eq!(first_user.message, "Record reasoning messages");
             assert_eq!(reasoning.text, "Summarized step");

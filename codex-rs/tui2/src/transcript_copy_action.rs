@@ -78,8 +78,13 @@ impl TranscriptCopyAction {
         transcript_selection: TranscriptSelection,
         verbose: bool,
     ) -> bool {
-        let outcome =
-            copy_transcript_selection(tui, chat_height, transcript_cells, transcript_selection, verbose);
+        let outcome = copy_transcript_selection(
+            tui,
+            chat_height,
+            transcript_cells,
+            transcript_selection,
+            verbose,
+        );
         self.handle_copy_outcome(tui, outcome)
     }
 

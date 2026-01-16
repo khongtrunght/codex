@@ -220,10 +220,7 @@ mod tests {
     fn test_disallowed_tools() {
         let filter = SubAgentToolFilter {
             allowed_tools: None,
-            disallowed_tools: Some(vec![
-                "edit_file".to_string(),
-                "write_file".to_string(),
-            ]),
+            disallowed_tools: Some(vec!["edit_file".to_string(), "write_file".to_string()]),
             is_built_in: true,
         };
 
@@ -238,10 +235,7 @@ mod tests {
     fn test_disallowed_with_allowed_interaction() {
         // When both are set, disallowed takes precedence
         let filter = SubAgentToolFilter {
-            allowed_tools: Some(vec![
-                "read_file".to_string(),
-                "edit_file".to_string(),
-            ]),
+            allowed_tools: Some(vec!["read_file".to_string(), "edit_file".to_string()]),
             disallowed_tools: Some(vec!["edit_file".to_string()]),
             is_built_in: true,
         };

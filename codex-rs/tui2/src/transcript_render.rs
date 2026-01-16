@@ -175,7 +175,7 @@ pub(crate) fn append_wrapped_transcript_cell(
     // Start from each cell's transcript view (prefixes/indents already applied), then apply
     // viewport wrapping to prose while keeping preformatted content intact.
     // Use verbose variant to respect the global verbose toggle.
-        let rendered = cell.transcript_lines_with_joiners_verbose(width, verbose);
+    let rendered = cell.transcript_lines_with_joiners_verbose(width, verbose);
     if rendered.lines.is_empty() {
         return;
     }

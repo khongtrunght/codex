@@ -137,7 +137,12 @@ impl TranscriptViewCache {
     ///
     /// The raster cache is invalidated whenever the wrapped transcript is rebuilt or the width no
     /// longer matches.
-    pub(crate) fn ensure_wrapped(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16, verbose: bool) {
+    pub(crate) fn ensure_wrapped(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        width: u16,
+        verbose: bool,
+    ) {
         let update = self.wrapped.ensure(cells, width, verbose);
         if update == WrappedTranscriptUpdate::Rebuilt {
             self.raster.width = width;
@@ -301,7 +306,12 @@ impl WrappedTranscriptCache {
     ///
     /// The cache assumes history cells are append-only and immutable once inserted. If existing
     /// cell contents can change without changing identity, callers must treat that as a rebuild.
-    fn ensure(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16, verbose: bool) -> WrappedTranscriptUpdate {
+    fn ensure(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        width: u16,
+        verbose: bool,
+    ) -> WrappedTranscriptUpdate {
         if width == 0 {
             self.width = width;
             self.verbose = verbose;
@@ -704,7 +714,8 @@ mod tests {
         ];
 
         let width = 8;
-        let expected = crate::transcript_render::build_wrapped_transcript_lines(&cells, width, false);
+        let expected =
+            crate::transcript_render::build_wrapped_transcript_lines(&cells, width, false);
 
         let mut cache = TranscriptViewCache::new();
         cache.ensure_wrapped(&cells, width, false);
@@ -854,7 +865,8 @@ mod tests {
         assert_eq!(calls0.load(Ordering::Relaxed), 2);
         assert_eq!(calls1.load(Ordering::Relaxed), 1);
 
-        let expected = crate::transcript_render::build_wrapped_transcript_lines(&cells[..1], 8, false);
+        let expected =
+            crate::transcript_render::build_wrapped_transcript_lines(&cells[..1], 8, false);
         assert_eq!(cache.lines(), expected.lines.as_slice());
         assert_eq!(cache.line_meta(), expected.meta.as_slice());
     }
