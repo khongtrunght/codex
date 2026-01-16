@@ -38,16 +38,6 @@ pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 
-/// Environment variable to override auto compact threshold percentage.
-const CODEX_AUTOCOMPACT_PCT_OVERRIDE: &str = "CODEX_AUTOCOMPACT_PCT_OVERRIDE";
-
-/// Default auto compact threshold as percentage of context window.
-/// Set to 60% to trigger compaction earlier, preserving more context headroom.
-const DEFAULT_AUTO_COMPACT_THRESHOLD_PCT: u8 = 60;
-
-/// Buffer tokens to reserve for compaction overhead.
-const AUTO_COMPACT_BUFFER_TOKENS: usize = 5000;
-
 /// Maximum number of recent files to restore after compaction.
 const MAX_RECENT_FILES_TO_RESTORE: usize = 5;
 
@@ -56,61 +46,6 @@ const MAX_TOKENS_PER_RESTORED_FILE: usize = 5000;
 
 /// Maximum total tokens for all restored files combined.
 const MAX_TOTAL_RESTORE_TOKENS: usize = 50000;
-
-/// Get the effective auto compact threshold in tokens.
-///
-/// Priority order:
-/// 1. `CODEX_AUTOCOMPACT_PCT_OVERRIDE` env var (highest priority)
-/// 2. `model_auto_compact_token_limit` config (explicit absolute token limit)
-/// 3. `auto_compact_threshold_pct` config (percentage-based)
-/// 4. Default 60% of context window (lowest priority)
-pub fn get_auto_compact_threshold(
-    context_window: usize,
-    model_auto_compact_token_limit: Option<i64>,
-    auto_compact_threshold_pct: Option<u8>,
-) -> usize {
-    // 1. Check environment variable first (percentage-based override)
-    if let Ok(env_val) = std::env::var(CODEX_AUTOCOMPACT_PCT_OVERRIDE) {
-        if let Ok(pct) = env_val.parse::<f64>() {
-            if pct > 0.0 && pct <= 100.0 {
-                let from_pct = (context_window as f64 * (pct / 100.0)) as usize;
-                return from_pct.saturating_sub(AUTO_COMPACT_BUFFER_TOKENS);
-            }
-        }
-    }
-
-    // 2. Use explicit absolute token limit if set (existing config)
-    if let Some(limit) = model_auto_compact_token_limit {
-        if limit > 0 {
-            return limit as usize;
-        }
-    }
-
-    // 3. Use percentage-based threshold from config
-    let pct = auto_compact_threshold_pct.unwrap_or(DEFAULT_AUTO_COMPACT_THRESHOLD_PCT);
-    let threshold = (context_window as f64 * (pct as f64 / 100.0)) as usize;
-    threshold.saturating_sub(AUTO_COMPACT_BUFFER_TOKENS)
-}
-
-/// Check if auto compact should be triggered.
-pub fn should_auto_compact(
-    current_tokens: usize,
-    context_window: usize,
-    model_auto_compact_token_limit: Option<i64>,
-    auto_compact_threshold_pct: Option<u8>,
-    auto_compact_enabled: bool,
-) -> bool {
-    if !auto_compact_enabled {
-        return false;
-    }
-
-    let threshold = get_auto_compact_threshold(
-        context_window,
-        model_auto_compact_token_limit,
-        auto_compact_threshold_pct,
-    );
-    current_tokens >= threshold
-}
 
 pub(crate) fn should_use_remote_compact_task(
     session: &Session,
@@ -655,96 +590,5 @@ mod tests {
             other => panic!("expected summary message, found {other:?}"),
         };
         assert_eq!(summary, summary_text);
-    }
-
-    // Auto compact threshold tests
-
-    /// Helper to clear the env var for testing (unsafe in Rust 2024 edition)
-    fn clear_autocompact_env_var() {
-        // SAFETY: Tests are single-threaded by default, and we don't spawn threads
-        // that read this env var concurrently in these tests.
-        unsafe {
-            std::env::remove_var(CODEX_AUTOCOMPACT_PCT_OVERRIDE);
-        }
-    }
-
-    #[test]
-    fn test_get_auto_compact_threshold_default_60_percent() {
-        // Remove env var to test default behavior
-        clear_autocompact_env_var();
-
-        let context_window = 100_000;
-        let threshold = get_auto_compact_threshold(context_window, None, None);
-
-        // Default is 60% minus buffer of 5000
-        // 100_000 * 0.60 = 60_000, minus 5000 = 55_000
-        assert_eq!(threshold, 55_000);
-    }
-
-    #[test]
-    fn test_get_auto_compact_threshold_absolute_limit_priority() {
-        // Remove env var to test config priority
-        clear_autocompact_env_var();
-
-        let context_window = 100_000;
-        // Absolute limit should take priority over percentage config
-        let threshold = get_auto_compact_threshold(context_window, Some(80_000), Some(50)); // 50% would be 45_000
-
-        assert_eq!(threshold, 80_000);
-    }
-
-    #[test]
-    fn test_get_auto_compact_threshold_pct_config() {
-        // Remove env var to test config priority
-        clear_autocompact_env_var();
-
-        let context_window = 100_000;
-        // With percentage config, no absolute limit
-        let threshold = get_auto_compact_threshold(context_window, None, Some(80));
-
-        // 80% of 100_000 = 80_000, minus 5000 buffer = 75_000
-        assert_eq!(threshold, 75_000);
-    }
-
-    #[test]
-    fn test_should_auto_compact_enabled() {
-        clear_autocompact_env_var();
-
-        // Just above threshold
-        let above = should_auto_compact(56_000, 100_000, None, None, true);
-        assert!(above, "should trigger when above threshold");
-
-        // Just below threshold (55_000 is the threshold at 60% - 5000 buffer)
-        let below = should_auto_compact(54_000, 100_000, None, None, true);
-        assert!(!below, "should not trigger when below threshold");
-    }
-
-    #[test]
-    fn test_should_auto_compact_disabled() {
-        clear_autocompact_env_var();
-
-        // Even above threshold, should not trigger when disabled
-        let result = should_auto_compact(90_000, 100_000, None, None, false);
-        assert!(!result, "should not trigger when disabled");
-    }
-
-    #[test]
-    fn test_threshold_priority_order() {
-        // Test that priority order is: env var > absolute limit > pct config > default
-        clear_autocompact_env_var();
-
-        let context_window = 100_000;
-
-        // Priority 4: Default (60%)
-        let default_threshold = get_auto_compact_threshold(context_window, None, None);
-        assert_eq!(default_threshold, 55_000); // 60% - 5000
-
-        // Priority 3: pct config
-        let pct_threshold = get_auto_compact_threshold(context_window, None, Some(70));
-        assert_eq!(pct_threshold, 65_000); // 70% - 5000
-
-        // Priority 2: absolute limit
-        let abs_threshold = get_auto_compact_threshold(context_window, Some(50_000), Some(70));
-        assert_eq!(abs_threshold, 50_000); // absolute overrides pct
     }
 }

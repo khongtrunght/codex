@@ -26,7 +26,7 @@ use crate::default_client::build_reqwest_client;
 use crate::error::Result as CoreResult;
 use crate::features::Feature;
 use crate::model_provider_info::ModelProviderInfo;
-use crate::models_manager::model_family::ModelFamily;
+use crate::models_manager::model_info;
 use crate::models_manager::model_presets::builtin_model_presets;
 
 // Legacy cache file (kept for backwards compatibility reference)
@@ -41,7 +41,6 @@ const CODEX_AUTO_BALANCED_MODEL: &str = "codex-auto-balanced";
 /// Supports fetching models from multiple providers concurrently.
 #[derive(Debug)]
 pub struct ModelsManager {
-    // todo(aibrahim) merge available_models and model family creation into one struct
     local_models: Vec<ModelPreset>,
     /// Remote models indexed by provider key (e.g., "openai", "ollama")
     remote_models: RwLock<HashMap<String, Vec<ModelInfo>>>,
@@ -77,7 +76,7 @@ impl ModelsManager {
         let codex_home = auth_manager.codex_home().to_path_buf();
         let mut initial_models = HashMap::new();
         if let Ok(bundled) = Self::load_remote_models_from_file() {
-            initial_models.insert(provider.config_key.clone(), bundled);
+            initial_models.insert(provider.config_key, bundled);
         }
         Self {
             local_models: builtin_model_presets(auth_manager.get_auth_mode()),
@@ -301,35 +300,32 @@ impl ModelsManager {
         self.try_build_available_models_multi_provider(config)
     }
 
-    fn find_family_for_model(slug: &str) -> ModelFamily {
-        super::model_family::find_family_for_model(slug)
-    }
-
-    /// Look up the requested model family while applying remote metadata overrides.
-    /// Handles prefixed model names like "openai/gpt-4" by extracting the provider.
-    pub async fn construct_model_family(&self, model: &str, config: &Config) -> ModelFamily {
+    /// Look up the requested model metadata while applying remote metadata overrides.
+    pub async fn construct_model_info(&self, model: &str, config: &Config) -> ModelInfo {
         let (provider_key, model_slug) = parse_model_with_provider(model);
 
         // Get remote models from the correct provider
-        let remote_models = if let Some(key) = provider_key {
-            self.remote_models
-                .read()
-                .await
-                .get(key)
-                .cloned()
-                .unwrap_or_default()
-        } else {
-            self.remote_models
-                .read()
-                .await
-                .get(&config.model_provider_id)
-                .cloned()
-                .unwrap_or_default()
+        let provider_key = match provider_key {
+            Some(key) => key,
+            None => &config.model_provider_id,
         };
 
-        Self::find_family_for_model(model_slug)
-            .with_remote_overrides(remote_models)
-            .with_config_overrides(config)
+        // Only use remote/bundled models when RemoteModels feature is enabled
+        let remote = if config.features.enabled(Feature::RemoteModels) {
+            self.remote_models_for(provider_key)
+                .await
+                .into_iter()
+                .find(|m| m.slug == model_slug)
+        } else {
+            None
+        };
+
+        let model = if let Some(remote) = remote {
+            remote
+        } else {
+            model_info::find_model_info_for_slug(model_slug)
+        };
+        model_info::with_config_overrides(model, config)
     }
 
     pub async fn get_model(&self, model: &Option<String>, config: &Config) -> String {
@@ -363,9 +359,9 @@ impl ModelsManager {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    /// Offline helper that builds a `ModelFamily` without consulting remote state.
-    pub fn construct_model_family_offline(model: &str, config: &Config) -> ModelFamily {
-        Self::find_family_for_model(model).with_config_overrides(config)
+    /// Offline helper that builds a `ModelInfo` without consulting remote state.
+    pub fn construct_model_info_offline(model: &str, config: &Config) -> ModelInfo {
+        model_info::with_config_overrides(model_info::find_model_info_for_slug(model), config)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -381,6 +377,15 @@ impl ModelsManager {
         } else {
             Vec::new()
         }
+    }
+
+    pub async fn remote_models_for(&self, provider: &str) -> Vec<ModelInfo> {
+        self.remote_models
+            .read()
+            .await
+            .get(provider)
+            .cloned()
+            .unwrap_or_default()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -704,14 +709,14 @@ mod tests {
             "supported_in_api": true,
             "priority": priority,
             "upgrade": null,
-            "base_instructions": null,
+            "base_instructions": "base instructions",
             "supports_reasoning_summaries": false,
             "support_verbosity": false,
             "default_verbosity": null,
             "apply_patch_tool_type": null,
             "truncation_policy": {"mode": "bytes", "limit": 10_000},
             "supports_parallel_tool_calls": false,
-            "context_window": null,
+            "context_window": 272_000,
             "experimental_supported_tools": [],
         }))
         .expect("valid model")

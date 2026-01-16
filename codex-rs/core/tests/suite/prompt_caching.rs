@@ -86,7 +86,7 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
         .await?;
     let base_instructions = thread_manager
         .get_models_manager()
-        .construct_model_family(
+        .construct_model_info(
             config
                 .model
                 .as_deref()
@@ -94,8 +94,7 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
             &config,
         )
         .await
-        .base_instructions
-        .clone();
+        .base_instructions;
 
     codex
         .submit(Op::UserInput {
@@ -133,11 +132,12 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
     ];
     let body0 = req1.single_request().body_json();
 
+    let base_instructions_str = base_instructions.unwrap_or_default();
     let expected_instructions = if expected_tools_names.contains(&"apply_patch") {
-        base_instructions
+        base_instructions_str
     } else {
         [
-            base_instructions.clone(),
+            base_instructions_str,
             include_str!("../../../apply-patch/apply_patch_tool_instructions.md").to_string(),
         ]
         .join("\n")

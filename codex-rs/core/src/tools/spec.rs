@@ -3,7 +3,6 @@ use crate::client_common::tools::ResponsesApiTool;
 use crate::client_common::tools::ToolSpec;
 use crate::features::Feature;
 use crate::features::Features;
-use crate::models_manager::model_family::ModelFamily;
 use crate::tools::handlers::TODO_WRITE_TOOL;
 use crate::tools::handlers::apply_patch::create_apply_patch_freeform_tool;
 use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
@@ -11,6 +10,7 @@ use crate::tools::registry::ToolRegistryBuilder;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::EditToolType;
 use once_cell::sync::Lazy;
+use codex_protocol::openai_models::ModelInfo;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -85,14 +85,14 @@ pub(crate) struct ToolsConfig {
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
-    pub(crate) model_family: &'a ModelFamily,
+    pub(crate) model_info: &'a ModelInfo,
     pub(crate) features: &'a Features,
 }
 
 impl ToolsConfig {
     pub fn new(params: &ToolsConfigParams) -> Self {
         let ToolsConfigParams {
-            model_family,
+            model_info,
             features,
         } = params;
         let include_web_search_request = features.enabled(Feature::WebSearchRequest);
@@ -108,15 +108,15 @@ impl ToolsConfig {
                 ConfigShellToolType::ShellCommand
             }
         } else {
-            model_family.shell_type
+            model_info.shell_type
         };
 
         Self {
             shell_type,
-            edit_tool_type: model_family.edit_tool_type,
+            edit_tool_type: model_info.edit_tool_type,
             web_search_request: include_web_search_request,
             include_view_image_tool,
-            experimental_supported_tools: model_family.experimental_supported_tools.clone(),
+            experimental_supported_tools: model_info.experimental_supported_tools.clone(),
             agent_configs: None,
             subagent_filter: None,
         }
@@ -1938,13 +1938,13 @@ mod tests {
     #[test]
     fn test_full_toolset_specs_for_gpt5_codex_unified_exec_web_search() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
         features.enable(Feature::ViewImageTool);
         let config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
         let (tools, _) = build_specs(&config, None).build();
@@ -2002,9 +2002,9 @@ mod tests {
 
     fn assert_model_tools(model_slug: &str, features: &Features, expected_tools: &[&str]) {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline(model_slug, &config);
+        let model_info = ModelsManager::construct_model_info_offline(model_slug, &config);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features,
         });
         let (tools, _) = build_specs(&tools_config, Some(HashMap::new())).build();
@@ -2263,12 +2263,12 @@ mod tests {
     #[test]
     fn test_build_specs_default_shell_present() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("o3", &config);
+        let model_info = ModelsManager::construct_model_info_offline("o3", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::WebSearchRequest);
         features.enable(Feature::UnifiedExec);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
         let (tools, _) = build_specs(&tools_config, Some(HashMap::new())).build();
@@ -2285,12 +2285,12 @@ mod tests {
     #[ignore]
     fn test_parallel_support_flags() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.disable(Feature::ViewImageTool);
         features.enable(Feature::UnifiedExec);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
@@ -2303,14 +2303,13 @@ mod tests {
     }
 
     #[test]
-    fn test_test_model_family_includes_sync_tool() {
+    fn test_test_model_info_includes_sync_tool() {
         let config = test_config();
-        let model_family =
-            ModelsManager::construct_model_family_offline("test-gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("test-gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.disable(Feature::ViewImageTool);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
@@ -2336,12 +2335,12 @@ mod tests {
     #[test]
     fn test_build_specs_mcp_tools_converted() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("o3", &config);
+        let model_info = ModelsManager::construct_model_info_offline("o3", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
         let (tools, _) = build_specs(
@@ -2431,11 +2430,11 @@ mod tests {
     #[test]
     fn test_build_specs_mcp_tools_sorted_by_name() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("o3", &config);
+        let model_info = ModelsManager::construct_model_info_offline("o3", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
 
@@ -2507,12 +2506,12 @@ mod tests {
     #[test]
     fn test_mcp_tool_property_missing_type_defaults_to_string() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
 
@@ -2564,12 +2563,12 @@ mod tests {
     #[test]
     fn test_mcp_tool_integer_normalized_to_number() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
 
@@ -2617,13 +2616,13 @@ mod tests {
     #[test]
     fn test_mcp_tool_array_without_items_gets_default_string_items() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
         features.enable(Feature::ApplyPatchFreeform);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
 
@@ -2674,12 +2673,12 @@ mod tests {
     #[test]
     fn test_mcp_tool_anyof_defaults_to_string() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
 
@@ -2786,12 +2785,12 @@ Examples of valid command strings:
     #[test]
     fn test_get_openai_tools_mcp_tools_with_additional_properties_schema() {
         let config = test_config();
-        let model_family = ModelsManager::construct_model_family_offline("gpt-5-codex", &config);
+        let model_info = ModelsManager::construct_model_info_offline("gpt-5-codex", &config);
         let mut features = Features::with_defaults();
         features.enable(Feature::UnifiedExec);
         features.enable(Feature::WebSearchRequest);
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &features,
         });
         let (tools, _) = build_specs(

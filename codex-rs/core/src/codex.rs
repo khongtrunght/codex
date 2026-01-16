@@ -14,16 +14,13 @@ use crate::agent::AgentStatus;
 use crate::agent::agent_status_from_event;
 use crate::client_common::REVIEW_PROMPT;
 use crate::compact;
-use crate::compact::get_auto_compact_threshold;
 use crate::compact::run_inline_auto_compact_task;
-use crate::compact::should_auto_compact;
 use crate::compact::should_use_remote_compact_task;
 use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::exec_policy::ExecPolicyManager;
 use crate::features::Feature;
 use crate::features::Features;
 use crate::models_manager::manager::ModelsManager;
-use crate::models_manager::model_family::ModelFamily;
 use crate::models_manager::parse_model_with_provider;
 use crate::parse_command::parse_command;
 use crate::parse_turn_item;
@@ -39,6 +36,7 @@ use async_channel::Sender;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ExecPolicyAmendment;
 use codex_protocol::items::TurnItem;
+use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::ItemCompletedEvent;
@@ -684,20 +682,20 @@ impl Session {
         provider: ModelProviderInfo,
         session_configuration: &SessionConfiguration,
         per_turn_config: Config,
-        model_family: ModelFamily,
+        model_info: ModelInfo,
         conversation_id: ThreadId,
         sub_id: String,
     ) -> TurnContext {
         let otel_manager = otel_manager.clone().with_model(
             session_configuration.model.as_str(),
-            model_family.get_model_slug(),
+            model_info.slug.as_str(),
         );
 
         let per_turn_config = Arc::new(per_turn_config);
         let client = ModelClient::new(
             per_turn_config.clone(),
             auth_manager,
-            model_family.clone(),
+            model_info.clone(),
             otel_manager,
             provider,
             session_configuration.model_reasoning_effort,
@@ -710,7 +708,7 @@ impl Session {
         // we don't include agent descriptions, which prevents the task tool from
         // being registered (blocking infinite sub-agent nesting).
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_family: &model_family,
+            model_info: &model_info,
             features: &per_turn_config.features,
         });
 
@@ -746,7 +744,7 @@ impl Session {
             tool_call_gate: Arc::new(ReadinessFlag::new()),
             truncation_policy: TruncationPolicy::new(
                 per_turn_config.as_ref(),
-                model_family.truncation_policy,
+                model_info.truncation_policy.into(),
             ),
         }
     }
@@ -1348,10 +1346,10 @@ impl Session {
         let provider = session_configuration.get_provider(&per_turn_config);
         let model_slug = session_configuration.get_model_slug();
 
-        let model_family = self
+        let model_info = self
             .services
             .models_manager
-            .construct_model_family(model_slug, &per_turn_config)
+            .construct_model_info(model_slug, &per_turn_config)
             .await;
 
         let mut turn_context: TurnContext = Self::make_turn_context(
@@ -1360,7 +1358,7 @@ impl Session {
             provider,
             &session_configuration,
             per_turn_config,
-            model_family,
+            model_info,
             self.conversation_id,
             sub_id,
         );
@@ -1996,14 +1994,11 @@ impl Session {
     }
 
     pub(crate) async fn set_total_tokens_full(&self, turn_context: &TurnContext) {
-        let context_window = turn_context.client.get_model_context_window();
-        if let Some(context_window) = context_window {
-            {
-                let mut state = self.state.lock().await;
-                state.set_token_usage_full(context_window);
-            }
-            self.send_token_count_event(turn_context).await;
+        if let Some(context_window) = turn_context.client.get_model_context_window() {
+            let mut state = self.state.lock().await;
+            state.set_token_usage_full(context_window);
         }
+        self.send_token_count_event(turn_context).await;
     }
 
     pub(crate) async fn record_response_item_and_emit_turn_item(
@@ -2756,10 +2751,10 @@ async fn spawn_review_thread(
     resolved: crate::review_prompts::ResolvedReviewRequest,
 ) {
     let model = config.review_model.clone();
-    let review_model_family = sess
+    let review_model_info = sess
         .services
         .models_manager
-        .construct_model_family(&model, &config)
+        .construct_model_info(&model, &config)
         .await;
     // For reviews, disable web_search and view_image regardless of global settings.
     let mut review_features = sess.features.clone();
@@ -2767,7 +2762,7 @@ async fn spawn_review_thread(
         .disable(crate::features::Feature::WebSearchRequest)
         .disable(crate::features::Feature::ViewImageTool);
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
-        model_family: &review_model_family,
+        model_info: &review_model_info,
         features: &review_features,
     });
 
@@ -2775,7 +2770,7 @@ async fn spawn_review_thread(
     let review_prompt = resolved.prompt.clone();
     let provider = parent_turn_context.client.get_provider();
     let auth_manager = parent_turn_context.client.get_auth_manager();
-    let model_family = review_model_family.clone();
+    let model_info = review_model_info.clone();
 
     // Build per‑turn client with the requested model/family.
     let mut per_turn_config = (*config).clone();
@@ -2785,14 +2780,14 @@ async fn spawn_review_thread(
 
     let otel_manager = parent_turn_context.client.get_otel_manager().with_model(
         config.review_model.as_str(),
-        review_model_family.slug.as_str(),
+        review_model_info.slug.as_str(),
     );
 
     let per_turn_config = Arc::new(per_turn_config);
     let client = ModelClient::new(
         per_turn_config.clone(),
         auth_manager,
-        model_family.clone(),
+        model_info.clone(),
         otel_manager,
         provider,
         per_turn_config.model_reasoning_effort,
@@ -2817,7 +2812,10 @@ async fn spawn_review_thread(
         final_output_json_schema: None,
         codex_linux_sandbox_exe: parent_turn_context.codex_linux_sandbox_exe.clone(),
         tool_call_gate: Arc::new(ReadinessFlag::new()),
-        truncation_policy: TruncationPolicy::new(&per_turn_config, model_family.truncation_policy),
+        truncation_policy: TruncationPolicy::new(
+            &per_turn_config,
+            model_info.truncation_policy.into(),
+        ),
     };
 
     // Seed the child task with the review prompt as the initial user message.
@@ -2883,42 +2881,13 @@ pub(crate) async fn run_task(
         return None;
     }
 
-    // Get config for auto compact settings
-    let config = sess.get_config().await;
-    let context_window = turn_context
-        .client
-        .get_model_context_window()
-        .unwrap_or(200_000) as usize; // Default to 200k if not set
-    let total_usage_tokens = sess.get_total_token_usage().await as usize;
-
-    // Check if auto compact should trigger using configurable threshold
-    if should_auto_compact(
-        total_usage_tokens,
-        context_window,
-        config.model_auto_compact_token_limit,
-        config.auto_compact_threshold_pct,
-        config.auto_compact_enabled,
-    ) {
-        let threshold = get_auto_compact_threshold(
-            context_window,
-            config.model_auto_compact_token_limit,
-            config.auto_compact_threshold_pct,
-        );
-        tracing::info!(
-            total_usage_tokens,
-            threshold,
-            context_window,
-            "Auto compact triggered: token usage exceeds threshold"
-        );
+    let model_info = turn_context.client.get_model_info();
+    let auto_compact_limit = model_info.auto_compact_token_limit().unwrap_or(i64::MAX);
+    let total_usage_tokens = sess.get_total_token_usage().await;
+    if total_usage_tokens >= auto_compact_limit {
         run_auto_compact(&sess, &turn_context).await;
     }
 
-    // Calculate auto_compact_limit for use in the turn loop
-    let auto_compact_limit = get_auto_compact_threshold(
-        context_window,
-        config.model_auto_compact_token_limit,
-        config.auto_compact_threshold_pct,
-    ) as i64;
     let event = EventMsg::TaskStarted(TaskStartedEvent {
         model_context_window: turn_context.client.get_model_context_window(),
     });
@@ -3183,7 +3152,7 @@ async fn run_turn(
 
     let model_supports_parallel = turn_context
         .client
-        .get_model_family()
+        .get_model_info()
         .supports_parallel_tool_calls;
 
     let prompt = Prompt {
@@ -3957,13 +3926,13 @@ mod tests {
     fn otel_manager(
         conversation_id: ThreadId,
         config: &Config,
-        model_family: &ModelFamily,
+        model_info: &ModelInfo,
         session_source: SessionSource,
     ) -> OtelManager {
         OtelManager::new(
             conversation_id,
             ModelsManager::get_model_offline(config.model.as_deref()).as_str(),
-            model_family.slug.as_str(),
+            model_info.slug.as_str(),
             None,
             Some("test@test.com".to_string()),
             Some(AuthMode::ChatGPT),
@@ -4002,14 +3971,14 @@ mod tests {
             session_source: SessionSource::Exec,
         };
         let per_turn_config = Session::build_per_turn_config(&session_configuration);
-        let model_family = ModelsManager::construct_model_family_offline(
+        let model_info = ModelsManager::construct_model_info_offline(
             session_configuration.model.as_str(),
             &per_turn_config,
         );
         let otel_manager = otel_manager(
             conversation_id,
             config.as_ref(),
-            &model_family,
+            &model_info,
             session_configuration.session_source.clone(),
         );
 
@@ -4046,7 +4015,7 @@ mod tests {
             provider,
             &session_configuration,
             per_turn_config,
-            model_family,
+            model_info,
             conversation_id,
             "turn_id".to_string(),
         );
@@ -4102,14 +4071,14 @@ mod tests {
             session_source: SessionSource::Exec,
         };
         let per_turn_config = Session::build_per_turn_config(&session_configuration);
-        let model_family = ModelsManager::construct_model_family_offline(
+        let model_info = ModelsManager::construct_model_info_offline(
             session_configuration.model.as_str(),
             &per_turn_config,
         );
         let otel_manager = otel_manager(
             conversation_id,
             config.as_ref(),
-            &model_family,
+            &model_info,
             session_configuration.session_source.clone(),
         );
 
@@ -4146,7 +4115,7 @@ mod tests {
             provider,
             &session_configuration,
             per_turn_config,
-            model_family,
+            model_info,
             conversation_id,
             "turn_id".to_string(),
         ));

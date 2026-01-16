@@ -174,28 +174,61 @@ impl TruncationPolicyConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, TS, JsonSchema)]
 pub struct ClientVersion(pub i32, pub i32, pub i32);
 
+const fn default_effective_context_window_percent() -> i64 {
+    95
+}
+
 /// Model metadata returned by the Codex backend `/models` endpoint.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, TS, JsonSchema)]
 pub struct ModelInfo {
     pub slug: String,
     pub display_name: String,
     pub description: Option<String>,
-    pub default_reasoning_level: ReasoningEffort,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_level: Option<ReasoningEffort>,
     pub supported_reasoning_levels: Vec<ReasoningEffortPreset>,
     pub shell_type: ConfigShellToolType,
     pub visibility: ModelVisibility,
     pub supported_in_api: bool,
     pub priority: i32,
     pub upgrade: Option<String>,
+    /// Base instructions for the model. If None or empty, the client should
+    /// use render_general_prompt to generate instructions based on edit_tool_type
+    /// and shell_type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_instructions: Option<String>,
     pub supports_reasoning_summaries: bool,
     pub support_verbosity: bool,
     pub default_verbosity: Option<Verbosity>,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    /// Specifies which editing tools are available for this model.
+    /// - Some(ApplyPatchFreeform/ApplyPatchFunction): Uses apply_patch tool (OpenAI models)
+    /// - Some(FileEdit): Uses edit_file and write_file tools (non-OpenAI models)
+    /// - None: No edit tools available
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_tool_type: Option<EditToolType>,
     pub truncation_policy: TruncationPolicyConfig,
     pub supports_parallel_tool_calls: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<i64>,
+    /// Token threshold for automatic compaction. When omitted, core derives it
+    /// from `context_window` (90%).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_compact_token_limit: Option<i64>,
+    /// Percentage of the context window considered usable for inputs, after
+    /// reserving headroom for system prompts, tool overhead, and model output.
+    #[serde(default = "default_effective_context_window_percent")]
+    pub effective_context_window_percent: i64,
     pub experimental_supported_tools: Vec<String>,
+}
+
+impl ModelInfo {
+    pub fn auto_compact_token_limit(&self) -> Option<i64> {
+        self.auto_compact_token_limit.or_else(|| {
+            self.context_window
+                .map(|context_window| (context_window * 9) / 10)
+        })
+    }
 }
 
 /// Simple model format returned by OpenAI-compatible APIs (e.g., ollama, lmstudio).
@@ -216,7 +249,7 @@ impl From<SimpleModelInfo> for ModelInfo {
             slug: simple.id.clone(),
             display_name: simple.id,
             description: None,
-            default_reasoning_level: ReasoningEffort::default(),
+            default_reasoning_level: None,
             supported_reasoning_levels: vec![],
             shell_type: ConfigShellToolType::Default,
             visibility: ModelVisibility::List,
@@ -228,9 +261,12 @@ impl From<SimpleModelInfo> for ModelInfo {
             support_verbosity: false,
             default_verbosity: None,
             apply_patch_tool_type: None,
+            edit_tool_type: Some(EditToolType::FileEdit),
             truncation_policy: TruncationPolicyConfig::tokens(200_000),
             supports_parallel_tool_calls: true,
             context_window: None,
+            auto_compact_token_limit: None,
+            effective_context_window_percent: 95,
             experimental_supported_tools: vec![],
         }
     }
@@ -292,7 +328,9 @@ impl From<ModelInfo> for ModelPreset {
             model: info.slug.clone(),
             display_name: info.display_name,
             description: info.description.unwrap_or_default(),
-            default_reasoning_effort: info.default_reasoning_level,
+            default_reasoning_effort: info
+                .default_reasoning_level
+                .unwrap_or(ReasoningEffort::None),
             supported_reasoning_efforts: info.supported_reasoning_levels.clone(),
             is_default: false, // default is the highest priority available model
             upgrade: info.upgrade.as_ref().map(|upgrade_slug| ModelUpgrade {
