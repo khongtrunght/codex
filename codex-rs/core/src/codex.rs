@@ -700,6 +700,8 @@ impl Session {
         }
         let state = SessionState::new(session_configuration.clone());
 
+        let agent_type_manager = Arc::new(crate::agent::AgentTypeManager::with_defaults());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
@@ -714,6 +716,7 @@ impl Session {
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            agent_type_manager,
             agent_control,
         };
 
@@ -3956,6 +3959,8 @@ mod tests {
         let state = SessionState::new(session_configuration.clone());
         let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone()));
 
+        let agent_type_manager = Arc::new(crate::agent::AgentTypeManager::with_defaults());
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
@@ -3970,6 +3975,7 @@ mod tests {
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            agent_type_manager,
             agent_control,
         };
 
@@ -4055,6 +4061,7 @@ mod tests {
 
         let state = SessionState::new(session_configuration.clone());
         let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone()));
+        let agent_type_manager = Arc::new(crate::agent::AgentTypeManager::with_defaults());
 
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
@@ -4070,6 +4077,7 @@ mod tests {
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            agent_type_manager,
             agent_control,
         };
 

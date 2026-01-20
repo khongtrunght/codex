@@ -2318,7 +2318,10 @@ impl ChatWidget {
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::RequestUserInput(_) => {}
+            | EventMsg::RequestUserInput(_)
+            | EventMsg::SubAgentSpawnBegin(_)
+            | EventMsg::SubAgentSpawnEnd(_)
+            | EventMsg::SubAgentComplete(_) => {}
         }
     }
 

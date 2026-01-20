@@ -112,6 +112,10 @@ pub struct Config {
     /// Optional override of model selection.
     pub model: Option<String>,
 
+    /// Small/fast model for lightweight tasks (e.g., explore agents).
+    /// Falls back to main model if not configured.
+    pub small_model: Option<String>,
+
     /// Model used specifically for review sessions.
     pub review_model: Option<String>,
 
@@ -772,6 +776,8 @@ pub fn set_default_oss_provider(codex_home: &Path, provider: &str) -> std::io::R
 pub struct ConfigToml {
     /// Optional override of model selection.
     pub model: Option<String>,
+    /// Small/fast model for lightweight tasks (e.g., explore agents).
+    pub small_model: Option<String>,
     /// Review model override used by the `/review` feature.
     pub review_model: Option<String>,
 
@@ -1460,6 +1466,7 @@ impl Config {
 
         let config = Self {
             model,
+            small_model: cfg.small_model.clone(),
             review_model,
             model_context_window: cfg.model_context_window,
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
@@ -3573,6 +3580,7 @@ model_verbosity = "high"
         assert_eq!(
             Config {
                 model: Some("o3".to_string()),
+                small_model: None,
                 review_model: None,
                 model_context_window: None,
                 model_auto_compact_token_limit: None,
@@ -3660,6 +3668,7 @@ model_verbosity = "high"
         )?;
         let expected_gpt3_profile_config = Config {
             model: Some("gpt-3.5-turbo".to_string()),
+            small_model: None,
             review_model: None,
             model_context_window: None,
             model_auto_compact_token_limit: None,
@@ -3762,6 +3771,7 @@ model_verbosity = "high"
         )?;
         let expected_zdr_profile_config = Config {
             model: Some("o3".to_string()),
+            small_model: None,
             review_model: None,
             model_context_window: None,
             model_auto_compact_token_limit: None,
@@ -3850,6 +3860,7 @@ model_verbosity = "high"
         )?;
         let expected_gpt5_profile_config = Config {
             model: Some("gpt-5.1".to_string()),
+            small_model: None,
             review_model: None,
             model_context_window: None,
             model_auto_compact_token_limit: None,

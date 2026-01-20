@@ -359,12 +359,12 @@
     },
     "shell_environment_policy": {
       "default": {
-        "inherit": null,
-        "ignore_default_excludes": null,
         "exclude": null,
-        "set": null,
+        "experimental_use_profile": null,
+        "ignore_default_excludes": null,
         "include_only": null,
-        "experimental_use_profile": null
+        "inherit": null,
+        "set": null
       },
       "allOf": [
         {
@@ -383,6 +383,10 @@
           "$ref": "#/definitions/SkillsConfig"
         }
       ]
+    },
+    "small_model": {
+      "description": "Small/fast model for lightweight tasks (e.g., explore agents).",
+      "type": "string"
     },
     "tool_output_token_limit": {
       "description": "Token budget applied when storing tool/function outputs in the context manager.",

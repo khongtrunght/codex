@@ -820,6 +820,31 @@ pub enum EventMsg {
     CollabCloseBegin(CollabCloseBeginEvent),
     /// Collab interaction: close end.
     CollabCloseEnd(CollabCloseEndEvent),
+
+    /// Task spawn begin
+    SubAgentSpawnBegin(SubAgentBeginEvent),
+    /// Task spawn end
+    SubAgentSpawnEnd(SubAgentEndEvent),
+    /// Task agent completed
+    SubAgentComplete(SubAgentCompleteEvent),
+}
+
+impl From<SubAgentBeginEvent> for EventMsg {
+    fn from(event: SubAgentBeginEvent) -> Self {
+        EventMsg::SubAgentSpawnBegin(event)
+    }
+}
+
+impl From<SubAgentEndEvent> for EventMsg {
+    fn from(event: SubAgentEndEvent) -> Self {
+        EventMsg::SubAgentSpawnEnd(event)
+    }
+}
+
+impl From<SubAgentCompleteEvent> for EventMsg {
+    fn from(event: SubAgentCompleteEvent) -> Self {
+        EventMsg::SubAgentComplete(event)
+    }
 }
 
 impl From<CollabAgentSpawnBeginEvent> for EventMsg {
@@ -2163,6 +2188,51 @@ pub enum TurnAbortReason {
     Interrupted,
     Replaced,
     ReviewEnded,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct SubAgentBeginEvent {
+    /// The tool call ID that spawned this sub-agent.
+    pub call_id: String,
+    /// The type of sub-agent (e.g., "explore", "plan", "general").
+    pub agent_type: String,
+    /// Short description of the task.
+    pub description: String,
+    /// Initial prompt sent to the agent. Can be empty to prevent CoT leaking at the
+    /// beginning.
+    pub prompt: String,
+    /// Thread ID of the sender.
+    pub sender_thread_id: ThreadId,
+    /// Whether this is resuming a previous session.
+    #[serde(default)]
+    pub resumed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct SubAgentEndEvent {
+    /// The tool call ID for the parent Task invocation.
+    pub call_id: String,
+    /// Thread ID of the sender.
+    pub sender_thread_id: ThreadId,
+    /// Thread ID of the newly spawned agent, if it was created.
+    pub new_thread_id: Option<ThreadId>,
+    /// Initial prompt sent to the agent. Can be empty to prevent CoT leaking at the
+    /// beginning.
+    pub prompt: String,
+    /// Last known status of the new agent reported to the sender agent.
+    pub status: AgentStatus,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct SubAgentCompleteEvent {
+    /// The tool call ID for the parent Task invocation.
+    pub call_id: String,
+    /// Thread ID of the sender (parent agent).
+    pub sender_thread_id: ThreadId,
+    /// Thread ID of the completed agent.
+    pub agent_thread_id: ThreadId,
+    /// Final status of the agent (Completed, Errored, Shutdown).
+    pub status: AgentStatus,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

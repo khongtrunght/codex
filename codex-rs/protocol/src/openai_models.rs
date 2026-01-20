@@ -118,6 +118,7 @@ pub enum ConfigShellToolType {
     UnifiedExec,
     Disabled,
     ShellCommand,
+    Bash,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
@@ -125,6 +126,18 @@ pub enum ConfigShellToolType {
 pub enum ApplyPatchToolType {
     Freeform,
     Function,
+}
+
+/// Specifies which editing tools are available for a model.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditToolType {
+    /// Uses apply_patch tool with freeform text input (OpenAI models)
+    ApplyPatchFreeform,
+    /// Uses apply_patch tool with structured function call (OpenAI models)
+    ApplyPatchFunction,
+    /// Uses edit_file and write_file tools (non-OpenAI models)
+    FileEdit,
 }
 
 /// Server-provided truncation policy metadata for a model.
@@ -184,6 +197,7 @@ pub struct ModelInfo {
     pub support_verbosity: bool,
     pub default_verbosity: Option<Verbosity>,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    pub edit_tool_type: Option<EditToolType>,
     pub truncation_policy: TruncationPolicyConfig,
     pub supports_parallel_tool_calls: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -48,6 +48,7 @@ macro_rules! model_info {
             support_verbosity: false,
             default_verbosity: None,
             apply_patch_tool_type: None,
+            edit_tool_type: None,
             truncation_policy: TruncationPolicyConfig::bytes(10_000),
             supports_parallel_tool_calls: false,
             context_window: Some(CONTEXT_WINDOW_272K),

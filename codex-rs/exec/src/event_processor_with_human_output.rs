@@ -607,7 +607,10 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::UndoCompleted(_)
             | EventMsg::UndoStarted(_)
             | EventMsg::ThreadRolledBack(_)
-            | EventMsg::RequestUserInput(_) => {}
+            | EventMsg::RequestUserInput(_)
+            | EventMsg::SubAgentSpawnBegin(_)
+            | EventMsg::SubAgentSpawnEnd(_)
+            | EventMsg::SubAgentComplete(_) => {}
         }
         CodexStatus::Running
     }

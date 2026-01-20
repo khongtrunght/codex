@@ -6,6 +6,7 @@ pub mod config_types;
 pub mod custom_prompts;
 pub mod items;
 pub mod message_history;
+pub mod model_tier;
 pub mod models;
 pub mod num_format;
 pub mod openai_models;

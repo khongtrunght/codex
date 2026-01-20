@@ -1,8 +1,10 @@
 use crate::agent::AgentRole;
+use crate::agent::manager::AgentTypeConfig;
 use crate::client_common::tools::ResponsesApiTool;
 use crate::client_common::tools::ToolSpec;
 use crate::features::Feature;
 use crate::features::Features;
+use crate::prompt_template::ToolNames;
 use crate::tools::handlers::PLAN_TOOL;
 use crate::tools::handlers::apply_patch::create_apply_patch_freeform_tool;
 use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
@@ -13,6 +15,7 @@ use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::EditToolType;
 use codex_protocol::openai_models::ModelInfo;
 use serde::Deserialize;
 use serde::Serialize;
@@ -21,14 +24,156 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+// Tool name constants to avoid string repetition
+pub const TASK_TOOL_NAME: &str = "task";
+pub const READ_FILE_TOOL_NAME: &str = "read_file";
+pub const GLOB_TOOL_NAME: &str = "glob";
+pub const BASH_TOOL_NAME: &str = "bash";
+pub const GREP_FILES_TOOL_NAME: &str = "grep_files";
+pub const WRITE_FILE_TOOL_NAME: &str = "write_file";
+pub const EDIT_FILE_TOOL_NAME: &str = "edit_file";
+pub const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
+pub const SHELL_TOOL_NAME: &str = "shell";
+pub const SHELL_COMMAND_TOOL_NAME: &str = "shell_command";
+pub const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
+pub const WRITE_STDIN_TOOL_NAME: &str = "write_stdin";
+pub const LIST_DIR_TOOL_NAME: &str = "list_dir";
+pub const TEST_SYNC_TOOL_NAME: &str = "test_sync_tool";
+pub const LIST_MCP_RESOURCES_TOOL_NAME: &str = "list_mcp_resources";
+pub const LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME: &str = "list_mcp_resource_templates";
+pub const READ_MCP_RESOURCE_TOOL_NAME: &str = "read_mcp_resource";
+pub const TODO_WRITE_TOOL_NAME: &str = "todo_write";
+pub const BASH_OUTPUT_TOOL_NAME: &str = "bash_output";
+pub const KILL_SHELL_TOOL_NAME: &str = "kill_shell";
+pub const ENTER_PLAN_MODE_TOOL_NAME: &str = "enter_plan_mode";
+pub const EXIT_PLAN_MODE_TOOL_NAME: &str = "exit_plan_mode";
+pub const ASK_USER_QUESTION_TOOL_NAME: &str = "ask_user_question";
+
+/// Renders agent descriptions into a formatted string for the task tool.
+pub fn render_agent_descriptions(agents: &[AgentTypeConfig]) -> String {
+    agents
+        .iter()
+        .map(|agent| {
+            let properties = if agent.fork_context {
+                "Properties: access to current context; "
+            } else {
+                ""
+            };
+
+            let tools = match &agent.tools {
+                Some(tools) => tools.join(", "),
+                None => "All tools".to_string(),
+            };
+
+            let name = &agent.name;
+            let description = &agent.description;
+
+            format!("- {name}: {description} ({properties}Tools: {tools})")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    pub edit_tool_type: Option<EditToolType>,
     pub web_search_mode: Option<WebSearchMode>,
     pub collab_tools: bool,
     pub collaboration_modes_tools: bool,
     pub experimental_supported_tools: Vec<String>,
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            shell_type: ConfigShellToolType::Default,
+            apply_patch_tool_type: None,
+            edit_tool_type: None,
+            web_search_mode: None,
+            collab_tools: false,
+            collaboration_modes_tools: false,
+            experimental_supported_tools: vec![],
+        }
+    }
+}
+
+impl ToolNames for ToolsConfig {
+    // === Configuration-dependent tool names ===
+
+    /// Returns the shell tool name as a string for use in templates.
+    fn shell_tool_name(&self) -> &'static str {
+        match self.shell_type {
+            ConfigShellToolType::Bash => BASH_TOOL_NAME,
+            ConfigShellToolType::Local | ConfigShellToolType::Default => SHELL_TOOL_NAME,
+            ConfigShellToolType::ShellCommand => SHELL_COMMAND_TOOL_NAME,
+            ConfigShellToolType::UnifiedExec => EXEC_COMMAND_TOOL_NAME,
+            ConfigShellToolType::Disabled => SHELL_TOOL_NAME,
+        }
+    }
+
+    /// Returns the edit tool name as a string for use in templates.
+    fn edit_tool_name(&self) -> &'static str {
+        match self.edit_tool_type {
+            Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction) => {
+                APPLY_PATCH_TOOL_NAME
+            }
+            Some(EditToolType::FileEdit) | None => EDIT_FILE_TOOL_NAME,
+        }
+    }
+
+    /// Returns the write tool name as a string for use in templates.
+    fn write_tool_name(&self) -> &'static str {
+        match self.edit_tool_type {
+            Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction) => {
+                APPLY_PATCH_TOOL_NAME
+            }
+            Some(EditToolType::FileEdit) | None => WRITE_FILE_TOOL_NAME,
+        }
+    }
+
+    /// Returns true if the edit tool is apply_patch (for conditional sections).
+    fn is_apply_patch(&self) -> bool {
+        matches!(
+            self.edit_tool_type,
+            Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction)
+        )
+    }
+
+    // === Fixed tool names (not configuration-dependent) ===
+
+    fn glob_tool(&self) -> &'static str {
+        GLOB_TOOL_NAME
+    }
+
+    fn grep_tool(&self) -> &'static str {
+        GREP_FILES_TOOL_NAME
+    }
+
+    fn read_tool(&self) -> &'static str {
+        READ_FILE_TOOL_NAME
+    }
+
+    fn task_tool(&self) -> &'static str {
+        TASK_TOOL_NAME
+    }
+
+    fn todo_write_tool(&self) -> &'static str {
+        TODO_WRITE_TOOL_NAME
+    }
+
+    fn ask_user_question_tool(&self) -> &'static str {
+        ASK_USER_QUESTION_TOOL_NAME
+    }
+
+    fn enter_plan_mode_tool(&self) -> &'static str {
+        ENTER_PLAN_MODE_TOOL_NAME
+    }
+
+    fn exit_plan_mode_tool(&self) -> &'static str {
+        EXIT_PLAN_MODE_TOOL_NAME
+    }
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -76,6 +221,7 @@ impl ToolsConfig {
         Self {
             shell_type,
             apply_patch_tool_type,
+            edit_tool_type: model_info.edit_tool_type,
             web_search_mode: *web_search_mode,
             collab_tools: include_collab_tools,
             collaboration_modes_tools: include_collaboration_modes_tools,
@@ -1264,6 +1410,9 @@ pub(crate) fn build_specs(
         ConfigShellToolType::ShellCommand => {
             builder.push_spec(create_shell_command_tool());
         }
+        ConfigShellToolType::Bash => {
+            todo!("Bash shell type not yet implemented");
+        }
     }
 
     if config.shell_type != ConfigShellToolType::Disabled {
@@ -1436,6 +1585,7 @@ mod tests {
             ConfigShellToolType::UnifiedExec => None,
             ConfigShellToolType::Disabled => None,
             ConfigShellToolType::ShellCommand => Some("shell_command"),
+            ConfigShellToolType::Bash => Some("bash"),
         }
     }
 
