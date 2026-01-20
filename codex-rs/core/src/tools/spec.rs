@@ -13,7 +13,6 @@ use crate::tools::handlers::collab::MAX_WAIT_TIMEOUT_MS;
 use crate::tools::registry::ToolRegistryBuilder;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::VIEW_IMAGE_TOOL_NAME;
-use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::EditToolType;
 use codex_protocol::openai_models::ModelInfo;
@@ -77,7 +76,10 @@ pub fn render_agent_descriptions(agents: &[AgentTypeConfig]) -> String {
 #[derive(Debug, Clone)]
 pub(crate) struct ToolsConfig {
     pub shell_type: ConfigShellToolType,
-    pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    /// Specifies which editing tools to use for file modifications.
+    /// - `ApplyPatchFreeform`: Uses apply_patch tool with freeform text input
+    /// - `ApplyPatchFunction`: Uses apply_patch tool with structured function call
+    /// - `FileEdit`: Uses edit_file and write_file tools
     pub edit_tool_type: Option<EditToolType>,
     pub web_search_mode: Option<WebSearchMode>,
     pub collab_tools: bool,
@@ -89,7 +91,6 @@ impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             shell_type: ConfigShellToolType::Default,
-            apply_patch_tool_type: None,
             edit_tool_type: None,
             web_search_mode: None,
             collab_tools: false,
@@ -206,12 +207,14 @@ impl ToolsConfig {
             model_info.shell_type
         };
 
-        let apply_patch_tool_type = match model_info.apply_patch_tool_type {
-            Some(ApplyPatchToolType::Freeform) => Some(ApplyPatchToolType::Freeform),
-            Some(ApplyPatchToolType::Function) => Some(ApplyPatchToolType::Function),
+        // Determine edit_tool_type using the new effective_edit_tool_type() which
+        // handles both the new edit_tool_type field and deprecated apply_patch_tool_type
+        let edit_tool_type = match model_info.effective_edit_tool_type() {
+            Some(edit_type) => Some(edit_type),
             None => {
+                // Fall back to feature flag for apply_patch freeform
                 if include_apply_patch_tool {
-                    Some(ApplyPatchToolType::Freeform)
+                    Some(EditToolType::ApplyPatchFreeform)
                 } else {
                     None
                 }
@@ -220,8 +223,7 @@ impl ToolsConfig {
 
         Self {
             shell_type,
-            apply_patch_tool_type,
-            edit_tool_type: model_info.edit_tool_type,
+            edit_tool_type,
             web_search_mode: *web_search_mode,
             collab_tools: include_collab_tools,
             collaboration_modes_tools: include_collaboration_modes_tools,
@@ -1005,6 +1007,87 @@ fn create_read_file_tool() -> ToolSpec {
     })
 }
 
+fn create_write_file_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "file_path".to_string(),
+            JsonSchema::String {
+                description: Some("Absolute path to the file to write.".to_string()),
+            },
+        ),
+        (
+            "content".to_string(),
+            JsonSchema::String {
+                description: Some("The content to write to the file.".to_string()),
+            },
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: WRITE_FILE_TOOL_NAME.to_string(),
+        description:
+            "Writes content to a file. For existing files, you must read the file first using read_file."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["file_path".to_string(), "content".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_edit_file_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "file_path".to_string(),
+            JsonSchema::String {
+                description: Some("Absolute path to the file to edit.".to_string()),
+            },
+        ),
+        (
+            "old_string".to_string(),
+            JsonSchema::String {
+                description: Some("The text to replace.".to_string()),
+            },
+        ),
+        (
+            "new_string".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "The text to replace it with (must be different from old_string).".to_string(),
+                ),
+            },
+        ),
+        (
+            "replace_all".to_string(),
+            JsonSchema::Boolean {
+                description: Some(
+                    "Replace all occurrences of old_string (default false).".to_string(),
+                ),
+            },
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: EDIT_FILE_TOOL_NAME.to_string(),
+        description:
+            "Performs exact string replacement in a file. You must read the file first using read_file. \
+             Uses fallback matching strategies: exact match, then normalized whitespace, then line-trimmed."
+                .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec![
+                "file_path".to_string(),
+                "old_string".to_string(),
+                "new_string".to_string(),
+            ]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 fn create_list_dir_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
@@ -1365,6 +1448,7 @@ pub(crate) fn build_specs(
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
     use crate::tools::handlers::CollabHandler;
+    use crate::tools::handlers::EditFileHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
@@ -1377,6 +1461,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WriteFileHandler;
     use std::sync::Arc;
 
     let mut builder = ToolRegistryBuilder::new();
@@ -1438,16 +1523,27 @@ pub(crate) fn build_specs(
         builder.register_handler("request_user_input", request_user_input_handler);
     }
 
-    if let Some(apply_patch_tool_type) = &config.apply_patch_tool_type {
-        match apply_patch_tool_type {
-            ApplyPatchToolType::Freeform => {
+    // Register edit tools based on edit_tool_type
+    if let Some(edit_tool_type) = &config.edit_tool_type {
+        match edit_tool_type {
+            EditToolType::ApplyPatchFreeform => {
                 builder.push_spec(create_apply_patch_freeform_tool());
+                builder.register_handler("apply_patch", apply_patch_handler);
             }
-            ApplyPatchToolType::Function => {
+            EditToolType::ApplyPatchFunction => {
                 builder.push_spec(create_apply_patch_json_tool());
+                builder.register_handler("apply_patch", apply_patch_handler);
+            }
+            EditToolType::FileEdit => {
+                let write_file_handler = Arc::new(WriteFileHandler);
+                builder.push_spec_with_parallel_support(create_write_file_tool(), true);
+                builder.register_handler(WRITE_FILE_TOOL_NAME, write_file_handler);
+
+                let edit_file_handler = Arc::new(EditFileHandler);
+                builder.push_spec_with_parallel_support(create_edit_file_tool(), true);
+                builder.register_handler(EDIT_FILE_TOOL_NAME, edit_file_handler);
             }
         }
-        builder.register_handler("apply_patch", apply_patch_handler);
     }
 
     if config

@@ -121,11 +121,28 @@ pub enum ConfigShellToolType {
     Bash,
 }
 
+/// Deprecated: Use `EditToolType` instead. This enum is maintained for backward
+/// compatibility with older configurations and will be removed in a future version.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use `EditToolType` instead. ApplyPatchToolType will be removed in a future version."
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyPatchToolType {
     Freeform,
     Function,
+}
+
+#[allow(deprecated)]
+impl ApplyPatchToolType {
+    /// Convert deprecated ApplyPatchToolType to EditToolType
+    pub fn to_edit_tool_type(&self) -> EditToolType {
+        match self {
+            ApplyPatchToolType::Freeform => EditToolType::ApplyPatchFreeform,
+            ApplyPatchToolType::Function => EditToolType::ApplyPatchFunction,
+        }
+    }
 }
 
 /// Specifies which editing tools are available for a model.
@@ -196,7 +213,12 @@ pub struct ModelInfo {
     pub supports_reasoning_summaries: bool,
     pub support_verbosity: bool,
     pub default_verbosity: Option<Verbosity>,
+    /// Deprecated: Use `edit_tool_type` instead. This field is maintained for backward
+    /// compatibility and will be removed in a future version.
+    #[allow(deprecated)]
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
+    /// Specifies which editing tools are available for this model.
+    /// This is the preferred field over the deprecated `apply_patch_tool_type`.
     pub edit_tool_type: Option<EditToolType>,
     pub truncation_policy: TruncationPolicyConfig,
     pub supports_parallel_tool_calls: bool,
@@ -219,6 +241,20 @@ impl ModelInfo {
             self.context_window
                 .map(|context_window| (context_window * 9) / 10)
         })
+    }
+
+    /// Returns the effective edit tool type, preferring `edit_tool_type` over the
+    /// deprecated `apply_patch_tool_type`.
+    #[allow(deprecated)]
+    pub fn effective_edit_tool_type(&self) -> Option<EditToolType> {
+        // Prefer edit_tool_type if set
+        if let Some(edit_type) = self.edit_tool_type {
+            return Some(edit_type);
+        }
+        // Fall back to converting deprecated apply_patch_tool_type
+        self.apply_patch_tool_type
+            .as_ref()
+            .map(ApplyPatchToolType::to_edit_tool_type)
     }
 }
 

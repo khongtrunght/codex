@@ -129,6 +129,16 @@ pub struct ApplyPatchAction {
 }
 
 impl ApplyPatchAction {
+    /// Create a new ApplyPatchAction with the given changes.
+    /// All paths in the changes HashMap must be absolute paths.
+    pub fn new(changes: HashMap<PathBuf, ApplyPatchFileChange>, cwd: PathBuf) -> Self {
+        Self {
+            changes,
+            cwd,
+            patch: String::new(), // Not needed for safety assessment
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.changes.is_empty()
     }

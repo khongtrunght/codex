@@ -13,8 +13,10 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub mod apply_patch;
+pub mod edit_file;
 pub mod shell;
 pub mod unified_exec;
+pub mod write_file;
 
 /// Shared helper to construct a CommandSpec from a tokenized command line.
 /// Validates that at least a program is present.

@@ -1,6 +1,6 @@
 use codex_protocol::config_types::Verbosity;
-use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::EditToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -28,7 +28,7 @@ macro_rules! model_info {
     (
         $slug:expr $(, $key:ident : $value:expr )* $(,)?
     ) => {{
-        #[allow(unused_mut)]
+        #[allow(unused_mut, deprecated)]
         let mut model = ModelInfo {
             slug: $slug.to_string(),
             display_name: $slug.to_string(),
@@ -117,7 +117,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
     } else if slug.starts_with("gpt-oss") || slug.starts_with("openai/gpt-oss") {
         model_info!(
             slug,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Function),
+            edit_tool_type: Some(EditToolType::ApplyPatchFunction),
             context_window: Some(96_000),
         )
     } else if slug.starts_with("gpt-4o") {
@@ -154,7 +154,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
         model_info!(
             slug,
             base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
             supports_reasoning_summaries: true,
@@ -165,7 +165,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
     } else if slug.starts_with("exp-") {
         model_info!(
             slug,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             supports_reasoning_summaries: true,
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
@@ -180,7 +180,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
         model_info!(
             slug,
             base_instructions: GPT_5_2_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: true,
             supports_reasoning_summaries: true,
@@ -193,7 +193,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
         model_info!(
             slug,
             base_instructions: GPT_5_1_CODEX_MAX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: false,
             supports_reasoning_summaries: true,
@@ -210,7 +210,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
         model_info!(
             slug,
             base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: false,
             supports_reasoning_summaries: true,
@@ -226,7 +226,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
         model_info!(
             slug,
             base_instructions: GPT_5_CODEX_INSTRUCTIONS.to_string(),
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             shell_type: ConfigShellToolType::ShellCommand,
             supports_parallel_tool_calls: false,
             supports_reasoning_summaries: true,
@@ -239,7 +239,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
     {
         model_info!(
             slug,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             supports_reasoning_summaries: true,
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),
@@ -254,7 +254,7 @@ pub(crate) fn find_model_info_for_slug(slug: &str) -> ModelInfo {
     } else if slug.starts_with("gpt-5.1") && !slug.contains("codex") {
         model_info!(
             slug,
-            apply_patch_tool_type: Some(ApplyPatchToolType::Freeform),
+            edit_tool_type: Some(EditToolType::ApplyPatchFreeform),
             supports_reasoning_summaries: true,
             support_verbosity: true,
             default_verbosity: Some(Verbosity::Low),

@@ -1,5 +1,6 @@
 pub mod apply_patch;
 pub(crate) mod collab;
+mod edit_file;
 mod grep_files;
 mod list_dir;
 mod mcp;
@@ -12,6 +13,7 @@ pub(crate) mod task;
 mod test_sync;
 mod unified_exec;
 mod view_image;
+mod write_file;
 
 pub use plan::PLAN_TOOL;
 use serde::Deserialize;
@@ -19,6 +21,7 @@ use serde::Deserialize;
 use crate::function_tool::FunctionCallError;
 pub use apply_patch::ApplyPatchHandler;
 pub use collab::CollabHandler;
+pub use edit_file::EditFileHandler;
 pub use grep_files::GrepFilesHandler;
 pub use list_dir::ListDirHandler;
 pub use mcp::McpHandler;
@@ -28,10 +31,10 @@ pub use read_file::ReadFileHandler;
 pub use request_user_input::RequestUserInputHandler;
 pub use shell::ShellCommandHandler;
 pub use shell::ShellHandler;
-pub use task::TaskHandler;
 pub use test_sync::TestSyncHandler;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;
+pub use write_file::WriteFileHandler;
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where
