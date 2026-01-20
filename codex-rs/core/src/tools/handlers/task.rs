@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use codex_protocol::model_tier::ModelTier;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::SubAgentBeginEvent;
 use codex_protocol::protocol::SubAgentCompleteEvent;
@@ -6,15 +7,19 @@ use codex_protocol::protocol::SubAgentEndEvent;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::agent::AgentSpawnContext;
 use crate::agent::status::is_final;
+use crate::codex::TurnContext;
+use crate::config::Config;
 use crate::error::CodexErr;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use crate::tools::spec::ToolsConfig;
+use crate::tools::spec::ToolsConfigParams;
 
 pub struct TaskHandler;
 #[derive(Debug, Deserialize)]
@@ -30,7 +35,7 @@ struct TaskParams {
     resume: Option<String>,
     /// Optional model tier override ("default", "small", "inherit") or direct model slug.
     #[serde(default)]
-    model: Option<String>,
+    model: Option<ModelTier>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,9 +72,7 @@ impl ToolHandler for TaskHandler {
             }
         };
 
-        let params: TaskParams = serde_json::from_str(&arguments).map_err(|e| {
-            FunctionCallError::RespondToModel(format!("Invalid task parameters: {e}"))
-        })?;
+        let params: TaskParams = parse_arguments(&arguments)?;
 
         // Validate agent type exists
         let agent_type = session
@@ -85,15 +88,6 @@ impl ToolHandler for TaskHandler {
                     params.subagent_type, available_text
                 ))
             })?;
-
-        // Build spawn context with all model-aware configuration
-        let spawn_ctx = AgentSpawnContext::build(
-            &session.services.models_manager,
-            &turn,
-            &agent_type,
-            params.model.as_deref(),
-        )
-        .await?;
 
         // Emit SubAgentSpawnBegin event
         session
@@ -111,11 +105,39 @@ impl ToolHandler for TaskHandler {
             )
             .await;
 
+        let mut config = build_agent_spawn_config(turn.as_ref())?;
+        // model with get from the args first, then from the agent_type
+        let requested_model_tier = params.model.unwrap_or(agent_type.model_tier);
+        let model = match requested_model_tier {
+            ModelTier::Small => config
+                .small_model
+                .clone()
+                .unwrap_or_else(|| turn.client.get_model()),
+            _ => turn.client.get_model(),
+        };
+        let task_model_info = session
+            .services
+            .models_manager
+            .get_model_info(&model, &config)
+            .await;
+
+        // set config base on agent_type and the model_info recently get
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info: &task_model_info,
+            features: &config.features,
+            web_search_mode: config.web_search_mode,
+            agent_configs: Some(&session.services.agent_type_manager.agent_configs()),
+        });
+
+        agent_type
+            .apply_to_config(&mut config, &tools_config)
+            .map_err(FunctionCallError::RespondToModel)?;
+
         // Spawn the agent
         let result = session
             .services
             .agent_control
-            .spawn_agent(spawn_ctx.config, params.prompt.clone())
+            .spawn_agent(config, params.prompt.clone())
             .await
             .map_err(collab_spawn_error);
 
@@ -206,4 +228,33 @@ fn collab_spawn_error(err: CodexErr) -> FunctionCallError {
         }
         err => FunctionCallError::RespondToModel(format!("collab spawn failed: {err}")),
     }
+}
+
+fn build_agent_spawn_config(turn: &TurnContext) -> Result<Config, FunctionCallError> {
+    let base_config = turn.client.config();
+    let mut config = (*base_config).clone();
+    config.model = Some(turn.client.get_model());
+    config.model_provider = turn.client.get_provider();
+    config.model_reasoning_effort = turn.client.get_reasoning_effort();
+    config.model_reasoning_summary = turn.client.get_reasoning_summary();
+    config.developer_instructions = turn.developer_instructions.clone();
+    config.base_instructions = turn.base_instructions.clone();
+    config.compact_prompt = turn.compact_prompt.clone();
+    config.user_instructions = turn.user_instructions.clone();
+    config.shell_environment_policy = turn.shell_environment_policy.clone();
+    config.codex_linux_sandbox_exe = turn.codex_linux_sandbox_exe.clone();
+    config.cwd = turn.cwd.clone();
+    config
+        .approval_policy
+        .set(turn.approval_policy)
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!("approval_policy is invalid: {err}"))
+        })?;
+    config
+        .sandbox_policy
+        .set(turn.sandbox_policy.clone())
+        .map_err(|err| {
+            FunctionCallError::RespondToModel(format!("sandbox_policy is invalid: {err}"))
+        })?;
+    Ok(config)
 }

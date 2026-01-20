@@ -23,6 +23,7 @@ use codex_core::protocol::ExecPolicyAmendment;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::Op;
 use codex_core::protocol::ReviewDecision;
+use codex_protocol::ThreadId;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -44,12 +45,16 @@ pub(crate) enum ApprovalRequest {
         command: Vec<String>,
         reason: Option<String>,
         proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+        /// Target thread for the approval response. `None` means main thread.
+        target_thread: Option<ThreadId>,
     },
     ApplyPatch {
         id: String,
         reason: Option<String>,
         cwd: PathBuf,
         changes: HashMap<PathBuf, FileChange>,
+        /// Target thread for the approval response. `None` means main thread.
+        target_thread: Option<ThreadId>,
     },
     McpElicitation {
         server_name: String,
@@ -168,11 +173,22 @@ impl ApprovalOverlay {
         };
         if let Some(variant) = self.current_variant.as_ref() {
             match (variant, &option.decision) {
-                (ApprovalVariant::Exec { id, command, .. }, ApprovalDecision::Review(decision)) => {
-                    self.handle_exec_decision(id, command, decision.clone());
+                (
+                    ApprovalVariant::Exec {
+                        id,
+                        command,
+                        target_thread,
+                        ..
+                    },
+                    ApprovalDecision::Review(decision),
+                ) => {
+                    self.handle_exec_decision(id, command, decision.clone(), *target_thread);
                 }
-                (ApprovalVariant::ApplyPatch { id, .. }, ApprovalDecision::Review(decision)) => {
-                    self.handle_patch_decision(id, decision.clone());
+                (
+                    ApprovalVariant::ApplyPatch { id, target_thread },
+                    ApprovalDecision::Review(decision),
+                ) => {
+                    self.handle_patch_decision(id, decision.clone(), *target_thread);
                 }
                 (
                     ApprovalVariant::McpElicitation {
@@ -191,20 +207,44 @@ impl ApprovalOverlay {
         self.advance_queue();
     }
 
-    fn handle_exec_decision(&self, id: &str, command: &[String], decision: ReviewDecision) {
+    fn handle_exec_decision(
+        &self,
+        id: &str,
+        command: &[String],
+        decision: ReviewDecision,
+        target_thread: Option<ThreadId>,
+    ) {
         let cell = history_cell::new_approval_decision_cell(command.to_vec(), decision.clone());
         self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
-        self.app_event_tx.send(AppEvent::CodexOp(Op::ExecApproval {
+
+        let op = Op::ExecApproval {
             id: id.to_string(),
             decision,
-        }));
+        };
+        match target_thread {
+            Some(thread_id) => self
+                .app_event_tx
+                .send(AppEvent::SubAgentOp { thread_id, op }),
+            None => self.app_event_tx.send(AppEvent::CodexOp(op)),
+        }
     }
 
-    fn handle_patch_decision(&self, id: &str, decision: ReviewDecision) {
-        self.app_event_tx.send(AppEvent::CodexOp(Op::PatchApproval {
+    fn handle_patch_decision(
+        &self,
+        id: &str,
+        decision: ReviewDecision,
+        target_thread: Option<ThreadId>,
+    ) {
+        let op = Op::PatchApproval {
             id: id.to_string(),
             decision,
-        }));
+        };
+        match target_thread {
+            Some(thread_id) => self
+                .app_event_tx
+                .send(AppEvent::SubAgentOp { thread_id, op }),
+            None => self.app_event_tx.send(AppEvent::CodexOp(op)),
+        }
     }
 
     fn handle_elicitation_decision(
@@ -280,11 +320,16 @@ impl BottomPaneView for ApprovalOverlay {
             && let Some(variant) = self.current_variant.as_ref()
         {
             match &variant {
-                ApprovalVariant::Exec { id, command, .. } => {
-                    self.handle_exec_decision(id, command, ReviewDecision::Abort);
+                ApprovalVariant::Exec {
+                    id,
+                    command,
+                    target_thread,
+                    ..
+                } => {
+                    self.handle_exec_decision(id, command, ReviewDecision::Abort, *target_thread);
                 }
-                ApprovalVariant::ApplyPatch { id, .. } => {
-                    self.handle_patch_decision(id, ReviewDecision::Abort);
+                ApprovalVariant::ApplyPatch { id, target_thread } => {
+                    self.handle_patch_decision(id, ReviewDecision::Abort, *target_thread);
                 }
                 ApprovalVariant::McpElicitation {
                     server_name,
@@ -343,6 +388,7 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                 command,
                 reason,
                 proposed_execpolicy_amendment,
+                target_thread,
             } => {
                 let mut header: Vec<Line<'static>> = Vec::new();
                 if let Some(reason) = reason {
@@ -360,6 +406,7 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                         id,
                         command,
                         proposed_execpolicy_amendment,
+                        target_thread,
                     },
                     header: Box::new(Paragraph::new(header).wrap(Wrap { trim: false })),
                 }
@@ -369,6 +416,7 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                 reason,
                 cwd,
                 changes,
+                target_thread,
             } => {
                 let mut header: Vec<Box<dyn Renderable>> = Vec::new();
                 if let Some(reason) = reason
@@ -382,7 +430,7 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                 }
                 header.push(DiffSummary::new(changes, cwd).into());
                 Self {
-                    variant: ApprovalVariant::ApplyPatch { id },
+                    variant: ApprovalVariant::ApplyPatch { id, target_thread },
                     header: Box::new(ColumnRenderable::with(header)),
                 }
             }
@@ -415,9 +463,11 @@ enum ApprovalVariant {
         id: String,
         command: Vec<String>,
         proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
+        target_thread: Option<ThreadId>,
     },
     ApplyPatch {
         id: String,
+        target_thread: Option<ThreadId>,
     },
     McpElicitation {
         server_name: String,
@@ -549,6 +599,7 @@ mod tests {
             command: vec!["echo".to_string(), "hi".to_string()],
             reason: Some("reason".to_string()),
             proposed_execpolicy_amendment: None,
+            target_thread: None,
         }
     }
 
@@ -593,6 +644,7 @@ mod tests {
                 proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec![
                     "echo".to_string(),
                 ])),
+                target_thread: None,
             },
             tx,
             Features::with_defaults(),
@@ -631,6 +683,7 @@ mod tests {
                 proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(vec![
                     "echo".to_string(),
                 ])),
+                target_thread: None,
             },
             tx,
             {
@@ -655,6 +708,7 @@ mod tests {
             command,
             reason: None,
             proposed_execpolicy_amendment: None,
+            target_thread: None,
         };
 
         let view = ApprovalOverlay::new(exec_request, tx, Features::with_defaults());

@@ -12,6 +12,7 @@ use crate::SandboxState;
 use crate::agent::AgentControl;
 use crate::agent::AgentStatus;
 use crate::agent::agent_status_from_event;
+use crate::agent::manager::AgentTypeManager;
 use crate::client_common::REVIEW_PROMPT;
 use crate::compact;
 use crate::compact::run_inline_auto_compact_task;
@@ -523,6 +524,7 @@ impl Session {
         model_info: ModelInfo,
         conversation_id: ThreadId,
         sub_id: String,
+        agent_type_manager: &AgentTypeManager,
     ) -> TurnContext {
         let otel_manager = otel_manager.clone().with_model(
             session_configuration.collaboration_mode.model(),
@@ -545,7 +547,9 @@ impl Session {
             model_info: &model_info,
             features: &per_turn_config.features,
             web_search_mode: per_turn_config.web_search_mode,
-        });
+            agent_configs: None,
+        })
+        .with_agent_configs(agent_type_manager.agent_configs());
 
         TurnContext {
             sub_id,
@@ -996,6 +1000,7 @@ impl Session {
             model_info,
             self.conversation_id,
             sub_id,
+            &self.services.agent_type_manager,
         );
         if let Some(final_schema) = final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
@@ -2621,6 +2626,7 @@ async fn spawn_review_thread(
         model_info: &review_model_info,
         features: &review_features,
         web_search_mode: Some(review_web_search_mode),
+        agent_configs: None,
     });
 
     let base_instructions = REVIEW_PROMPT.to_string();
@@ -3961,6 +3967,19 @@ mod tests {
 
         let agent_type_manager = Arc::new(crate::agent::AgentTypeManager::with_defaults());
 
+        // Build turn_context before moving agent_type_manager into Services
+        let turn_context = Session::make_turn_context(
+            Some(Arc::clone(&auth_manager)),
+            &otel_manager,
+            session_configuration.provider.clone(),
+            &session_configuration,
+            per_turn_config,
+            model_info,
+            conversation_id,
+            "turn_id".to_string(),
+            &agent_type_manager,
+        );
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
@@ -3978,17 +3997,6 @@ mod tests {
             agent_type_manager,
             agent_control,
         };
-
-        let turn_context = Session::make_turn_context(
-            Some(Arc::clone(&auth_manager)),
-            &otel_manager,
-            session_configuration.provider.clone(),
-            &session_configuration,
-            per_turn_config,
-            model_info,
-            conversation_id,
-            "turn_id".to_string(),
-        );
 
         let session = Session {
             conversation_id,
@@ -4063,6 +4071,19 @@ mod tests {
         let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone()));
         let agent_type_manager = Arc::new(crate::agent::AgentTypeManager::with_defaults());
 
+        // Build turn_context before moving agent_type_manager into Services
+        let turn_context = Arc::new(Session::make_turn_context(
+            Some(Arc::clone(&auth_manager)),
+            &otel_manager,
+            session_configuration.provider.clone(),
+            &session_configuration,
+            per_turn_config,
+            model_info,
+            conversation_id,
+            "turn_id".to_string(),
+            &agent_type_manager,
+        ));
+
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
@@ -4080,17 +4101,6 @@ mod tests {
             agent_type_manager,
             agent_control,
         };
-
-        let turn_context = Arc::new(Session::make_turn_context(
-            Some(Arc::clone(&auth_manager)),
-            &otel_manager,
-            session_configuration.provider.clone(),
-            &session_configuration,
-            per_turn_config,
-            model_info,
-            conversation_id,
-            "turn_id".to_string(),
-        ));
 
         let session = Arc::new(Session {
             conversation_id,

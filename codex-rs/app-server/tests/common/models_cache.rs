@@ -31,6 +31,7 @@ fn preset_to_info(preset: &ModelPreset, priority: i32) -> ModelInfo {
         support_verbosity: false,
         default_verbosity: None,
         apply_patch_tool_type: None,
+        edit_tool_type: None,
         truncation_policy: TruncationPolicyConfig::bytes(10_000),
         supports_parallel_tool_calls: false,
         context_window: Some(272_000),

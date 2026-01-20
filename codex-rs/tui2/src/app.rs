@@ -1657,6 +1657,15 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
             }
+            AppEvent::SubAgentEvent { thread_id, event } => {
+                self.chat_widget.handle_subagent_event(thread_id, event);
+            }
+            AppEvent::SubscribeSubAgentThread(thread_id) => {
+                self.subscribe_to_subagent_thread(thread_id);
+            }
+            AppEvent::SubAgentOp { thread_id, op } => {
+                self.submit_op_to_subagent(thread_id, op);
+            }
             AppEvent::Exit(mode) => match mode {
                 ExitMode::ShutdownFirst => self.chat_widget.submit_op(Op::Shutdown),
                 ExitMode::Immediate => {
@@ -2121,6 +2130,43 @@ impl App {
 
     pub(crate) fn token_usage(&self) -> codex_core::protocol::TokenUsage {
         self.chat_widget.token_usage()
+    }
+
+    /// Subscribe to a subagent thread and forward its events to the ChatWidget.
+    fn subscribe_to_subagent_thread(&self, thread_id: ThreadId) {
+        let server = Arc::clone(&self.server);
+        let app_event_tx = self.app_event_tx.clone();
+
+        tokio::spawn(async move {
+            match server.get_thread(thread_id).await {
+                Ok(thread) => {
+                    while let Ok(event) = thread.next_event().await {
+                        app_event_tx.send(AppEvent::SubAgentEvent { thread_id, event });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get subagent thread {thread_id}: {e}");
+                }
+            }
+        });
+    }
+
+    /// Submit an Op to a specific subagent thread.
+    fn submit_op_to_subagent(&self, thread_id: ThreadId, op: Op) {
+        let server = Arc::clone(&self.server);
+
+        tokio::spawn(async move {
+            match server.get_thread(thread_id).await {
+                Ok(thread) => {
+                    if let Err(e) = thread.submit(op).await {
+                        tracing::warn!("Failed to submit op to subagent {thread_id}: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get subagent thread {thread_id}: {e}");
+                }
+            }
+        });
     }
 
     fn on_update_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {

@@ -85,6 +85,9 @@ pub(crate) struct ToolsConfig {
     pub collab_tools: bool,
     pub collaboration_modes_tools: bool,
     pub experimental_supported_tools: Vec<String>,
+    /// Descriptions of available agent types for the Task tool.
+    /// If None, the task tool will not be registered.
+    pub agent_configs: Option<Vec<AgentTypeConfig>>,
 }
 
 impl Default for ToolsConfig {
@@ -96,6 +99,7 @@ impl Default for ToolsConfig {
             collab_tools: false,
             collaboration_modes_tools: false,
             experimental_supported_tools: vec![],
+            agent_configs: None,
         }
     }
 }
@@ -181,6 +185,9 @@ pub(crate) struct ToolsConfigParams<'a> {
     pub(crate) model_info: &'a ModelInfo,
     pub(crate) features: &'a Features,
     pub(crate) web_search_mode: Option<WebSearchMode>,
+    /// Agent configurations for the Task tool. If provided and the TaskTool feature
+    /// is enabled, the Task tool will be registered with these agent types.
+    pub(crate) agent_configs: Option<&'a [AgentTypeConfig]>,
 }
 
 impl ToolsConfig {
@@ -189,10 +196,12 @@ impl ToolsConfig {
             model_info,
             features,
             web_search_mode,
+            agent_configs,
         } = params;
         let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_collab_tools = features.enabled(Feature::Collab);
         let include_collaboration_modes_tools = features.enabled(Feature::CollaborationModes);
+        let include_task_tool = features.enabled(Feature::TaskTool);
 
         let shell_type = if !features.enabled(Feature::ShellTool) {
             ConfigShellToolType::Disabled
@@ -221,6 +230,13 @@ impl ToolsConfig {
             }
         };
 
+        // Only include agent_configs if the TaskTool feature is enabled and configs are provided
+        let agent_configs = if include_task_tool {
+            agent_configs.map(<[AgentTypeConfig]>::to_vec)
+        } else {
+            None
+        };
+
         Self {
             shell_type,
             edit_tool_type,
@@ -228,7 +244,15 @@ impl ToolsConfig {
             collab_tools: include_collab_tools,
             collaboration_modes_tools: include_collaboration_modes_tools,
             experimental_supported_tools: model_info.experimental_supported_tools.clone(),
+            agent_configs,
         }
+    }
+
+    /// Set the agent descriptions for the Task tool.
+    /// This is typically called with configs from `AgentTypeManager::agent_configs()`.
+    pub fn with_agent_configs(mut self, configs: Vec<AgentTypeConfig>) -> Self {
+        self.agent_configs = Some(configs);
+        self
     }
 }
 
@@ -580,6 +604,146 @@ fn create_view_image_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["path".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+/// Helper to get the write tool name based on edit tool type.
+fn get_write_tool_name(edit_tool_type: Option<EditToolType>) -> &'static str {
+    match edit_tool_type {
+        Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction) => {
+            APPLY_PATCH_TOOL_NAME
+        }
+        Some(EditToolType::FileEdit) | None => WRITE_FILE_TOOL_NAME,
+    }
+}
+
+/// Creates the task tool spec for spawning sub-agents.
+///
+/// The Task tool allows the main agent to spawn specialized sub-agents that
+/// autonomously handle complex, multi-step tasks.
+fn create_task_tool(
+    agent_configs: &[AgentTypeConfig],
+    edit_tool_type: Option<EditToolType>,
+) -> ToolSpec {
+    let write_tool_name = get_write_tool_name(edit_tool_type);
+
+    let agent_descriptions_text = render_agent_descriptions(agent_configs);
+
+    let description = format!(
+        r#"Launch a new agent to handle complex, multi-step tasks autonomously.
+
+The {TASK_TOOL_NAME} tool launches specialized agents (subprocesses) that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
+
+Available agent types and the tools they have access to:
+{agent_descriptions_text}
+
+When using the {TASK_TOOL_NAME} tool, you must specify a subagent_type parameter to select which agent type to use.
+When NOT to use the {TASK_TOOL_NAME} tool:
+- If you want to read a specific file path, use the {READ_FILE_TOOL_NAME} or {GLOB_TOOL_NAME} tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use the {GLOB_TOOL_NAME} tool instead, to find the match more quickly
+- If you are searching for code within a specific file or set of 2-3 files, use the {READ_FILE_TOOL_NAME} tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
+- Other tasks that are not related to the agent descriptions above
+
+
+Usage notes:
+- Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
+- When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
+- Each agent invocation is stateless. You will not be able to send additional messages to the agent, nor will the agent be able to communicate with you outside of its final report. Therefore, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
+- Agents with "access to current context" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. The agent will receive all prior messages and understand the context.
+- The agent's outputs should generally be trusted
+- Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
+- If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
+- If the user specifies that they want you to run agents "in parallel", you MUST send a single message with multiple {TASK_TOOL_NAME} tool use content blocks. For example, if you need to launch both a code-reviewer agent and a test-runner agent in parallel, send a single message with both tool calls.
+
+Example usage:
+
+<example_agent_descriptions>
+"code-reviewer": use this agent after you are done writing a signficant piece of code
+"greeting-responder": use this agent when to respond to user greetings with a friendly joke
+</example_agent_description>
+
+<example>
+user: "Please write a function that checks if a number is prime"
+assistant: Sure let me write a function that checks if a number is prime
+assistant: First let me use the {write_tool_name} tool to write a function that checks if a number is prime
+assistant: I'm going to use the {write_tool_name} tool to write the following code:
+<code>
+function isPrime(n) {{
+  if (n <= 1) return false
+  for (let i = 2; i * i <= n; i++) {{
+    if (n % i === 0) return false
+  }}
+  return true
+}}
+</code>
+<commentary>
+Since a signficant piece of code was written and the task was completed, now use the code-reviewer agent to review the code
+</commentary>
+assistant: Now let me use the code-reviewer agent to review the code
+assistant: Uses the {TASK_TOOL_NAME} tool to launch the code-reviewer agent
+</example>
+
+<example>
+user: "Hello"
+<commentary>
+Since the user is greeting, use the greeting-responder agent to respond with a friendly joke
+</commentary>
+assistant: "I'm going to use the {TASK_TOOL_NAME} tool to launch the greeting-responder agent"
+</example>"#
+    );
+
+    let mut properties = BTreeMap::new();
+
+    properties.insert(
+        "description".to_string(),
+        JsonSchema::String {
+            description: Some("A short (3-5 word) description of the task".to_string()),
+        },
+    );
+
+    properties.insert(
+        "prompt".to_string(),
+        JsonSchema::String {
+            description: Some("The detailed task for the agent to perform".to_string()),
+        },
+    );
+
+    properties.insert(
+        "subagent_type".to_string(),
+        JsonSchema::String {
+            description: Some("The type of specialized agent to use for this task".to_string()),
+        },
+    );
+
+    properties.insert(
+        "resume".to_string(),
+        JsonSchema::String {
+            description: Some("Optional session ID to resume from a previous task".to_string()),
+        },
+    );
+
+    properties.insert(
+        "model".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional model to use for this agent. If not specified, inherits from parent. Use 'default' for main model, 'small' for small/fast model. Prefer small for quick, straightforward tasks to minimize cost and latency.".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: TASK_TOOL_NAME.to_string(),
+        description,
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec![
+                "description".to_string(),
+                "prompt".to_string(),
+                "subagent_type".to_string(),
+            ]),
             additional_properties: Some(false.into()),
         },
     })
@@ -1600,6 +1764,17 @@ pub(crate) fn build_specs(
     builder.push_spec_with_parallel_support(create_view_image_tool(), true);
     builder.register_handler("view_image", view_image_handler);
 
+    // Register Task tool if agent configurations are provided
+    if let Some(agent_configs) = &config.agent_configs {
+        use crate::tools::handlers::TaskHandler;
+        let task_handler = Arc::new(TaskHandler);
+        builder.push_spec_with_parallel_support(
+            create_task_tool(agent_configs, config.edit_tool_type),
+            true,
+        );
+        builder.register_handler(TASK_TOOL_NAME, task_handler);
+    }
+
     if config.collab_tools {
         let collab_handler = Arc::new(CollabHandler);
         builder.push_spec(create_spawn_agent_tool());
@@ -1741,6 +1916,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&config, None).build();
 
@@ -1805,6 +1981,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
         assert_contains_tool_names(
@@ -1823,6 +2000,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
         assert!(
@@ -1835,6 +2013,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
         assert_contains_tool_names(&tools, &["request_user_input"]);
@@ -1852,6 +2031,7 @@ mod tests {
             model_info: &model_info,
             features,
             web_search_mode,
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, Some(HashMap::new())).build();
         let tool_names = tools.iter().map(|t| t.spec.name()).collect::<Vec<_>>();
@@ -1868,6 +2048,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -1890,6 +2071,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -2136,6 +2318,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, Some(HashMap::new())).build();
 
@@ -2158,6 +2341,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -2177,6 +2361,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(&tools_config, None).build();
 
@@ -2208,6 +2393,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Live),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(
             &tools_config,
@@ -2303,6 +2489,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
 
         // Intentionally construct a map with keys that would sort alphabetically.
@@ -2380,6 +2567,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
 
         let (tools, _) = build_specs(
@@ -2437,6 +2625,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
 
         let (tools, _) = build_specs(
@@ -2491,6 +2680,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
 
         let (tools, _) = build_specs(
@@ -2547,6 +2737,7 @@ mod tests {
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
 
         let (tools, _) = build_specs(
@@ -2659,6 +2850,7 @@ Examples of valid command strings:
             model_info: &model_info,
             features: &features,
             web_search_mode: Some(WebSearchMode::Cached),
+            agent_configs: None,
         });
         let (tools, _) = build_specs(
             &tools_config,

@@ -242,39 +242,21 @@ impl AgentTypeConfig {
             .map(|prompt| prompt.render(tools))
     }
 
-    pub fn apply_to_config(self, config: &mut Config) -> Result<(), String> {
-        // Apply model tier override
-        match self.model_tier {
-            ModelTier::Default => { /* No change needed */ }
-            ModelTier::Small => {
-                config.model = config.small_model.clone();
-            }
-            ModelTier::Inherit => { /* No change needed */ }
+    pub fn apply_to_config(
+        self,
+        config: &mut Config,
+        tools_config: impl ToolNames,
+    ) -> Result<(), String> {
+        // Apply developer instructions
+        if let Some(developer_instructions) = self.developer_instructions {
+            let prompt = developer_instructions.render(&tools_config);
+            config
+                .developer_instructions
+                .get_or_insert_with(String::new)
+                .push_str(&format!("\n\n{prompt}"));
         }
 
-        // // Apply developer instructions
-        // if let Some(developer_instructions) = self.developer_instructions {
-        //     let prompt = developer_instructions.render(&config.tools);
-        //     config
-        //         .developer_instructions
-        //         .get_or_insert_with(String::new)
-        //         .push_str(&format!("\n\n{}", prompt));
-        // }
-        //
-        // // Apply tools configuration
-        // if let Some(tools) = self.tools {
-        //     config.tools.set_allowed_tools(tools);
-        // } else {
-        //     // Inherit parent's tools minus task tool
-        //     config.tools.remove_tool("task");
-        // }
-        //
-        // // Apply disallowed tools
-        // if let Some(disallowed_tools) = self.disallowed_tools {
-        //     for tool in disallowed_tools {
-        //         config.tools.remove_tool(&tool);
-        //     }
-        // }
+        //TODO: read only and tools filter
 
         Ok(())
     }

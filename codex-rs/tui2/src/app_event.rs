@@ -12,8 +12,10 @@ use std::path::PathBuf;
 
 use codex_common::approval_presets::ApprovalPreset;
 use codex_core::protocol::Event;
+use codex_core::protocol::Op;
 use codex_core::protocol::RateLimitSnapshot;
 use codex_file_search::FileMatch;
+use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelPreset;
 
 use crate::bottom_pane::ApprovalRequest;
@@ -40,6 +42,21 @@ pub(crate) enum WindowsSandboxFallbackReason {
 #[derive(Debug)]
 pub(crate) enum AppEvent {
     CodexEvent(Event),
+
+    /// Event from a subscribed subagent thread.
+    SubAgentEvent {
+        thread_id: ThreadId,
+        event: Event,
+    },
+
+    /// Request to subscribe to a subagent thread for event streaming.
+    SubscribeSubAgentThread(ThreadId),
+
+    /// Send an Op to a specific subagent thread.
+    SubAgentOp {
+        thread_id: ThreadId,
+        op: Op,
+    },
 
     /// Start a new session.
     NewSession,

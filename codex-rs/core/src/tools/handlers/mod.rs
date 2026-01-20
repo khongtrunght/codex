@@ -31,6 +31,7 @@ pub use read_file::ReadFileHandler;
 pub use request_user_input::RequestUserInputHandler;
 pub use shell::ShellCommandHandler;
 pub use shell::ShellHandler;
+pub use task::TaskHandler;
 pub use test_sync::TestSyncHandler;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;

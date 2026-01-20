@@ -107,6 +107,8 @@ pub enum Feature {
     Steer,
     /// Enable collaboration modes (Plan, Pair Programming, Execute).
     CollaborationModes,
+    /// Enable the Task tool for spawning sub-agents.
+    TaskTool,
 }
 
 impl Feature {
@@ -454,6 +456,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::CollaborationModes,
         key: "collaboration_modes",
+        stage: Stage::Beta,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::TaskTool,
+        key: "task_tool",
         stage: Stage::Beta,
         default_enabled: false,
     },

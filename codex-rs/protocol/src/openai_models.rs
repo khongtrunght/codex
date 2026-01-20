@@ -123,10 +123,7 @@ pub enum ConfigShellToolType {
 
 /// Deprecated: Use `EditToolType` instead. This enum is maintained for backward
 /// compatibility with older configurations and will be removed in a future version.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use `EditToolType` instead. ApplyPatchToolType will be removed in a future version."
-)]
+#[deprecated(note = "Use EditToolType")]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyPatchToolType {

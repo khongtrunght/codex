@@ -72,6 +72,9 @@ use codex_core::protocol::ReviewRequest;
 use codex_core::protocol::ReviewTarget;
 use codex_core::protocol::SkillsListEntry;
 use codex_core::protocol::StreamErrorEvent;
+use codex_core::protocol::SubAgentBeginEvent;
+use codex_core::protocol::SubAgentCompleteEvent;
+use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::TerminalInteractionEvent;
 use codex_core::protocol::TokenUsage;
 use codex_core::protocol::TokenUsageInfo;
@@ -104,12 +107,15 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
+use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tracing::debug;
 
+use crate::agent_cell;
+use crate::agent_cell::SubAgentCell;
 use crate::app_event::AppEvent;
 use crate::app_event::ExitMode;
 #[cfg(target_os = "windows")]
@@ -366,6 +372,10 @@ pub(crate) struct ChatWidget {
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
     running_commands: HashMap<String, RunningCommand>,
+    /// Active sub-agents (running or pending grouping), keyed by call_id.
+    subagents: HashMap<String, SubAgentCell>,
+    /// Thread ID -> call_id mapping for O(1) event routing.
+    thread_to_call_id: HashMap<ThreadId, String>,
     suppressed_exec_calls: HashSet<String>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     task_complete_pending: bool,
@@ -943,21 +953,31 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_plan_update(update));
     }
 
-    fn on_exec_approval_request(&mut self, id: String, ev: ExecApprovalRequestEvent) {
+    fn on_exec_approval_request(
+        &mut self,
+        id: String,
+        ev: ExecApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
+    ) {
         let id2 = id.clone();
         let ev2 = ev.clone();
         self.defer_or_handle(
-            |q| q.push_exec_approval(id, ev),
-            |s| s.handle_exec_approval_now(id2, ev2),
+            |q| q.push_exec_approval(id, ev, target_thread),
+            |s| s.handle_exec_approval_now(id2, ev2, target_thread),
         );
     }
 
-    fn on_apply_patch_approval_request(&mut self, id: String, ev: ApplyPatchApprovalRequestEvent) {
+    fn on_apply_patch_approval_request(
+        &mut self,
+        id: String,
+        ev: ApplyPatchApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
+    ) {
         let id2 = id.clone();
         let ev2 = ev.clone();
         self.defer_or_handle(
-            |q| q.push_apply_patch_approval(id, ev),
-            |s| s.handle_apply_patch_approval_now(id2, ev2),
+            |q| q.push_apply_patch_approval(id, ev, target_thread),
+            |s| s.handle_apply_patch_approval_now(id2, ev2, target_thread),
         );
     }
 
@@ -1270,7 +1290,12 @@ impl ChatWidget {
         self.had_work_activity = true;
     }
 
-    pub(crate) fn handle_exec_approval_now(&mut self, id: String, ev: ExecApprovalRequestEvent) {
+    pub(crate) fn handle_exec_approval_now(
+        &mut self,
+        id: String,
+        ev: ExecApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
+    ) {
         self.flush_answer_stream_with_separator();
         let command = shlex::try_join(ev.command.iter().map(String::as_str))
             .unwrap_or_else(|_| ev.command.join(" "));
@@ -1281,6 +1306,7 @@ impl ChatWidget {
             command: ev.command,
             reason: ev.reason,
             proposed_execpolicy_amendment: ev.proposed_execpolicy_amendment,
+            target_thread,
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -1291,6 +1317,7 @@ impl ChatWidget {
         &mut self,
         id: String,
         ev: ApplyPatchApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
     ) {
         self.flush_answer_stream_with_separator();
 
@@ -1299,6 +1326,7 @@ impl ChatWidget {
             reason: ev.reason,
             changes: ev.changes.clone(),
             cwd: self.config.cwd.clone(),
+            target_thread,
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -1502,6 +1530,8 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            subagents: HashMap::new(),
+            thread_to_call_id: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -1603,6 +1633,8 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            subagents: HashMap::new(),
+            thread_to_call_id: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
@@ -2249,10 +2281,10 @@ impl ChatWidget {
             EventMsg::PlanUpdate(update) => self.on_plan_update(update),
             EventMsg::ExecApprovalRequest(ev) => {
                 // For replayed events, synthesize an empty id (these should not occur).
-                self.on_exec_approval_request(id.unwrap_or_default(), ev)
+                self.on_exec_approval_request(id.unwrap_or_default(), ev, None)
             }
             EventMsg::ApplyPatchApprovalRequest(ev) => {
-                self.on_apply_patch_approval_request(id.unwrap_or_default(), ev)
+                self.on_apply_patch_approval_request(id.unwrap_or_default(), ev, None)
             }
             EventMsg::ElicitationRequest(ev) => {
                 self.on_elicitation_request(ev);
@@ -2318,10 +2350,10 @@ impl ChatWidget {
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::RequestUserInput(_)
-            | EventMsg::SubAgentSpawnBegin(_)
-            | EventMsg::SubAgentSpawnEnd(_)
-            | EventMsg::SubAgentComplete(_) => {}
+            | EventMsg::RequestUserInput(_) => {}
+            EventMsg::SubAgentSpawnBegin(ev) => self.on_subagent_begin(ev),
+            EventMsg::SubAgentSpawnEnd(ev) => self.on_subagent_end(ev),
+            EventMsg::SubAgentComplete(ev) => self.on_subagent_complete(ev),
         }
     }
 
@@ -2382,6 +2414,70 @@ impl ChatWidget {
         }
 
         self.needs_final_message_separator = false;
+    }
+
+    // ── Subagent event handlers ──────────────────────────────────────────────
+
+    fn on_subagent_begin(&mut self, ev: SubAgentBeginEvent) {
+        let call_id = ev.call_id.clone();
+        let cell = agent_cell::new_subagent_cell(ev, self.config.animations);
+        self.subagents.insert(call_id, cell);
+        self.request_redraw();
+    }
+
+    fn on_subagent_end(&mut self, ev: SubAgentEndEvent) {
+        if let Some(cell) = self.subagents.get_mut(&ev.call_id)
+            && let Some(thread_id) = ev.new_thread_id
+        {
+            cell.set_thread_id(thread_id);
+            self.thread_to_call_id.insert(thread_id, ev.call_id.clone());
+            // Signal App to subscribe to this thread for live event streaming.
+            self.app_event_tx
+                .send(AppEvent::SubscribeSubAgentThread(thread_id));
+        }
+        self.request_redraw();
+    }
+
+    fn on_subagent_complete(&mut self, ev: SubAgentCompleteEvent) {
+        // Mark the cell as completed
+        if let Some(cell) = self.subagents.get_mut(&ev.call_id) {
+            cell.complete_with_status(&ev.status);
+        }
+
+        // Clean up thread mapping
+        self.thread_to_call_id.remove(&ev.agent_thread_id);
+
+        // When ALL subagents completed, group and add to history
+        if self.subagents.values().all(SubAgentCell::is_completed) {
+            let cells: Vec<_> = self.subagents.drain().map(|(_, c)| c).collect();
+            if !cells.is_empty() {
+                self.add_to_history(agent_cell::SubAgentGroupCell::new(cells));
+            }
+        }
+        self.request_redraw();
+    }
+
+    /// Handle an event from a subscribed subagent thread.
+    pub(crate) fn handle_subagent_event(&mut self, thread_id: ThreadId, event: Event) {
+        // Handle approval requests from subagents by routing them to the main approval UI.
+        // The target_thread is passed so the approval response gets routed back correctly.
+        match &event.msg {
+            EventMsg::ExecApprovalRequest(ev) => {
+                self.on_exec_approval_request(event.id.clone(), ev.clone(), Some(thread_id));
+            }
+            EventMsg::ApplyPatchApprovalRequest(ev) => {
+                self.on_apply_patch_approval_request(event.id.clone(), ev.clone(), Some(thread_id));
+            }
+            _ => {}
+        }
+
+        // Store the event in the cell for display purposes
+        if let Some(call_id) = self.thread_to_call_id.get(&thread_id).cloned()
+            && let Some(cell) = self.subagents.get_mut(&call_id)
+        {
+            cell.add_event(event.msg);
+            self.request_redraw();
+        }
     }
 
     /// Exit the UI immediately without waiting for shutdown.
@@ -4223,11 +4319,65 @@ impl ChatWidget {
         };
         let mut flex = FlexRenderable::new();
         flex.push(1, active_cell_renderable);
+        // Render running subagents between active_cell and bottom_pane
+        if !self.subagents.is_empty() {
+            flex.push(
+                0,
+                RenderableItem::Owned(Box::new(RunningSubagentsRenderable::new(&self.subagents)))
+                    .inset(Insets::tlbr(1, 0, 0, 0)),
+            );
+        }
         flex.push(
             0,
             RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(1, 0, 0, 0)),
         );
         RenderableItem::Owned(Box::new(flex))
+    }
+}
+
+/// Renderable for displaying running subagents in the main viewport.
+///
+/// This renders running SubAgentCells between the active_cell and bottom_pane,
+/// allowing users to see subagent progress during execution.
+struct RunningSubagentsRenderable<'a> {
+    cells: Vec<&'a agent_cell::SubAgentCell>,
+}
+
+impl<'a> RunningSubagentsRenderable<'a> {
+    fn new(subagents: &'a HashMap<String, agent_cell::SubAgentCell>) -> Self {
+        let cells: Vec<_> = subagents.values().collect();
+        Self { cells }
+    }
+}
+
+impl Renderable for RunningSubagentsRenderable<'_> {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        if self.cells.is_empty() || area.height == 0 {
+            return;
+        }
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for (i, cell) in self.cells.iter().enumerate() {
+            if i > 0 {
+                // Add spacing between cells
+                lines.push(Line::default());
+            }
+            lines.extend(cell.display_lines(area.width));
+        }
+        Paragraph::new(Text::from(lines)).render(area, buf);
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        if self.cells.is_empty() {
+            return 0;
+        }
+        let mut height: u16 = 0;
+        for (i, cell) in self.cells.iter().enumerate() {
+            if i > 0 {
+                height = height.saturating_add(1); // spacing
+            }
+            height = height.saturating_add(cell.desired_height(width));
+        }
+        height
     }
 }
 

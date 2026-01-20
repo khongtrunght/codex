@@ -126,6 +126,9 @@
         "steer": {
           "type": "boolean"
         },
+        "task_tool": {
+          "type": "boolean"
+        },
         "tui2": {
           "type": "boolean"
         },
@@ -607,6 +610,9 @@
               "type": "boolean"
             },
             "steer": {
+              "type": "boolean"
+            },
+            "task_tool": {
               "type": "boolean"
             },
             "tui2": {
