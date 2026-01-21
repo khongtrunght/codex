@@ -8,13 +8,12 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::agent::status::is_final;
-use crate::codex::TurnContext;
-use crate::config::Config;
 use crate::error::CodexErr;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::collab::build_agent_spawn_config;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -105,7 +104,8 @@ impl ToolHandler for TaskHandler {
             )
             .await;
 
-        let mut config = build_agent_spawn_config(turn.as_ref())?;
+        let mut config =
+            build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
         // model with get from the args first, then from the agent_type
         let requested_model_tier = params.model.unwrap_or(agent_type.model_tier);
         let model = match requested_model_tier {
@@ -228,33 +228,4 @@ fn collab_spawn_error(err: CodexErr) -> FunctionCallError {
         }
         err => FunctionCallError::RespondToModel(format!("collab spawn failed: {err}")),
     }
-}
-
-fn build_agent_spawn_config(turn: &TurnContext) -> Result<Config, FunctionCallError> {
-    let base_config = turn.client.config();
-    let mut config = (*base_config).clone();
-    config.model = Some(turn.client.get_model());
-    config.model_provider = turn.client.get_provider();
-    config.model_reasoning_effort = turn.client.get_reasoning_effort();
-    config.model_reasoning_summary = turn.client.get_reasoning_summary();
-    config.developer_instructions = turn.developer_instructions.clone();
-    config.base_instructions = turn.base_instructions.clone();
-    config.compact_prompt = turn.compact_prompt.clone();
-    config.user_instructions = turn.user_instructions.clone();
-    config.shell_environment_policy = turn.shell_environment_policy.clone();
-    config.codex_linux_sandbox_exe = turn.codex_linux_sandbox_exe.clone();
-    config.cwd = turn.cwd.clone();
-    config
-        .approval_policy
-        .set(turn.approval_policy)
-        .map_err(|err| {
-            FunctionCallError::RespondToModel(format!("approval_policy is invalid: {err}"))
-        })?;
-    config
-        .sandbox_policy
-        .set(turn.sandbox_policy.clone())
-        .map_err(|err| {
-            FunctionCallError::RespondToModel(format!("sandbox_policy is invalid: {err}"))
-        })?;
-    Ok(config)
 }
