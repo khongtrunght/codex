@@ -1,0 +1,6 @@
+---
+source: tui2/src/agent_cell/render.rs
+expression: rendered
+---
+• Explore(Search codebase) (ctrl+o to expand)
+  └ Done (1 tool use · 0.0s)

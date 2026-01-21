@@ -14,6 +14,8 @@
 
 use crate::history_cell::HistoryCell;
 use crate::tui::scrolling::TranscriptLineMeta;
+use crate::verbosity::DisplayVerbosity;
+use crate::verbosity::RenderContext;
 use ratatui::text::Line;
 use std::sync::Arc;
 
@@ -113,6 +115,17 @@ pub(crate) fn build_wrapped_transcript_lines(
     cells: &[Arc<dyn HistoryCell>],
     width: u16,
 ) -> TranscriptLines {
+    build_wrapped_transcript_lines_with_verbosity(cells, width, DisplayVerbosity::default())
+}
+
+/// Build flattened transcript lines with explicit verbosity control.
+///
+/// When verbose is true, expandable cells show their full content.
+pub(crate) fn build_wrapped_transcript_lines_with_verbosity(
+    cells: &[Arc<dyn HistoryCell>],
+    width: u16,
+    verbosity: DisplayVerbosity,
+) -> TranscriptLines {
     if width == 0 {
         return TranscriptLines {
             lines: Vec::new(),
@@ -129,14 +142,15 @@ pub(crate) fn build_wrapped_transcript_lines(
     let mut has_emitted_lines = false;
     let base_opts: crate::wrapping::RtOptions<'_> =
         crate::wrapping::RtOptions::new(width.max(1) as usize);
+    let ctx = RenderContext::with_verbosity(width, verbosity);
 
     for (cell_index, cell) in cells.iter().enumerate() {
-        append_wrapped_transcript_cell(
+        append_wrapped_transcript_cell_with_context(
             &mut transcript,
             &mut has_emitted_lines,
             cell_index,
             cell,
-            width,
+            ctx,
             &base_opts,
         );
     }
@@ -152,6 +166,7 @@ pub(crate) fn build_wrapped_transcript_lines(
 ///
 /// `has_emitted_lines` tracks whether the output already contains any non-spacer lines and is used
 /// to decide when to insert an inter-cell spacer row.
+#[allow(dead_code)] // Legacy API, superseded by _with_context version; kept for tests
 pub(crate) fn append_wrapped_transcript_cell(
     out: &mut TranscriptLines,
     has_emitted_lines: &mut bool,
@@ -170,6 +185,116 @@ pub(crate) fn append_wrapped_transcript_cell(
     // Start from each cell's transcript view (prefixes/indents already applied), then apply
     // viewport wrapping to prose while keeping preformatted content intact.
     let rendered = cell.transcript_lines_with_joiners(width);
+    if rendered.lines.is_empty() {
+        return;
+    }
+
+    if !cell.is_stream_continuation() {
+        if *has_emitted_lines {
+            out.lines.push(Line::from(""));
+            out.meta.push(TranscriptLineMeta::Spacer);
+            out.joiner_before.push(None);
+        } else {
+            *has_emitted_lines = true;
+        }
+    }
+
+    // `visual_line_in_cell` counts the output visual lines produced from this cell *after* any
+    // viewport wrapping. This is distinct from `base_idx` (the index into the cell's input
+    // lines), since a single input line may wrap into multiple visual lines.
+    let mut visual_line_in_cell: usize = 0;
+    let mut first = true;
+    for (base_idx, base_line) in rendered.lines.iter().enumerate() {
+        // Preserve code blocks (and other preformatted text) by not applying
+        // viewport wrapping, so indentation remains meaningful for copy/paste.
+        if base_line.style.fg == Some(Color::Cyan) {
+            out.lines.push(base_line.clone());
+            out.meta.push(TranscriptLineMeta::CellLine {
+                cell_index,
+                line_in_cell: visual_line_in_cell,
+            });
+            visual_line_in_cell = visual_line_in_cell.saturating_add(1);
+            // Preformatted lines are treated as hard breaks; we keep the cell-provided joiner
+            // (which is typically `None`).
+            out.joiner_before.push(
+                rendered
+                    .joiner_before
+                    .get(base_idx)
+                    .cloned()
+                    .unwrap_or(None),
+            );
+            first = false;
+            continue;
+        }
+
+        let opts = if first {
+            base_opts.clone()
+        } else {
+            // For subsequent input lines within a cell, treat the "initial" indent as the cell's
+            // subsequent indent (matches textarea wrapping expectations).
+            base_opts
+                .clone()
+                .initial_indent(base_opts.subsequent_indent.clone())
+        };
+        // `word_wrap_line_with_joiners` returns both the wrapped visual lines and, for each
+        // continuation segment, the exact joiner substring that should be inserted instead of a
+        // newline when copying as a logical line.
+        let (wrapped, wrapped_joiners) =
+            crate::wrapping::word_wrap_line_with_joiners(base_line, opts);
+
+        for (seg_idx, (wrapped_line, seg_joiner)) in
+            wrapped.into_iter().zip(wrapped_joiners).enumerate()
+        {
+            out.lines.push(line_to_static(&wrapped_line));
+            out.meta.push(TranscriptLineMeta::CellLine {
+                cell_index,
+                line_in_cell: visual_line_in_cell,
+            });
+            visual_line_in_cell = visual_line_in_cell.saturating_add(1);
+
+            if seg_idx == 0 {
+                // The first wrapped segment corresponds to the original input line, so we use the
+                // cell-provided joiner (hard break vs soft break *between input lines*).
+                out.joiner_before.push(
+                    rendered
+                        .joiner_before
+                        .get(base_idx)
+                        .cloned()
+                        .unwrap_or(None),
+                );
+            } else {
+                // Subsequent wrapped segments are soft-wrap continuations produced by viewport
+                // wrapping, so we use the wrap-derived joiner.
+                out.joiner_before.push(seg_joiner);
+            }
+        }
+
+        first = false;
+    }
+}
+
+/// Append a single history cell with verbosity context.
+///
+/// Like [`append_wrapped_transcript_cell`] but uses the context-aware rendering methods
+/// to support verbose mode.
+pub(crate) fn append_wrapped_transcript_cell_with_context(
+    out: &mut TranscriptLines,
+    has_emitted_lines: &mut bool,
+    cell_index: usize,
+    cell: &Arc<dyn HistoryCell>,
+    ctx: RenderContext,
+    base_opts: &crate::wrapping::RtOptions<'_>,
+) {
+    use crate::render::line_utils::line_to_static;
+    use ratatui::style::Color;
+
+    if ctx.width == 0 {
+        return;
+    }
+
+    // Start from each cell's transcript view (prefixes/indents already applied), then apply
+    // viewport wrapping to prose while keeping preformatted content intact.
+    let rendered = cell.transcript_lines_with_joiners_context(ctx);
     if rendered.lines.is_empty() {
         return;
     }

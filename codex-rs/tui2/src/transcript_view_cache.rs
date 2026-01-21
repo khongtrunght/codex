@@ -77,6 +77,8 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::UserHistoryCell;
 use crate::transcript_render::TranscriptLines;
 use crate::tui::scrolling::TranscriptLineMeta;
+use crate::verbosity::DisplayVerbosity;
+use crate::verbosity::RenderContext;
 use ratatui::buffer::Buffer;
 use ratatui::prelude::Rect;
 use ratatui::text::Line;
@@ -114,14 +116,23 @@ impl TranscriptViewCache {
         }
     }
 
-    /// Ensure the wrapped transcript cache is up to date for `cells` at `width`.
+    /// Ensure the wrapped transcript cache is up to date for `cells` at `width` with default verbosity.
+    ///
+    /// This is a convenience wrapper that uses [`DisplayVerbosity::default()`] (Compact).
+    /// For verbosity-aware rendering, use [`Self::ensure_wrapped_with_verbosity`].
+    pub(crate) fn ensure_wrapped(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16) {
+        self.ensure_wrapped_with_verbosity(cells, width, DisplayVerbosity::default());
+    }
+
+    /// Ensure the wrapped transcript cache is up to date for `cells` at `width` with `verbosity`.
     ///
     /// This is the shared entrypoint for the transcript renderer and scroll math. It ensures the
-    /// cache reflects the current transcript and viewport width while preserving scroll/copy
-    /// invariants (`lines`, `meta`, and `joiner_before` remain aligned).
+    /// cache reflects the current transcript, viewport width, and verbosity while preserving
+    /// scroll/copy invariants (`lines`, `meta`, and `joiner_before` remain aligned).
     ///
     /// Rebuild conditions:
     /// - `width` changes (wrapping/layout is width-dependent)
+    /// - `verbosity` changes (cell output truncation depends on verbosity)
     /// - the transcript is truncated (fewer `cells` than last time), which means the previously
     ///   cached suffix may refer to cells that no longer exist and the cached `(cell_index,
     ///   line_in_cell)` mapping is no longer valid. In `tui2` today, this happens when the user
@@ -137,8 +148,13 @@ impl TranscriptViewCache {
     ///
     /// The raster cache is invalidated whenever the wrapped transcript is rebuilt or the width no
     /// longer matches.
-    pub(crate) fn ensure_wrapped(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16) {
-        let update = self.wrapped.ensure(cells, width);
+    pub(crate) fn ensure_wrapped_with_verbosity(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        width: u16,
+        verbosity: DisplayVerbosity,
+    ) {
+        let update = self.wrapped.ensure(cells, width, verbosity);
         if update == WrappedTranscriptUpdate::Rebuilt {
             self.raster.width = width;
             self.raster.clear();
@@ -245,6 +261,8 @@ enum WrappedTranscriptUpdate {
 struct WrappedTranscriptCache {
     /// Width this cache was last built for.
     width: u16,
+    /// Verbosity this cache was last built for.
+    verbosity: DisplayVerbosity,
     /// Number of leading cells already incorporated into [`Self::transcript`].
     cell_count: usize,
     /// Pointer identity of the first cell at the time the cache was built.
@@ -277,6 +295,7 @@ impl WrappedTranscriptCache {
     fn new() -> Self {
         Self {
             width: 0,
+            verbosity: DisplayVerbosity::default(),
             cell_count: 0,
             first_cell_ptr: None,
             transcript: TranscriptLines {
@@ -289,17 +308,23 @@ impl WrappedTranscriptCache {
         }
     }
 
-    /// Ensure the wrapped transcript represents `cells` at `width`.
+    /// Ensure the wrapped transcript represents `cells` at `width` with `verbosity`.
     ///
     /// This cache is intentionally single-entry and width-scoped:
-    /// - when `width` is unchanged and `cells` has grown, append only the new cells
-    /// - when `width` changes or the transcript is replaced/truncated, rebuild from scratch
+    /// - when `width` and `verbosity` are unchanged and `cells` has grown, append only the new cells
+    /// - when `width` or `verbosity` changes, or the transcript is replaced/truncated, rebuild from scratch
     ///
     /// The cache assumes history cells are append-only and immutable once inserted. If existing
     /// cell contents can change without changing identity, callers must treat that as a rebuild.
-    fn ensure(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16) -> WrappedTranscriptUpdate {
+    fn ensure(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        width: u16,
+        verbosity: DisplayVerbosity,
+    ) -> WrappedTranscriptUpdate {
         if width == 0 {
             self.width = width;
+            self.verbosity = verbosity;
             self.cell_count = cells.len();
             self.first_cell_ptr = cells.first().map(Arc::as_ptr);
             self.transcript.lines.clear();
@@ -312,12 +337,13 @@ impl WrappedTranscriptCache {
 
         let current_first_ptr = cells.first().map(Arc::as_ptr);
         if self.width != width
+            || self.verbosity != verbosity
             || self.cell_count > cells.len()
             || (self.cell_count > 0
                 && current_first_ptr.is_some()
                 && self.first_cell_ptr != current_first_ptr)
         {
-            self.rebuild(cells, width);
+            self.rebuild(cells, width, verbosity);
             return WrappedTranscriptUpdate::Rebuilt;
         }
 
@@ -330,15 +356,16 @@ impl WrappedTranscriptCache {
         self.first_cell_ptr = current_first_ptr;
         let base_opts: crate::wrapping::RtOptions<'_> =
             crate::wrapping::RtOptions::new(width.max(1) as usize);
+        let ctx = RenderContext::with_verbosity(width, verbosity);
         for (cell_index, cell) in cells.iter().enumerate().skip(old_cell_count) {
             self.is_user_cell
                 .push(cell.as_any().is::<UserHistoryCell>());
-            crate::transcript_render::append_wrapped_transcript_cell(
+            crate::transcript_render::append_wrapped_transcript_cell_with_context(
                 &mut self.transcript,
                 &mut self.has_emitted_lines,
                 cell_index,
                 cell,
-                width,
+                ctx,
                 &base_opts,
             );
         }
@@ -348,10 +375,11 @@ impl WrappedTranscriptCache {
 
     /// Rebuild the wrapped transcript cache from scratch.
     ///
-    /// This is used when width changes, the transcript is truncated, or the caller provides a new
-    /// cell list that cannot be treated as an append to the previous one.
-    fn rebuild(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16) {
+    /// This is used when width or verbosity changes, the transcript is truncated, or the caller
+    /// provides a new cell list that cannot be treated as an append to the previous one.
+    fn rebuild(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16, verbosity: DisplayVerbosity) {
         self.width = width;
+        self.verbosity = verbosity;
         self.cell_count = cells.len();
         self.first_cell_ptr = cells.first().map(Arc::as_ptr);
         self.transcript.lines.clear();
@@ -363,15 +391,16 @@ impl WrappedTranscriptCache {
 
         let base_opts: crate::wrapping::RtOptions<'_> =
             crate::wrapping::RtOptions::new(width.max(1) as usize);
+        let ctx = RenderContext::with_verbosity(width, verbosity);
         for (cell_index, cell) in cells.iter().enumerate() {
             self.is_user_cell
                 .push(cell.as_any().is::<UserHistoryCell>());
-            crate::transcript_render::append_wrapped_transcript_cell(
+            crate::transcript_render::append_wrapped_transcript_cell_with_context(
                 &mut self.transcript,
                 &mut self.has_emitted_lines,
                 cell_index,
                 cell,
-                width,
+                ctx,
                 &base_opts,
             );
         }

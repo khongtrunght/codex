@@ -25,6 +25,8 @@ use textwrap::WordSplitter;
 use unicode_width::UnicodeWidthStr;
 
 pub(crate) const TOOL_CALL_MAX_LINES: usize = 5;
+/// Max lines shown in verbose mode (Ctrl+O toggle).
+pub(crate) const TOOL_CALL_VERBOSE_MAX_LINES: usize = 100;
 const USER_SHELL_TOOL_CALL_MAX_LINES: usize = 50;
 const MAX_INTERACTION_PREVIEW_CHARS: usize = 80;
 
@@ -198,7 +200,18 @@ impl HistoryCell for ExecCell {
         if self.is_exploring_cell() {
             self.exploring_display_lines(width)
         } else {
-            self.command_display_lines(width)
+            self.command_display_lines(width, TOOL_CALL_MAX_LINES)
+        }
+    }
+
+    fn display_lines_with_context(
+        &self,
+        ctx: crate::verbosity::RenderContext,
+    ) -> Vec<Line<'static>> {
+        if self.is_exploring_cell() {
+            self.exploring_display_lines(ctx.width)
+        } else {
+            self.command_display_lines(ctx.width, ctx.verbosity.max_output_lines())
         }
     }
 
@@ -207,6 +220,31 @@ impl HistoryCell for ExecCell {
     }
 
     fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.transcript_lines_impl(width, TOOL_CALL_MAX_LINES)
+    }
+
+    fn transcript_lines_with_context(
+        &self,
+        ctx: crate::verbosity::RenderContext,
+    ) -> Vec<Line<'static>> {
+        self.transcript_lines_impl(ctx.width, ctx.verbosity.max_output_lines())
+    }
+
+    fn transcript_lines_with_joiners_context(
+        &self,
+        ctx: crate::verbosity::RenderContext,
+    ) -> crate::history_cell::TranscriptLinesWithJoiners {
+        let lines = self.transcript_lines_impl(ctx.width, ctx.verbosity.max_output_lines());
+        crate::history_cell::TranscriptLinesWithJoiners {
+            joiner_before: vec![None; lines.len()],
+            lines,
+        }
+    }
+}
+
+impl ExecCell {
+    /// Implementation of transcript_lines with configurable max output lines.
+    fn transcript_lines_impl(&self, width: u16, max_output_lines: usize) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = vec![];
         for (i, call) in self.iter_calls().enumerate() {
             if i > 0 {
@@ -226,9 +264,15 @@ impl HistoryCell for ExecCell {
                 if !call.is_unified_exec_interaction() {
                     let wrap_width = width.max(1) as usize;
                     let wrap_opts = RtOptions::new(wrap_width);
+                    let mut output_line_count = 0;
                     for unwrapped in output.formatted_output.lines().map(ansi_escape_line) {
+                        if output_line_count >= max_output_lines {
+                            lines.push(Line::from("...".dim()));
+                            break;
+                        }
                         let wrapped = word_wrap_line(&unwrapped, wrap_opts.clone());
                         push_owned_lines(&wrapped, &mut lines);
+                        output_line_count += 1;
                     }
                 }
                 let duration = call
@@ -249,9 +293,7 @@ impl HistoryCell for ExecCell {
         }
         lines
     }
-}
 
-impl ExecCell {
     fn exploring_display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut out: Vec<Line<'static>> = Vec::new();
         out.push(Line::from(vec![
@@ -355,11 +397,12 @@ impl ExecCell {
         out
     }
 
-    fn command_display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn command_display_lines(&self, width: u16, max_output_lines: usize) -> Vec<Line<'static>> {
         let [call] = &self.calls.as_slice() else {
             panic!("Expected exactly one call in a command display cell");
         };
-        let layout = EXEC_DISPLAY_LAYOUT;
+        let mut layout = EXEC_DISPLAY_LAYOUT;
+        layout.output_max_lines = max_output_lines;
         let success = call.output.as_ref().map(|o| o.exit_code == 0);
         let bullet = match success {
             Some(true) => "•".green().bold(),
@@ -435,7 +478,7 @@ impl ExecCell {
             let line_limit = if call.is_user_shell_command() {
                 USER_SHELL_TOOL_CALL_MAX_LINES
             } else {
-                TOOL_CALL_MAX_LINES
+                max_output_lines
             };
             let raw_output = output_lines(
                 Some(output),
@@ -684,7 +727,7 @@ mod tests {
         let cell = ExecCell::new(call, false);
 
         // Use a narrow width so each logical line wraps into many on-screen lines.
-        let lines = cell.command_display_lines(width);
+        let lines = cell.command_display_lines(width, USER_SHELL_TOOL_CALL_MAX_LINES);
 
         // Count how many rendered lines contain our marker text. This approximates
         // the number of visible output "screen lines" for this command.

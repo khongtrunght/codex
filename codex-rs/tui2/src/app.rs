@@ -852,8 +852,11 @@ impl App {
         };
         let (transcript_area, _) = split_transcript_area(transcript_full_area);
 
-        self.transcript_view_cache
-            .ensure_wrapped(cells, transcript_area.width);
+        self.transcript_view_cache.ensure_wrapped_with_verbosity(
+            cells,
+            transcript_area.width,
+            self.chat_widget.verbosity(),
+        );
         let total_lines = self.transcript_view_cache.lines().len();
         if total_lines == 0 {
             Clear.render_ref(transcript_full_area, frame.buffer);
@@ -1284,8 +1287,11 @@ impl App {
             return;
         }
 
-        self.transcript_view_cache
-            .ensure_wrapped(&self.transcript_cells, width);
+        self.transcript_view_cache.ensure_wrapped_with_verbosity(
+            &self.transcript_cells,
+            width,
+            self.chat_widget.verbosity(),
+        );
         let line_meta = self.transcript_view_cache.line_meta();
         self.transcript_scroll =
             self.transcript_scroll
@@ -1309,8 +1315,11 @@ impl App {
             return;
         }
 
-        self.transcript_view_cache
-            .ensure_wrapped(&self.transcript_cells, width);
+        self.transcript_view_cache.ensure_wrapped_with_verbosity(
+            &self.transcript_cells,
+            width,
+            self.chat_widget.verbosity(),
+        );
         let lines = self.transcript_view_cache.lines();
         let line_meta = self.transcript_view_cache.line_meta();
         if lines.is_empty() || line_meta.is_empty() {

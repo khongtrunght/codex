@@ -809,6 +809,7 @@ async fn make_chatwidget_manual(
         current_rollout_path: None,
         subagents: std::collections::HashMap::new(),
         thread_to_call_id: std::collections::HashMap::new(),
+        verbosity: crate::verbosity::DisplayVerbosity::default(),
     };
     (widget, rx, op_rx)
 }

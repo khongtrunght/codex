@@ -1,0 +1,9 @@
+---
+source: tui2/src/agent_cell/render.rs
+expression: rendered
+---
+• 2 agents completed (ctrl+o to expand)
+├─ Search files · 0 tool uses · 0.0s
+│  └ Done
+└─ Design solution · 0 tool uses · 0.0s
+   └ Done

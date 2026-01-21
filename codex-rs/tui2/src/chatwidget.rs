@@ -446,6 +446,8 @@ pub(crate) struct ChatWidget {
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)
     current_rollout_path: Option<PathBuf>,
+    /// Global display verbosity for expandable cells (Ctrl+O toggle).
+    verbosity: crate::history_cell::DisplayVerbosity,
 }
 
 /// Snapshot of active-cell state that affects transcript overlay rendering.
@@ -1719,6 +1721,7 @@ impl ChatWidget {
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
+            verbosity: crate::history_cell::DisplayVerbosity::default(),
         };
 
         widget.prefetch_rate_limits();
@@ -1833,6 +1836,7 @@ impl ChatWidget {
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
+            verbosity: crate::history_cell::DisplayVerbosity::default(),
         };
 
         widget.prefetch_rate_limits();
@@ -1895,6 +1899,17 @@ impl ChatWidget {
                         )));
                     }
                 }
+                return;
+            }
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'o') => {
+                // Toggle global verbose mode (affects all expandable cells)
+                self.toggle_verbosity();
+                self.request_redraw();
                 return;
             }
             other if other.kind == KeyEventKind::Press => {
@@ -2644,8 +2659,8 @@ impl ChatWidget {
         // When ALL subagents completed, group and add to history
         if self.subagents.values().all(SubAgentCell::is_completed) {
             let cells: Vec<_> = self.subagents.drain().map(|(_, c)| c).collect();
-            if !cells.is_empty() {
-                self.add_to_history(agent_cell::SubAgentGroupCell::new(cells));
+            if let Some(grouped) = SubAgentCell::merge(cells) {
+                self.add_to_history(grouped);
             }
         }
         self.request_redraw();
@@ -2693,6 +2708,21 @@ impl ChatWidget {
 
     fn request_redraw(&mut self) {
         self.frame_requester.schedule_frame();
+    }
+
+    // -----------------------------------------------------------------------
+    // Verbosity accessors
+    // -----------------------------------------------------------------------
+
+    /// Returns the current display verbosity.
+    pub(crate) fn verbosity(&self) -> crate::verbosity::DisplayVerbosity {
+        self.verbosity
+    }
+
+    /// Toggle verbose mode and return the new state.
+    pub(crate) fn toggle_verbosity(&mut self) -> crate::verbosity::DisplayVerbosity {
+        self.verbosity = self.verbosity.toggle();
+        self.verbosity
     }
 
     fn bump_active_cell_revision(&mut self) {
@@ -4645,8 +4675,11 @@ impl ChatWidget {
         if !self.subagents.is_empty() {
             flex.push(
                 0,
-                RenderableItem::Owned(Box::new(RunningSubagentsRenderable::new(&self.subagents)))
-                    .inset(Insets::tlbr(1, 0, 0, 0)),
+                RenderableItem::Owned(Box::new(RunningSubagentsRenderable::new(
+                    &self.subagents,
+                    self.verbosity,
+                )))
+                .inset(Insets::tlbr(1, 0, 0, 0)),
             );
         }
         flex.push(
@@ -4663,12 +4696,16 @@ impl ChatWidget {
 /// allowing users to see subagent progress during execution.
 struct RunningSubagentsRenderable<'a> {
     cells: Vec<&'a agent_cell::SubAgentCell>,
+    verbosity: crate::verbosity::DisplayVerbosity,
 }
 
 impl<'a> RunningSubagentsRenderable<'a> {
-    fn new(subagents: &'a HashMap<String, agent_cell::SubAgentCell>) -> Self {
+    fn new(
+        subagents: &'a HashMap<String, agent_cell::SubAgentCell>,
+        verbosity: crate::verbosity::DisplayVerbosity,
+    ) -> Self {
         let cells: Vec<_> = subagents.values().collect();
-        Self { cells }
+        Self { cells, verbosity }
     }
 }
 
@@ -4677,13 +4714,14 @@ impl Renderable for RunningSubagentsRenderable<'_> {
         if self.cells.is_empty() || area.height == 0 {
             return;
         }
+        let ctx = crate::verbosity::RenderContext::with_verbosity(area.width, self.verbosity);
         let mut lines: Vec<Line<'static>> = Vec::new();
         for (i, cell) in self.cells.iter().enumerate() {
             if i > 0 {
                 // Add spacing between cells
                 lines.push(Line::default());
             }
-            lines.extend(cell.display_lines(area.width));
+            lines.extend(cell.display_lines_with_context(ctx));
         }
         Paragraph::new(Text::from(lines)).render(area, buf);
     }

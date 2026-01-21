@@ -73,6 +73,9 @@ use std::time::Instant;
 use tracing::error;
 use unicode_width::UnicodeWidthStr;
 
+pub use crate::verbosity::DisplayVerbosity;
+pub use crate::verbosity::RenderContext;
+
 /// Visual transcript lines plus soft-wrap joiners.
 ///
 /// A history cell can produce multiple "visual lines" once prefixes/indents and wrapping are
@@ -186,6 +189,40 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     /// the first rendered frame even though the main viewport is animating.
     fn transcript_animation_tick(&self) -> Option<u64> {
         None
+    }
+
+    // -----------------------------------------------------------------------
+    // Context-aware rendering methods (verbosity support)
+    // -----------------------------------------------------------------------
+
+    /// Render display lines with full context (verbosity-aware).
+    ///
+    /// Cells that support verbose mode should override this method to show
+    /// expanded content when `ctx.is_verbose()` returns true.
+    ///
+    /// The default implementation ignores verbosity for backward compatibility.
+    fn display_lines_with_context(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        self.display_lines(ctx.width)
+    }
+
+    /// Transcript lines with full context support.
+    ///
+    /// Default delegates to `display_lines_with_context`.
+    #[allow(dead_code)] // Part of designed API for verbosity, not wired up yet
+    fn transcript_lines_with_context(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        self.display_lines_with_context(ctx)
+    }
+
+    /// Transcript lines with joiners and full context support.
+    ///
+    /// Default delegates to the non-context version for backward compatibility,
+    /// so existing cells that override `transcript_lines_with_joiners` continue
+    /// to work without modification.
+    fn transcript_lines_with_joiners_context(
+        &self,
+        ctx: RenderContext,
+    ) -> TranscriptLinesWithJoiners {
+        self.transcript_lines_with_joiners(ctx.width)
     }
 }
 
