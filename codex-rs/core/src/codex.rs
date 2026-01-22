@@ -23,6 +23,7 @@ use crate::features::Features;
 use crate::models_manager::manager::ModelsManager;
 use crate::parse_command::parse_command;
 use crate::parse_turn_item;
+use crate::plan_file::generate_unique_slug;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -117,6 +118,9 @@ use crate::protocol::ErrorEvent;
 use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::ExecApprovalRequestEvent;
+use crate::protocol::ExitPlanModeApprovalRequestEvent;
+use crate::protocol::ExitPlanModeApprovalResponse;
+use crate::protocol::ExitedPlanModeEvent;
 use crate::protocol::McpServerRefreshConfig;
 use crate::protocol::Op;
 use crate::protocol::RateLimitSnapshot;
@@ -1117,13 +1121,23 @@ impl Session {
         )
     }
 
-    fn build_collaboration_mode_update_item(
+    async fn build_collaboration_mode_update_item(
         &self,
         previous_collaboration_mode: &CollaborationMode,
         next_collaboration_mode: Option<&CollaborationMode>,
     ) -> Option<ResponseItem> {
+        // Handle plan mode transitions (entering/exiting plan mode)
+        self.handle_plan_mode_transition(previous_collaboration_mode, next_collaboration_mode)
+            .await;
+
         if let Some(next_mode) = next_collaboration_mode {
             if previous_collaboration_mode == next_mode {
+                return None;
+            }
+
+            // If next_mode is Plan mode, we return None as handle plan mode transitions already
+            // emitted the necessary update.
+            if matches!(next_mode, CollaborationMode::Plan { .. }) {
                 return None;
             }
             // If the next mode has empty developer instructions, this returns None and we emit no
@@ -1134,7 +1148,7 @@ impl Session {
         }
     }
 
-    fn build_settings_update_items(
+    async fn build_settings_update_items(
         &self,
         previous_context: Option<&Arc<TurnContext>>,
         current_context: &TurnContext,
@@ -1142,6 +1156,7 @@ impl Session {
         next_collaboration_mode: Option<&CollaborationMode>,
     ) -> Vec<ResponseItem> {
         let mut update_items = Vec::new();
+
         if let Some(env_item) =
             self.build_environment_update_item(previous_context, current_context)
         {
@@ -1152,12 +1167,23 @@ impl Session {
         {
             update_items.push(permissions_item);
         }
-        if let Some(collaboration_mode_item) = self.build_collaboration_mode_update_item(
-            previous_collaboration_mode,
-            next_collaboration_mode,
-        ) {
+        // This also handles plan mode transitions (sets flags for attachments)
+        if let Some(collaboration_mode_item) = self
+            .build_collaboration_mode_update_item(
+                previous_collaboration_mode,
+                next_collaboration_mode,
+            )
+            .await
+        {
             update_items.push(collaboration_mode_item);
         }
+
+        // Collect attachments - must happen after collaboration mode update (which sets plan mode flags)
+        let attachments = self.collect_attachments(current_context).await;
+        for data in attachments {
+            update_items.push(ResponseItem::Attachment { data });
+        }
+
         update_items
     }
 
@@ -1430,6 +1456,110 @@ impl Session {
         }
     }
 
+    /// Request user approval to exit plan mode.
+    /// Returns the user's response including target mode choice.
+    pub(crate) async fn request_exit_plan_mode_approval(
+        &self,
+        turn_context: &TurnContext,
+        call_id: String,
+        plan_content: String,
+        plan_file_path: std::path::PathBuf,
+    ) -> ExitPlanModeApprovalResponse {
+        let sub_id = turn_context.sub_id.clone();
+        let (tx_response, rx_response) = oneshot::channel();
+        let event_id = sub_id.clone();
+        let prev_entry = {
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.insert_pending_exit_plan_mode(sub_id, tx_response)
+                }
+                None => None,
+            }
+        };
+        if prev_entry.is_some() {
+            warn!("Overwriting existing pending exit plan mode for sub_id: {event_id}");
+        }
+
+        let event = EventMsg::ExitPlanModeApprovalRequest(ExitPlanModeApprovalRequestEvent {
+            call_id,
+            turn_id: turn_context.sub_id.clone(),
+            plan: plan_content,
+            plan_file_path,
+        });
+        self.send_event(turn_context, event).await;
+        rx_response.await.unwrap_or_default()
+    }
+
+    /// Handle user's response to exit plan mode.
+    pub async fn notify_exit_plan_mode_response(
+        &self,
+        sub_id: &str,
+        response: ExitPlanModeApprovalResponse,
+    ) {
+        let entry = {
+            let mut active = self.active_turn.lock().await;
+            match active.as_mut() {
+                Some(at) => {
+                    let mut ts = at.turn_state.lock().await;
+                    ts.remove_pending_exit_plan_mode(sub_id)
+                }
+                None => None,
+            }
+        };
+        match entry {
+            Some(tx_response) => {
+                tx_response.send(response).ok();
+            }
+            None => {
+                warn!("No pending exit plan mode found for sub_id: {sub_id}");
+            }
+        }
+    }
+
+    /// Complete exit from plan mode (called after user approves).
+    pub(crate) async fn complete_exit_plan_mode(
+        &self,
+        turn_context: &TurnContext,
+        target_mode: codex_protocol::config_types::CollaborationMode,
+        plan_file_path: String,
+        plan_content: String,
+    ) {
+        // Update session's collaboration mode
+        let _ = self
+            .update_settings(SessionSettingsUpdate {
+                collaboration_mode: Some(target_mode.clone()),
+                ..Default::default()
+            })
+            .await;
+
+        // Emit ExitedPlanMode event
+        let event = EventMsg::ExitedPlanMode(ExitedPlanModeEvent {
+            plan: plan_content,
+            plan_file_path,
+            target_mode,
+        });
+        self.send_event(turn_context, event).await;
+
+        // Trigger attachment flag for plan mode exit
+        self.with_state_mut(|state| {
+            state.trigger_plan_exit_attachment();
+        })
+        .await;
+    }
+
+    /// Get plan slug from state.
+    pub(crate) async fn get_plan_slug(&self) -> Option<String> {
+        self.with_state(|state| state.plan_slug().map(str::to_string))
+            .await
+    }
+
+    /// Check if this is a plan mode subagent.
+    pub(crate) async fn is_plan_subagent(&self) -> bool {
+        self.with_state(|state| state.is_plan_subagent()).await
+    }
+
     pub async fn resolve_elicitation(
         &self,
         server_name: String,
@@ -1542,6 +1672,99 @@ impl Session {
     pub(crate) async fn collaboration_mode(&self) -> CollaborationMode {
         let state = self.state.lock().await;
         state.session_configuration.collaboration_mode.clone()
+    }
+
+    /// Collect attachments from all collectors.
+    ///
+    /// Returns attachment data that should be recorded to history and expanded
+    /// before API calls.
+    pub(crate) async fn collect_attachments(
+        &self,
+        turn: &TurnContext,
+    ) -> Vec<codex_protocol::models::AttachmentData> {
+        let mut attachments = Vec::new();
+        attachments.extend(crate::attachments::collect_plan_mode(self, turn).await);
+        attachments.extend(crate::attachments::collect_plan_mode_exit(self, turn).await);
+        attachments
+    }
+
+    /// Access session state through a closure (single lock acquisition).
+    pub(crate) async fn with_state<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&SessionState) -> R,
+    {
+        let state = self.state.lock().await;
+        f(&state)
+    }
+
+    /// Mutably access session state through a closure.
+    pub(crate) async fn with_state_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut SessionState) -> R,
+    {
+        let mut state = self.state.lock().await;
+        f(&mut state)
+    }
+
+    /// Handle plan mode transitions when collaboration mode changes.
+    ///
+    /// - When entering Plan mode: ensures plan slug is created
+    /// - When exiting Plan mode: triggers the exit attachment flag
+    pub(crate) async fn handle_plan_mode_transition(
+        &self,
+        previous: &CollaborationMode,
+        next: Option<&CollaborationMode>,
+    ) {
+        let was_plan = matches!(previous, CollaborationMode::Plan(_));
+        let is_plan = matches!(next, Some(CollaborationMode::Plan(_)));
+
+        match (was_plan, is_plan) {
+            (false, true) => {
+                // Entering plan mode: ensure slug exists
+                self.with_state_mut(|state| {
+                    state.get_or_create_plan_slug(generate_unique_slug);
+                })
+                .await;
+            }
+            (true, false) => {
+                // Exiting plan mode: trigger exit attachment
+                self.with_state_mut(|state| {
+                    state.trigger_plan_exit_attachment();
+                })
+                .await;
+            }
+            _ => {
+                // No transition or staying in same mode
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // File read state methods
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Record that a file has been read.
+    pub(crate) async fn record_file_read(
+        &self,
+        path: &std::path::Path,
+        content: String,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) {
+        let mut state = self.state.lock().await;
+        state
+            .read_file_state
+            .record_read(path, content, offset, limit);
+    }
+
+    /// Update file state after a successful write operation.
+    pub(crate) async fn update_file_after_write(
+        &self,
+        path: &std::path::Path,
+        new_content: String,
+    ) {
+        let mut state = self.state.lock().await;
+        state.read_file_state.update_after_write(path, new_content);
     }
 
     async fn send_raw_response_items(&self, turn_context: &TurnContext, items: &[ResponseItem]) {
@@ -2056,6 +2279,9 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             Op::PatchApproval { id, decision } => {
                 handlers::patch_approval(&sess, id, decision).await;
             }
+            Op::ExitPlanModeApproval { id, response } => {
+                sess.notify_exit_plan_mode_response(&id, response).await;
+            }
             Op::UserInputAnswer { id, response } => {
                 handlers::request_user_input_response(&sess, id, response).await;
             }
@@ -2196,12 +2422,14 @@ mod handlers {
         }
 
         let current_context = sess.new_default_turn_with_sub_id(sub_id).await;
-        let update_items = sess.build_settings_update_items(
-            Some(&previous_context),
-            &current_context,
-            &previous_collaboration_mode,
-            next_collaboration_mode.as_ref(),
-        );
+        let update_items = sess
+            .build_settings_update_items(
+                Some(&previous_context),
+                &current_context,
+                &previous_collaboration_mode,
+                next_collaboration_mode.as_ref(),
+            )
+            .await;
         if !update_items.is_empty() {
             sess.record_conversation_items(&current_context, &update_items)
                 .await;
@@ -2270,6 +2498,7 @@ mod handlers {
             // new_turn_with_sub_id already emits the error event.
             return;
         };
+
         current_context
             .client
             .get_otel_manager()
@@ -2277,12 +2506,14 @@ mod handlers {
 
         // Attempt to inject input into current task
         if let Err(items) = sess.inject_input(items).await {
-            let update_items = sess.build_settings_update_items(
-                previous_context.as_ref(),
-                &current_context,
-                &previous_collaboration_mode,
-                next_collaboration_mode.as_ref(),
-            );
+            let update_items = sess
+                .build_settings_update_items(
+                    previous_context.as_ref(),
+                    &current_context,
+                    &previous_collaboration_mode,
+                    next_collaboration_mode.as_ref(),
+                )
+                .await;
             if !update_items.is_empty() {
                 sess.record_conversation_items(&current_context, &update_items)
                     .await;

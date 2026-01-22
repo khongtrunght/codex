@@ -57,6 +57,7 @@ use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
 use codex_core::protocol::ExecCommandOutputDeltaEvent;
 use codex_core::protocol::ExecCommandSource;
+use codex_core::protocol::ExitPlanModeApprovalRequestEvent;
 use codex_core::protocol::ExitedReviewModeEvent;
 use codex_core::protocol::ListCustomPromptsResponseEvent;
 use codex_core::protocol::ListSkillsResponseEvent;
@@ -1146,6 +1147,14 @@ impl ChatWidget {
         );
     }
 
+    fn on_exit_plan_mode_approval_request(&mut self, ev: ExitPlanModeApprovalRequestEvent) {
+        let ev2 = ev.clone();
+        self.defer_or_handle(
+            |q| q.push_exit_plan_mode_approval(ev),
+            |s| s.handle_exit_plan_mode_approval_now(ev2),
+        );
+    }
+
     fn on_exec_command_begin(&mut self, ev: ExecCommandBeginEvent) {
         self.flush_answer_stream_with_separator();
         let ev2 = ev.clone();
@@ -1505,6 +1514,24 @@ impl ChatWidget {
             server_name: ev.server_name,
             request_id: ev.id,
             message: ev.message,
+        };
+        self.bottom_pane
+            .push_approval_request(request, &self.config.features);
+        self.request_redraw();
+    }
+
+    pub(crate) fn handle_exit_plan_mode_approval_now(
+        &mut self,
+        ev: ExitPlanModeApprovalRequestEvent,
+    ) {
+        self.flush_answer_stream_with_separator();
+
+        let request = ApprovalRequest::ExitPlanMode {
+            turn_id: ev.turn_id,
+            plan: ev.plan,
+            plan_file_path: ev.plan_file_path,
+            current_model: self.stored_collaboration_mode.model().to_string(),
+            current_reasoning_effort: self.stored_collaboration_mode.reasoning_effort(),
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -2496,6 +2523,9 @@ impl ChatWidget {
             EventMsg::ElicitationRequest(ev) => {
                 self.on_elicitation_request(ev);
             }
+            EventMsg::ExitPlanModeApprovalRequest(ev) => {
+                self.on_exit_plan_mode_approval_request(ev);
+            }
             EventMsg::ExecCommandBegin(ev) => self.on_exec_command_begin(ev),
             EventMsg::TerminalInteraction(delta) => self.on_terminal_interaction(delta),
             EventMsg::ExecCommandOutputDelta(delta) => self.on_exec_command_output_delta(delta),
@@ -2561,6 +2591,10 @@ impl ChatWidget {
             EventMsg::SubAgentSpawnBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentSpawnEnd(ev) => self.on_subagent_end(ev),
             EventMsg::SubAgentComplete(ev) => self.on_subagent_complete(ev),
+            EventMsg::ExitedPlanMode(ev) => {
+                // Update stored collaboration mode when exiting plan mode
+                self.set_collaboration_mode(ev.target_mode);
+            }
         }
     }
 

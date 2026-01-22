@@ -46,7 +46,10 @@ pub use crate::approvals::ApplyPatchApprovalRequestEvent;
 pub use crate::approvals::ElicitationAction;
 pub use crate::approvals::ExecApprovalRequestEvent;
 pub use crate::approvals::ExecPolicyAmendment;
+pub use crate::approvals::ExitPlanModeApprovalRequestEvent;
+pub use crate::approvals::ExitPlanModeApprovalResponse;
 pub use crate::request_user_input::RequestUserInputEvent;
+pub use crate::session_mode::ExitedPlanModeEvent;
 
 /// Open/close tags for special user-input blocks. Used across crates to avoid
 /// duplicated hardcoded strings.
@@ -186,6 +189,14 @@ pub enum Op {
         id: String,
         /// The user's decision in response to the request.
         decision: ReviewDecision,
+    },
+
+    /// Respond to exit plan mode approval request.
+    ExitPlanModeApproval {
+        /// The turn_id of the pending approval.
+        id: String,
+        /// User's response including approval decision and target mode.
+        response: ExitPlanModeApprovalResponse,
     },
 
     /// Resolve an MCP elicitation request.
@@ -745,6 +756,13 @@ pub enum EventMsg {
 
     ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent),
 
+    /// Model requests user approval to exit plan mode.
+    /// User will choose target mode (PairProgramming or Execute).
+    ExitPlanModeApprovalRequest(ExitPlanModeApprovalRequestEvent),
+
+    /// Plan mode has been exited (after user approval).
+    ExitedPlanMode(ExitedPlanModeEvent),
+
     /// Notification advising the user that something they are using has been
     /// deprecated and should be phased out.
     DeprecationNotice(DeprecationNoticeEvent),
@@ -1079,8 +1097,27 @@ pub struct WarningEvent {
     pub message: String,
 }
 
+/// Information about a file restored after compaction for TUI display.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
-pub struct ContextCompactedEvent;
+pub struct RestoredFileInfo {
+    /// Path to the file.
+    pub path: String,
+    /// Number of lines if content was restored, None if reference only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub num_lines: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct ContextCompactedEvent {
+    /// Files restored after compaction.
+    #[serde(default)]
+    pub restored_files: Vec<RestoredFileInfo>,
+    /// Compact summary text for display in history view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub summary: Option<String>,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct TurnCompleteEvent {

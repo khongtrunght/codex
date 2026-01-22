@@ -1,0 +1,21 @@
+---
+source: tui2/src/chatwidget/tests.rs
+expression: contents
+---
+  Would you like to exit plan mode with this plan?
+
+  Exit plan mode with the following plan:
+
+  Plan file: /home/user/.claude/plans/test-plan.md
+
+  # My Plan
+
+  1. First step
+  2. Second step
+  3. Third step
+
+› 1. Yes, start pair programming mode (y)
+  2. Yes, start execute mode (e)
+  3. No, continue planning (esc)
+
+  Press enter to confirm or esc to cancel

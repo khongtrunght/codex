@@ -12,15 +12,19 @@ use crate::features::Feature;
 use crate::protocol::CompactedItem;
 use crate::protocol::ContextCompactedEvent;
 use crate::protocol::EventMsg;
+use crate::protocol::RestoredFileInfo;
 use crate::protocol::TurnContextItem;
 use crate::protocol::TurnStartedEvent;
 use crate::protocol::WarningEvent;
+use crate::read_file_state::ReadFileState;
 use crate::session_prefix::TURN_ABORTED_OPEN_TAG;
 use crate::truncate::TruncationPolicy;
 use crate::truncate::approx_token_count;
 use crate::truncate::truncate_text;
 use crate::util::backoff;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::AttachmentData;
+use codex_protocol::models::CompactRestoredFile;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
@@ -32,6 +36,15 @@ use tracing::error;
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
 const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
+
+/// Maximum number of recent files to restore after compaction.
+const MAX_RECENT_FILES_TO_RESTORE: usize = 5;
+
+/// Maximum tokens per restored file. Files exceeding this become ReferenceOnly.
+const MAX_TOKENS_PER_RESTORED_FILE: usize = 5000;
+
+/// Maximum total tokens for all restored files combined.
+const MAX_TOTAL_RESTORE_TOKENS: usize = 50000;
 
 pub(crate) fn should_use_remote_compact_task(
     session: &Session,
@@ -168,6 +181,44 @@ async fn run_compact_task_inner(
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
     let user_messages = collect_user_messages(history_items);
 
+    // Build file restoration attachment and clear state
+    let file_restore_attachment = sess
+        .with_state_mut(|state| {
+            let attachment = build_compact_file_restore(&state.read_file_state);
+            state.read_file_state.clear();
+            attachment
+        })
+        .await;
+
+    // Extract restored files info for TUI display
+    let restored_files: Vec<RestoredFileInfo> = file_restore_attachment
+        .as_ref()
+        .map(|attachment| {
+            if let ResponseItem::Attachment {
+                data: AttachmentData::CompactFileRestore { files },
+            } = attachment
+            {
+                files
+                    .iter()
+                    .map(|f| match f {
+                        CompactRestoredFile::WithContent {
+                            path, num_lines, ..
+                        } => RestoredFileInfo {
+                            path: path.clone(),
+                            num_lines: Some(*num_lines),
+                        },
+                        CompactRestoredFile::ReferenceOnly { path } => RestoredFileInfo {
+                            path: path.clone(),
+                            num_lines: None,
+                        },
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+
     let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
     let mut new_history = build_compacted_history(initial_context, &user_messages, &summary_text);
     let ghost_snapshots: Vec<ResponseItem> = history_items
@@ -176,6 +227,12 @@ async fn run_compact_task_inner(
         .cloned()
         .collect();
     new_history.extend(ghost_snapshots);
+
+    // Inject file restoration attachment into compacted history
+    if let Some(attachment) = file_restore_attachment {
+        new_history.push(attachment);
+    }
+
     sess.replace_history(new_history).await;
     sess.recompute_token_usage(&turn_context).await;
 
@@ -185,7 +242,10 @@ async fn run_compact_task_inner(
     });
     sess.persist_rollout_items(&[rollout_item]).await;
 
-    let event = EventMsg::ContextCompacted(ContextCompactedEvent {});
+    let event = EventMsg::ContextCompacted(ContextCompactedEvent {
+        restored_files,
+        summary: Some(summary_text.clone()),
+    });
     sess.send_event(&turn_context, event).await;
 
     let warning = EventMsg::Warning(WarningEvent {
@@ -352,6 +412,50 @@ async fn drain_to_completed(
             Err(e) => return Err(e),
         }
     }
+}
+
+/// Build CompactFileRestore attachment from read file state.
+/// Called during compaction to restore recently read files.
+pub(crate) fn build_compact_file_restore(read_state: &ReadFileState) -> Option<ResponseItem> {
+    let recent_files = read_state.get_recent_files(MAX_RECENT_FILES_TO_RESTORE);
+
+    if recent_files.is_empty() {
+        return None;
+    }
+
+    let mut files = Vec::new();
+    let mut total_tokens = 0usize;
+
+    for (path, info) in recent_files {
+        let content_tokens = approx_token_count(&info.content);
+        let path_str = path.display().to_string();
+
+        if content_tokens > MAX_TOKENS_PER_RESTORED_FILE {
+            // Too large - reference only
+            files.push(CompactRestoredFile::ReferenceOnly { path: path_str });
+        } else if total_tokens + content_tokens <= MAX_TOTAL_RESTORE_TOKENS {
+            // Within budget - include content
+            let num_lines = info.content.lines().count();
+            files.push(CompactRestoredFile::WithContent {
+                path: path_str,
+                content: info.content.clone(),
+                num_lines,
+                truncated: false,
+            });
+            total_tokens += content_tokens;
+        } else {
+            // Would exceed total budget - reference only
+            files.push(CompactRestoredFile::ReferenceOnly { path: path_str });
+        }
+    }
+
+    if files.is_empty() {
+        return None;
+    }
+
+    Some(ResponseItem::Attachment {
+        data: AttachmentData::CompactFileRestore { files },
+    })
 }
 
 #[cfg(test)]

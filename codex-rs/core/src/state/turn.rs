@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::protocol::ExitPlanModeApprovalResponse;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use tokio::sync::oneshot;
 
@@ -70,6 +71,7 @@ impl ActiveTurn {
 pub(crate) struct TurnState {
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
     pending_user_input: HashMap<String, oneshot::Sender<RequestUserInputResponse>>,
+    pending_exit_plan_mode: HashMap<String, oneshot::Sender<ExitPlanModeApprovalResponse>>,
     pending_input: Vec<ResponseInputItem>,
 }
 
@@ -92,6 +94,7 @@ impl TurnState {
     pub(crate) fn clear_pending(&mut self) {
         self.pending_approvals.clear();
         self.pending_user_input.clear();
+        self.pending_exit_plan_mode.clear();
         self.pending_input.clear();
     }
 
@@ -108,6 +111,21 @@ impl TurnState {
         key: &str,
     ) -> Option<oneshot::Sender<RequestUserInputResponse>> {
         self.pending_user_input.remove(key)
+    }
+
+    pub(crate) fn insert_pending_exit_plan_mode(
+        &mut self,
+        key: String,
+        tx: oneshot::Sender<ExitPlanModeApprovalResponse>,
+    ) -> Option<oneshot::Sender<ExitPlanModeApprovalResponse>> {
+        self.pending_exit_plan_mode.insert(key, tx)
+    }
+
+    pub(crate) fn remove_pending_exit_plan_mode(
+        &mut self,
+        key: &str,
+    ) -> Option<oneshot::Sender<ExitPlanModeApprovalResponse>> {
+        self.pending_exit_plan_mode.remove(key)
     }
 
     pub(crate) fn push_pending_input(&mut self, input: ResponseInputItem) {
@@ -134,5 +152,110 @@ impl ActiveTurn {
     pub(crate) async fn clear_pending(&self) {
         let mut ts = self.turn_state.lock().await;
         ts.clear_pending();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_protocol::config_types::CollaborationMode;
+    use codex_protocol::config_types::Settings;
+
+    #[test]
+    fn turn_state_insert_and_remove_pending_exit_plan_mode() {
+        let mut state = TurnState::default();
+        let (tx, _rx) = oneshot::channel();
+
+        // Insert returns None for new key
+        let prev = state.insert_pending_exit_plan_mode("turn-1".to_string(), tx);
+        assert!(prev.is_none());
+
+        // Remove returns Some for existing key
+        let removed = state.remove_pending_exit_plan_mode("turn-1");
+        assert!(removed.is_some());
+
+        // Remove returns None for non-existent key
+        let removed_again = state.remove_pending_exit_plan_mode("turn-1");
+        assert!(removed_again.is_none());
+    }
+
+    #[test]
+    fn turn_state_overwrite_pending_exit_plan_mode() {
+        let mut state = TurnState::default();
+        let (tx1, _rx1) = oneshot::channel();
+        let (tx2, _rx2) = oneshot::channel();
+
+        // Insert first
+        let prev1 = state.insert_pending_exit_plan_mode("turn-1".to_string(), tx1);
+        assert!(prev1.is_none());
+
+        // Insert second with same key returns first
+        let prev2 = state.insert_pending_exit_plan_mode("turn-1".to_string(), tx2);
+        assert!(prev2.is_some());
+    }
+
+    #[test]
+    fn turn_state_clear_pending_clears_exit_plan_mode() {
+        let mut state = TurnState::default();
+        let (tx, _rx) = oneshot::channel();
+
+        state.insert_pending_exit_plan_mode("turn-1".to_string(), tx);
+
+        // Clear all pending
+        state.clear_pending();
+
+        // Should be gone
+        let removed = state.remove_pending_exit_plan_mode("turn-1");
+        assert!(removed.is_none());
+    }
+
+    #[tokio::test]
+    async fn exit_plan_mode_approval_response_sent_through_channel() {
+        let (tx, rx) = oneshot::channel();
+        let mut state = TurnState::default();
+
+        state.insert_pending_exit_plan_mode("turn-1".to_string(), tx);
+
+        // Simulate removing and sending response
+        let sender = state.remove_pending_exit_plan_mode("turn-1").unwrap();
+
+        let response = ExitPlanModeApprovalResponse {
+            approved: true,
+            target_mode: Some(CollaborationMode::PairProgramming(Settings {
+                model: "test-model".to_string(),
+                reasoning_effort: None,
+                developer_instructions: None,
+            })),
+        };
+
+        sender.send(response.clone()).unwrap();
+
+        // Verify response received
+        let received = rx.await.unwrap();
+        assert!(received.approved);
+        let mode = received.target_mode.unwrap();
+        assert!(matches!(mode, CollaborationMode::PairProgramming(_)));
+        assert_eq!(mode.model(), "test-model");
+    }
+
+    #[tokio::test]
+    async fn exit_plan_mode_approval_response_rejected() {
+        let (tx, rx) = oneshot::channel();
+        let mut state = TurnState::default();
+
+        state.insert_pending_exit_plan_mode("turn-1".to_string(), tx);
+
+        let sender = state.remove_pending_exit_plan_mode("turn-1").unwrap();
+
+        let response = ExitPlanModeApprovalResponse {
+            approved: false,
+            target_mode: None,
+        };
+
+        sender.send(response).unwrap();
+
+        let received = rx.await.unwrap();
+        assert!(!received.approved);
+        assert!(received.target_mode.is_none());
     }
 }

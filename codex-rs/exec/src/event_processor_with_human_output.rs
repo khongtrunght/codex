@@ -610,7 +610,9 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::RequestUserInput(_)
             | EventMsg::SubAgentSpawnBegin(_)
             | EventMsg::SubAgentSpawnEnd(_)
-            | EventMsg::SubAgentComplete(_) => {}
+            | EventMsg::SubAgentComplete(_)
+            | EventMsg::ExitPlanModeApprovalRequest(_)
+            | EventMsg::ExitedPlanMode(_) => {}
         }
         CodexStatus::Running
     }

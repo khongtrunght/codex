@@ -1,6 +1,7 @@
 pub mod apply_patch;
 pub(crate) mod collab;
 mod edit_file;
+mod exit_plan_mode;
 mod grep_files;
 mod list_dir;
 mod mcp;
@@ -15,6 +16,7 @@ mod unified_exec;
 mod view_image;
 mod write_file;
 
+pub use exit_plan_mode::ExitPlanModeHandler;
 pub use plan::PLAN_TOOL;
 use serde::Deserialize;
 

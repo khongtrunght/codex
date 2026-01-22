@@ -1,3 +1,4 @@
+use crate::attachments::expand_attachment;
 use crate::codex::TurnContext;
 use crate::context_manager::normalize;
 use crate::instructions::SkillInstructions;
@@ -59,7 +60,8 @@ impl ContextManager {
         for item in items {
             let item_ref = item.deref();
             let is_ghost_snapshot = matches!(item_ref, ResponseItem::GhostSnapshot { .. });
-            if !is_api_message(item_ref) && !is_ghost_snapshot {
+            let is_attachment = matches!(item_ref, ResponseItem::Attachment { .. });
+            if !is_api_message(item_ref) && !is_ghost_snapshot && !is_attachment {
                 continue;
             }
 
@@ -69,12 +71,18 @@ impl ContextManager {
     }
 
     /// Returns the history prepared for sending to the model. This applies a proper
-    /// normalization and drop un-suited items.
+    /// normalization and drops un-suited items (GhostSnapshot) while expanding
+    /// Attachment items into their message representations.
     pub(crate) fn for_prompt(mut self) -> Vec<ResponseItem> {
         self.normalize_history();
         self.items
-            .retain(|item| !matches!(item, ResponseItem::GhostSnapshot { .. }));
-        self.items
+            .into_iter()
+            .filter(|item| !matches!(item, ResponseItem::GhostSnapshot { .. }))
+            .flat_map(|item| match item {
+                ResponseItem::Attachment { ref data } => expand_attachment(data),
+                other => vec![other],
+            })
+            .collect()
     }
 
     /// Returns raw items in the history.
@@ -92,6 +100,8 @@ impl ContextManager {
         let items_tokens = self.items.iter().fold(0i64, |acc, item| {
             acc + match item {
                 ResponseItem::GhostSnapshot { .. } => 0,
+                // Attachments don't count toward token budget - they're expanded during API call.
+                ResponseItem::Attachment { .. } => 0,
                 ResponseItem::Reasoning {
                     encrypted_content: Some(content),
                     ..
@@ -298,6 +308,7 @@ impl ContextManager {
             | ResponseItem::CustomToolCall { .. }
             | ResponseItem::Compaction { .. }
             | ResponseItem::GhostSnapshot { .. }
+            | ResponseItem::Attachment { .. }
             | ResponseItem::Other => item.clone(),
         }
     }
@@ -317,6 +328,8 @@ fn is_api_message(message: &ResponseItem) -> bool {
         | ResponseItem::WebSearchCall { .. }
         | ResponseItem::Compaction { .. } => true,
         ResponseItem::GhostSnapshot { .. } => false,
+        // Attachments are stored but not sent directly to API - they are expanded first.
+        ResponseItem::Attachment { .. } => false,
         ResponseItem::Other => false,
     }
 }

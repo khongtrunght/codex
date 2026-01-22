@@ -929,6 +929,20 @@ fn create_request_user_input_tool() -> ToolSpec {
     })
 }
 
+/// Creates the ExitPlanMode tool.
+fn create_exit_plan_mode_tool() -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: EXIT_PLAN_MODE_TOOL_NAME.to_string(),
+        description: "Requests to exit plan mode and present your plan for user approval. User will choose whether to continue in pair programming or execute mode.".to_string(),
+        strict: true,
+        parameters: JsonSchema::Object {
+            properties: BTreeMap::new(),
+            required: Some(vec![]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 fn create_close_agent_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
@@ -1613,6 +1627,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::ApplyPatchHandler;
     use crate::tools::handlers::CollabHandler;
     use crate::tools::handlers::EditFileHandler;
+    use crate::tools::handlers::ExitPlanModeHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
@@ -1685,6 +1700,11 @@ pub(crate) fn build_specs(
     if config.collaboration_modes_tools {
         builder.push_spec(create_request_user_input_tool());
         builder.register_handler("request_user_input", request_user_input_handler);
+
+        // Exit plan mode tool (no enter tool - user-triggered via UI)
+        let exit_plan_mode_handler = Arc::new(ExitPlanModeHandler);
+        builder.push_spec(create_exit_plan_mode_tool());
+        builder.register_handler(EXIT_PLAN_MODE_TOOL_NAME, exit_plan_mode_handler);
     }
 
     // Register edit tools based on edit_tool_type
@@ -1946,6 +1966,7 @@ mod tests {
             create_read_mcp_resource_tool(),
             PLAN_TOOL.clone(),
             create_request_user_input_tool(),
+            create_exit_plan_mode_tool(),
             create_apply_patch_freeform_tool(),
             ToolSpec::WebSearch {
                 external_web_access: Some(true),
@@ -2099,6 +2120,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2121,6 +2143,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2145,6 +2168,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2169,6 +2193,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2191,6 +2216,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "web_search",
                 "view_image",
             ],
@@ -2212,6 +2238,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2234,6 +2261,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "web_search",
                 "view_image",
             ],
@@ -2255,6 +2283,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2278,6 +2307,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "apply_patch",
                 "web_search",
                 "view_image",
@@ -2302,6 +2332,7 @@ mod tests {
                 "read_mcp_resource",
                 "update_plan",
                 "request_user_input",
+                "exit_plan_mode",
                 "web_search",
                 "view_image",
             ],

@@ -28,7 +28,8 @@ pub(crate) fn should_persist_response_item(item: &ResponseItem) -> bool {
         | ResponseItem::CustomToolCallOutput { .. }
         | ResponseItem::WebSearchCall { .. }
         | ResponseItem::GhostSnapshot { .. }
-        | ResponseItem::Compaction { .. } => true,
+        | ResponseItem::Compaction { .. }
+        | ResponseItem::Attachment { .. } => true,
         ResponseItem::Other => false,
     }
 }
@@ -102,6 +103,8 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::CollabCloseEnd(_)
         | EventMsg::SubAgentSpawnBegin(_)
         | EventMsg::SubAgentSpawnEnd(_)
-        | EventMsg::SubAgentComplete(_) => false,
+        | EventMsg::SubAgentComplete(_)
+        | EventMsg::ExitPlanModeApprovalRequest(_)
+        | EventMsg::ExitedPlanMode(_) => false,
     }
 }

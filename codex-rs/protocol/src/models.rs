@@ -71,6 +71,40 @@ pub enum ContentItem {
     OutputText { text: String },
 }
 
+/// Data payload for attachment types.
+/// Attachments are contextual markers stored in history and expanded to messages before API calls.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AttachmentData {
+    /// Collected when entering/re-entering plan mode.
+    PlanMode {
+        plan_file_path: String,
+        is_subagent: bool,
+        plan_exists: bool,
+    },
+    /// Collected when re-entering plan mode after being in a different mode.
+    PlanModeReentry { plan_file_path: String },
+    /// Collected when exiting plan mode.
+    PlanModeExit { plan_file_path: Option<String> },
+    /// Collected after compaction to restore file context.
+    CompactFileRestore { files: Vec<CompactRestoredFile> },
+}
+
+/// Represents a file that should be restored after compaction.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CompactRestoredFile {
+    WithContent {
+        path: String,
+        content: String,
+        num_lines: usize,
+        truncated: bool,
+    },
+    ReferenceOnly {
+        path: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseItem {
@@ -162,6 +196,12 @@ pub enum ResponseItem {
     #[serde(alias = "compaction_summary")]
     Compaction {
         encrypted_content: String,
+    },
+    /// System-generated attachment containing contextual information.
+    /// Not sent directly to API but expanded into messages before requests.
+    /// Follows the GhostSnapshot pattern: stored in history, transformed before use.
+    Attachment {
+        data: AttachmentData,
     },
     #[serde(other)]
     Other,

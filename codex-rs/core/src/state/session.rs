@@ -7,6 +7,7 @@ use crate::context_manager::ContextManager;
 use crate::protocol::RateLimitSnapshot;
 use crate::protocol::TokenUsage;
 use crate::protocol::TokenUsageInfo;
+use crate::read_file_state::ReadFileState;
 use crate::truncate::TruncationPolicy;
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
@@ -15,6 +16,20 @@ pub(crate) struct SessionState {
     pub(crate) history: ContextManager,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
     pub(crate) server_reasoning_included: bool,
+
+    // Plan mode state
+    /// Plan slug for file naming (e.g., "tidy-popping-gizmo").
+    /// Used to derive the plan file path via `resolve_plan_file_path()`.
+    /// Path: `~/.codex/plans/{slug}.md`
+    pub(crate) plan_slug: Option<String>,
+    /// Whether this session is a plan mode subagent.
+    pub(crate) is_plan_subagent: bool,
+    /// One-shot flag to emit exit attachment when leaving plan mode.
+    pub(crate) needs_plan_exit_attachment: bool,
+
+    /// Session-level file read tracking for edit validation and compaction recovery.
+    /// Tracks which files have been read, their content, and modification time.
+    pub(crate) read_file_state: ReadFileState,
 }
 
 impl SessionState {
@@ -26,6 +41,10 @@ impl SessionState {
             history,
             latest_rate_limits: None,
             server_reasoning_included: false,
+            plan_slug: None,
+            is_plan_subagent: false,
+            needs_plan_exit_attachment: false,
+            read_file_state: ReadFileState::new(),
         }
     }
 
@@ -91,6 +110,49 @@ impl SessionState {
 
     pub(crate) fn server_reasoning_included(&self) -> bool {
         self.server_reasoning_included
+    }
+
+    // Plan mode helpers
+
+    /// Set the plan slug and subagent flag when entering plan mode.
+    pub(crate) fn set_plan_slug(&mut self, slug: String, is_subagent: bool) {
+        self.plan_slug = Some(slug);
+        self.is_plan_subagent = is_subagent;
+    }
+
+    /// Get the current plan slug, or create one using the provided generator.
+    pub(crate) fn get_or_create_plan_slug<F>(&mut self, generate: F) -> &str
+    where
+        F: FnOnce() -> String,
+    {
+        self.plan_slug.get_or_insert_with(generate)
+    }
+
+    /// Get the current plan slug if set.
+    pub(crate) fn plan_slug(&self) -> Option<&str> {
+        self.plan_slug.as_deref()
+    }
+
+    /// Check if this is a plan mode subagent.
+    pub(crate) fn is_plan_subagent(&self) -> bool {
+        self.is_plan_subagent
+    }
+
+    /// Trigger the one-shot exit attachment flag (call when leaving plan mode).
+    pub(crate) fn trigger_plan_exit_attachment(&mut self) {
+        if self.plan_slug.is_some() {
+            self.needs_plan_exit_attachment = true;
+        }
+    }
+
+    /// Check if exit attachment is needed.
+    pub(crate) fn needs_plan_exit_attachment(&self) -> bool {
+        self.needs_plan_exit_attachment
+    }
+
+    /// Clear the one-shot exit attachment flag (call after emitting the attachment).
+    pub(crate) fn clear_plan_exit_flag(&mut self) {
+        self.needs_plan_exit_attachment = false;
     }
 }
 

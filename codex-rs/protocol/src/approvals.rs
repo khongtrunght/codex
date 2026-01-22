@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::config_types::CollaborationMode;
 use crate::parse_command::ParsedCommand;
 use crate::protocol::FileChange;
 use mcp_types::RequestId;
@@ -92,4 +93,32 @@ pub struct ApplyPatchApprovalRequestEvent {
     /// When set, the agent is asking the user to allow writes under this root for the remainder of the session.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grant_root: Option<PathBuf>,
+}
+
+/// Approval request event for exiting plan mode.
+/// Model requests exit, user approves and chooses target mode.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitPlanModeApprovalRequestEvent {
+    /// Identifier for the associated tool call.
+    pub call_id: String,
+    /// Turn ID that this tool call belongs to.
+    #[serde(default)]
+    pub turn_id: String,
+    /// The plan content for user review.
+    pub plan: String,
+    /// Path to the plan file.
+    pub plan_file_path: PathBuf,
+}
+
+/// User's response to exit plan mode request.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ExitPlanModeApprovalResponse {
+    /// Whether the user approved exiting plan mode.
+    pub approved: bool,
+    /// The mode user wants to transition to (PairProgramming or Execute).
+    /// Only set if approved is true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_mode: Option<CollaborationMode>,
 }
