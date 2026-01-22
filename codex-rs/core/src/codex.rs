@@ -562,9 +562,8 @@ impl Session {
             model_info: &model_info,
             features: &per_turn_config.features,
             web_search_mode: per_turn_config.web_search_mode,
-            agent_configs: None,
-        })
-        .with_agent_configs(agent_type_manager.agent_configs());
+            agent_configs: Some(&agent_type_manager.agent_configs()),
+        });
 
         TurnContext {
             sub_id,
@@ -2904,11 +2903,12 @@ async fn spawn_review_thread(
         .disable(crate::features::Feature::WebSearchRequest)
         .disable(crate::features::Feature::WebSearchCached);
     let review_web_search_mode = WebSearchMode::Disabled;
+    let agent_configs = sess.services.agent_type_manager.agent_configs();
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_info: &review_model_info,
         features: &review_features,
         web_search_mode: Some(review_web_search_mode),
-        agent_configs: None,
+        agent_configs: Some(&agent_configs),
     });
 
     let review_prompt = resolved.prompt.clone();
