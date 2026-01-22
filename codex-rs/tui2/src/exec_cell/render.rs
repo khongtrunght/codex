@@ -196,18 +196,7 @@ pub(crate) fn spinner(start_time: Option<Instant>, animations_enabled: bool) -> 
 }
 
 impl HistoryCell for ExecCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if self.is_exploring_cell() {
-            self.exploring_display_lines(width)
-        } else {
-            self.command_display_lines(width, TOOL_CALL_MAX_LINES)
-        }
-    }
-
-    fn display_lines_with_context(
-        &self,
-        ctx: crate::verbosity::RenderContext,
-    ) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
         if self.is_exploring_cell() {
             self.exploring_display_lines(ctx.width)
         } else {
@@ -215,22 +204,12 @@ impl HistoryCell for ExecCell {
         }
     }
 
-    fn desired_transcript_height(&self, width: u16) -> u16 {
-        self.transcript_lines(width).len() as u16
-    }
-
-    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.transcript_lines_impl(width, TOOL_CALL_MAX_LINES)
-    }
-
-    fn transcript_lines_with_context(
-        &self,
-        ctx: crate::verbosity::RenderContext,
-    ) -> Vec<Line<'static>> {
+    fn desired_transcript_height(&self, ctx: crate::verbosity::RenderContext) -> u16 {
         self.transcript_lines_impl(ctx.width, ctx.verbosity.max_output_lines())
+            .len() as u16
     }
 
-    fn transcript_lines_with_joiners_context(
+    fn transcript_lines_with_joiners(
         &self,
         ctx: crate::verbosity::RenderContext,
     ) -> crate::history_cell::TranscriptLinesWithJoiners {

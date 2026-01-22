@@ -593,13 +593,13 @@ mod tests {
         }
 
         impl HistoryCell for FakeCell {
-            fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+            fn display_lines(&self, _ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
                 self.lines.clone()
             }
 
             fn transcript_lines_with_joiners(
                 &self,
-                _width: u16,
+                _ctx: crate::verbosity::RenderContext,
             ) -> crate::history_cell::TranscriptLinesWithJoiners {
                 crate::history_cell::TranscriptLinesWithJoiners {
                     lines: self.lines.clone(),

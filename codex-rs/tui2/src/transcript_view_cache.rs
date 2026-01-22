@@ -664,11 +664,11 @@ mod tests {
     }
 
     impl HistoryCell for FakeCell {
-        fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        fn display_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
             self.lines.clone()
         }
 
-        fn transcript_lines_with_joiners(&self, _width: u16) -> TranscriptLinesWithJoiners {
+        fn transcript_lines_with_joiners(&self, _ctx: RenderContext) -> TranscriptLinesWithJoiners {
             self.transcript_calls.fetch_add(1, Ordering::Relaxed);
             TranscriptLinesWithJoiners {
                 lines: self.lines.clone(),

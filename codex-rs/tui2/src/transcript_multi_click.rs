@@ -47,6 +47,8 @@ use crate::history_cell::HistoryCell;
 use crate::transcript_selection::TRANSCRIPT_GUTTER_COLS;
 use crate::transcript_selection::TranscriptSelection;
 use crate::transcript_selection::TranscriptSelectionPoint;
+#[cfg(test)]
+use crate::verbosity::RenderContext;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
 use ratatui::text::Line;
@@ -386,9 +388,10 @@ fn selection_for_click(
 fn build_transcript_lines(cells: &[Arc<dyn HistoryCell>], width: u16) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut has_emitted_lines = false;
+    let ctx = RenderContext::new(width);
 
     for cell in cells {
-        let cell_lines = cell.display_lines(width);
+        let cell_lines = cell.display_lines(ctx);
         if cell_lines.is_empty() {
             continue;
         }
@@ -419,12 +422,13 @@ fn build_transcript_lines_with_cell_index(
     cells: &[Arc<dyn HistoryCell>],
     width: u16,
 ) -> (Vec<Line<'static>>, Vec<Option<usize>>) {
+    let ctx = crate::verbosity::RenderContext::new(width);
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut line_cell_index: Vec<Option<usize>> = Vec::new();
     let mut has_emitted_lines = false;
 
     for (cell_index, cell) in cells.iter().enumerate() {
-        let cell_lines = cell.display_lines(width);
+        let cell_lines = cell.display_lines(ctx);
         if cell_lines.is_empty() {
             continue;
         }
@@ -754,7 +758,7 @@ mod tests {
     }
 
     impl HistoryCell for StaticCell {
-        fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        fn display_lines(&self, _ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
             self.lines.clone()
         }
 

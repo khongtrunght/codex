@@ -236,19 +236,11 @@ fn format_duration(duration: std::time::Duration) -> String {
 }
 
 impl HistoryCell for SubAgentCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.render_with_verbosity(width, false)
-    }
-
-    fn display_lines_with_context(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
         self.render_with_verbosity(ctx.width, ctx.is_verbose())
     }
 
-    fn transcript_lines_with_context(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.render_with_verbosity(ctx.width, ctx.is_verbose())
-    }
-
-    fn transcript_lines_with_joiners_context(
+    fn transcript_lines_with_joiners(
         &self,
         ctx: RenderContext,
     ) -> crate::history_cell::TranscriptLinesWithJoiners {
@@ -769,6 +761,7 @@ impl SubAgentCell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verbosity::RenderContext;
     use codex_core::protocol::AgentStatus;
     use codex_core::protocol::ExecCommandBeginEvent;
     use codex_core::protocol::ExecCommandEndEvent;
@@ -801,7 +794,7 @@ mod tests {
             resumed: false,
         };
         let cell = new_subagent_cell(begin_event, false);
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines);
 
         // With animations disabled, spinner shows as "•"
@@ -849,7 +842,7 @@ mod tests {
             agent.complete_with_status(&AgentStatus::Completed(None));
         }
 
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines);
 
         assert_eq!(rendered.len(), 2);
@@ -877,7 +870,7 @@ mod tests {
             agent.complete_with_status(&AgentStatus::Errored("Something went wrong".to_string()));
         }
 
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines);
 
         assert_eq!(rendered.len(), 2);
@@ -933,14 +926,14 @@ mod tests {
         }
 
         // Compact mode should have 2 lines
-        let compact_lines = cell.display_lines(80);
+        let compact_lines = cell.display_lines(RenderContext::new(80));
         assert_eq!(compact_lines.len(), 2);
         let compact_rendered = render_lines(&compact_lines);
         assert!(compact_rendered[0].contains("ctrl+o to expand"));
 
         // Verbose mode should show tool details and response
         let ctx = RenderContext::with_verbosity(80, crate::verbosity::DisplayVerbosity::Verbose);
-        let verbose_lines = cell.display_lines_with_context(ctx);
+        let verbose_lines = cell.display_lines(ctx);
         assert!(
             verbose_lines.len() > 2,
             "Verbose mode should show more lines: got {}",
@@ -985,7 +978,7 @@ mod tests {
         entry2.complete_with_status(&AgentStatus::Completed(None));
 
         let cell = SubAgentCell::from_entries(vec![entry1, entry2], false);
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines);
 
         // Should show group summary with hint
@@ -1020,13 +1013,13 @@ mod tests {
         let cell = SubAgentCell::from_entries(vec![entry1, entry2], false);
 
         // Compact mode
-        let compact_lines = cell.display_lines(80);
+        let compact_lines = cell.display_lines(RenderContext::new(80));
         let compact_rendered = render_lines(&compact_lines);
         assert!(compact_rendered[0].contains("ctrl+o to expand"));
 
         // Verbose mode should show each agent with Response
         let ctx = RenderContext::with_verbosity(80, crate::verbosity::DisplayVerbosity::Verbose);
-        let verbose_lines = cell.display_lines_with_context(ctx);
+        let verbose_lines = cell.display_lines(ctx);
         let verbose_rendered = render_lines(&verbose_lines);
 
         assert!(verbose_rendered[0].contains("ctrl+o to collapse"));
@@ -1107,7 +1100,7 @@ mod tests {
         }
 
         let ctx = RenderContext::with_verbosity(80, crate::verbosity::DisplayVerbosity::Verbose);
-        let lines = cell.display_lines_with_context(ctx);
+        let lines = cell.display_lines(ctx);
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -1166,7 +1159,7 @@ mod tests {
         }
 
         let ctx = RenderContext::with_verbosity(80, crate::verbosity::DisplayVerbosity::Verbose);
-        let lines = cell.display_lines_with_context(ctx);
+        let lines = cell.display_lines(ctx);
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -1216,7 +1209,7 @@ mod tests {
         }
 
         let ctx = RenderContext::with_verbosity(80, crate::verbosity::DisplayVerbosity::Verbose);
-        let lines = cell.display_lines_with_context(ctx);
+        let lines = cell.display_lines(ctx);
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -1278,7 +1271,7 @@ mod tests {
         }
 
         // Compact mode (default)
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -1341,7 +1334,7 @@ mod tests {
         let cell = SubAgentCell::from_entries(vec![entry1, entry2], false);
 
         let ctx = RenderContext::with_verbosity(80, crate::verbosity::DisplayVerbosity::Verbose);
-        let lines = cell.display_lines_with_context(ctx);
+        let lines = cell.display_lines(ctx);
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -1368,7 +1361,7 @@ mod tests {
         let cell = SubAgentCell::from_entries(vec![entry1, entry2], false);
 
         // Compact mode
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);

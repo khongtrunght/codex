@@ -73,6 +73,7 @@ use std::time::Instant;
 use tracing::error;
 use unicode_width::UnicodeWidthStr;
 
+pub(crate) use crate::compact_boundary_cell::CompactBoundaryCell;
 pub use crate::verbosity::DisplayVerbosity;
 pub use crate::verbosity::RenderContext;
 
@@ -113,19 +114,23 @@ pub(crate) struct TranscriptLinesWithJoiners {
 /// Represents an event to display in the conversation history. Returns its
 /// `Vec<Line<'static>>` representation to make it easier to display in a
 /// scrollable list.
+///
+/// All rendering methods take a [`RenderContext`] which includes width and verbosity.
+/// Cells that support verbose mode (Ctrl+O toggle) should check `ctx.is_verbose()`
+/// and show expanded content when true.
 pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>>;
+    /// Render display lines with full context (verbosity-aware).
+    ///
+    /// This is the primary rendering method. Cells that support verbose mode
+    /// should check `ctx.is_verbose()` and show expanded content when true.
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>>;
 
-    fn desired_height(&self, width: u16) -> u16 {
-        Paragraph::new(Text::from(self.display_lines(width)))
+    fn desired_height(&self, ctx: RenderContext) -> u16 {
+        Paragraph::new(Text::from(self.display_lines(ctx)))
             .wrap(Wrap { trim: false })
-            .line_count(width)
+            .line_count(ctx.width)
             .try_into()
             .unwrap_or(0)
-    }
-
-    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.display_lines(width)
     }
 
     /// Transcript lines plus soft-wrap joiners used for copy/paste fidelity.
@@ -146,16 +151,16 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     /// - `joiner_before = [None, Some(\" \")]`
     ///
     /// Copy should produce `"Hello world"` (no hard newline).
-    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
-        let lines = self.transcript_lines(width);
+    fn transcript_lines_with_joiners(&self, ctx: RenderContext) -> TranscriptLinesWithJoiners {
+        let lines = self.display_lines(ctx);
         TranscriptLinesWithJoiners {
             joiner_before: vec![None; lines.len()],
             lines,
         }
     }
 
-    fn desired_transcript_height(&self, width: u16) -> u16 {
-        let lines = self.transcript_lines(width);
+    fn desired_transcript_height(&self, ctx: RenderContext) -> u16 {
+        let lines = self.transcript_lines_with_joiners(ctx).lines;
         // Workaround for ratatui bug: if there's only one line and it's whitespace-only, ratatui gives 2 lines.
         if let [line] = &lines[..]
             && line
@@ -168,7 +173,7 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
-            .line_count(width)
+            .line_count(ctx.width)
             .try_into()
             .unwrap_or(0)
     }
@@ -190,45 +195,12 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
     fn transcript_animation_tick(&self) -> Option<u64> {
         None
     }
-
-    // -----------------------------------------------------------------------
-    // Context-aware rendering methods (verbosity support)
-    // -----------------------------------------------------------------------
-
-    /// Render display lines with full context (verbosity-aware).
-    ///
-    /// Cells that support verbose mode should override this method to show
-    /// expanded content when `ctx.is_verbose()` returns true.
-    ///
-    /// The default implementation ignores verbosity for backward compatibility.
-    fn display_lines_with_context(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.display_lines(ctx.width)
-    }
-
-    /// Transcript lines with full context support.
-    ///
-    /// Default delegates to `display_lines_with_context`.
-    #[allow(dead_code)] // Part of designed API for verbosity, not wired up yet
-    fn transcript_lines_with_context(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.display_lines_with_context(ctx)
-    }
-
-    /// Transcript lines with joiners and full context support.
-    ///
-    /// Default delegates to the non-context version for backward compatibility,
-    /// so existing cells that override `transcript_lines_with_joiners` continue
-    /// to work without modification.
-    fn transcript_lines_with_joiners_context(
-        &self,
-        ctx: RenderContext,
-    ) -> TranscriptLinesWithJoiners {
-        self.transcript_lines_with_joiners(ctx.width)
-    }
 }
 
 impl Renderable for Box<dyn HistoryCell> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let lines = self.display_lines(area.width);
+        let ctx = RenderContext::new(area.width);
+        let lines = self.display_lines(ctx);
         let y = if area.height == 0 {
             0
         } else {
@@ -240,7 +212,8 @@ impl Renderable for Box<dyn HistoryCell> {
             .render(area, buf);
     }
     fn desired_height(&self, width: u16) -> u16 {
-        HistoryCell::desired_height(self.as_ref(), width)
+        let ctx = RenderContext::new(width);
+        HistoryCell::desired_height(self.as_ref(), ctx)
     }
 }
 
@@ -329,12 +302,13 @@ fn build_user_message_lines_with_elements(
 }
 
 impl HistoryCell for UserHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.transcript_lines_with_joiners(width).lines
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        self.transcript_lines_with_joiners(ctx).lines
     }
 
-    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
-        let wrap_width = width
+    fn transcript_lines_with_joiners(&self, ctx: RenderContext) -> TranscriptLinesWithJoiners {
+        let wrap_width = ctx
+            .width
             .saturating_sub(
                 LIVE_PREFIX_COLS + 1, /* keep a one-column right margin for wrapping */
             )
@@ -441,32 +415,28 @@ impl ReasoningSummaryCell {
 }
 
 impl HistoryCell for ReasoningSummaryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
         if self.transcript_only {
             Vec::new()
         } else {
-            self.lines(width)
+            self.lines(ctx.width)
         }
     }
 
-    fn desired_height(&self, width: u16) -> u16 {
+    fn desired_height(&self, ctx: RenderContext) -> u16 {
         if self.transcript_only {
             0
         } else {
-            self.lines(width).len() as u16
+            self.lines(ctx.width).len() as u16
         }
     }
 
-    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.lines(width)
+    fn transcript_lines_with_joiners(&self, ctx: RenderContext) -> TranscriptLinesWithJoiners {
+        self.lines_with_joiners(ctx.width)
     }
 
-    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
-        self.lines_with_joiners(width)
-    }
-
-    fn desired_transcript_height(&self, width: u16) -> u16 {
-        self.lines(width).len() as u16
+    fn desired_transcript_height(&self, ctx: RenderContext) -> u16 {
+        self.lines(ctx.width).len() as u16
     }
 }
 
@@ -536,8 +506,8 @@ impl AgentMessageCell {
 }
 
 impl HistoryCell for AgentMessageCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.transcript_lines_with_joiners(width).lines
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        self.transcript_lines_with_joiners(ctx).lines
     }
 
     /// Render wrapped transcript lines plus soft-wrap joiners.
@@ -550,7 +520,8 @@ impl HistoryCell for AgentMessageCell {
     ///
     /// The wrapping algorithm returns a `joiner_before` vector so copy/paste can treat soft wraps
     /// as joinable (no hard newline) while preserving exact whitespace at wrap boundaries.
-    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
+    fn transcript_lines_with_joiners(&self, ctx: RenderContext) -> TranscriptLinesWithJoiners {
+        let width = ctx.width;
         if width == 0 {
             return TranscriptLinesWithJoiners {
                 lines: Vec::new(),
@@ -655,7 +626,7 @@ impl PlainHistoryCell {
 }
 
 impl HistoryCell for PlainHistoryCell {
-    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
         self.lines.clone()
     }
 }
@@ -678,7 +649,7 @@ impl UpdateAvailableHistoryCell {
 }
 
 impl HistoryCell for UpdateAvailableHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
         use ratatui_macros::line;
         use ratatui_macros::text;
         let update_instruction = if let Some(update_action) = self.update_action {
@@ -708,7 +679,7 @@ impl HistoryCell for UpdateAvailableHistoryCell {
 
         let inner_width = content
             .width()
-            .min(usize::from(width.saturating_sub(4)))
+            .min(usize::from(ctx.width.saturating_sub(4)))
             .max(1);
         with_border_with_inner_width(content.lines, inner_width)
     }
@@ -736,15 +707,16 @@ impl PrefixedWrappedHistoryCell {
 }
 
 impl HistoryCell for PrefixedWrappedHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.transcript_lines_with_joiners(width).lines
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        self.transcript_lines_with_joiners(ctx).lines
     }
 
-    fn desired_height(&self, width: u16) -> u16 {
-        self.display_lines(width).len() as u16
+    fn desired_height(&self, ctx: RenderContext) -> u16 {
+        self.display_lines(ctx).len() as u16
     }
 
-    fn transcript_lines_with_joiners(&self, width: u16) -> TranscriptLinesWithJoiners {
+    fn transcript_lines_with_joiners(&self, ctx: RenderContext) -> TranscriptLinesWithJoiners {
+        let width = ctx.width;
         if width == 0 {
             return TranscriptLinesWithJoiners {
                 lines: Vec::new(),
@@ -870,8 +842,8 @@ pub(crate) struct PatchHistoryCell {
 }
 
 impl HistoryCell for PatchHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        create_diff_summary(&self.changes, &self.cwd, width as usize)
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        create_diff_summary(&self.changes, &self.cwd, ctx.width as usize)
     }
 }
 
@@ -880,7 +852,7 @@ struct CompletedMcpToolCallWithImageOutput {
     _image: DynamicImage,
 }
 impl HistoryCell for CompletedMcpToolCallWithImageOutput {
-    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
         vec!["tool result (image output)".into()]
     }
 }
@@ -973,10 +945,10 @@ impl TooltipHistoryCell {
 }
 
 impl HistoryCell for TooltipHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
         let indent = "  ";
         let indent_width = UnicodeWidthStr::width(indent);
-        let wrap_width = usize::from(width.max(1))
+        let wrap_width = usize::from(ctx.width.max(1))
             .saturating_sub(indent_width)
             .max(1);
         let mut lines: Vec<Line<'static>> = Vec::new();
@@ -994,16 +966,12 @@ impl HistoryCell for TooltipHistoryCell {
 pub struct SessionInfoCell(CompositeHistoryCell);
 
 impl HistoryCell for SessionInfoCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.0.display_lines(width)
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        self.0.display_lines(ctx)
     }
 
-    fn desired_height(&self, width: u16) -> u16 {
-        self.0.desired_height(width)
-    }
-
-    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
-        self.0.transcript_lines(width)
+    fn desired_height(&self, ctx: RenderContext) -> u16 {
+        self.0.desired_height(ctx)
     }
 }
 
@@ -1202,8 +1170,8 @@ impl SessionHeaderHistoryCell {
 }
 
 impl HistoryCell for SessionHeaderHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
-        let Some(inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        let Some(inner_width) = card_inner_width(ctx.width, SESSION_HEADER_MAX_INNER_WIDTH) else {
             return Vec::new();
         };
 
@@ -1292,11 +1260,11 @@ impl CompositeHistoryCell {
 }
 
 impl HistoryCell for CompositeHistoryCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
         let mut out: Vec<Line<'static>> = Vec::new();
         let mut first = true;
         for part in &self.parts {
-            let mut lines = part.display_lines(width);
+            let mut lines = part.display_lines(ctx);
             if !lines.is_empty() {
                 if !first {
                     out.push(Line::from(""));
@@ -1387,7 +1355,8 @@ impl McpToolCallCell {
 }
 
 impl HistoryCell for McpToolCallCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        let width = ctx.width;
         let mut lines: Vec<Line<'static>> = Vec::new();
         let status = self.success();
         let bullet = match status {
@@ -1557,11 +1526,11 @@ pub(crate) fn new_deprecation_notice(
 }
 
 impl HistoryCell for DeprecationNoticeCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(vec!["⚠ ".red().bold(), self.summary.clone().red()].into());
 
-        let wrap_width = width.saturating_sub(4).max(1) as usize;
+        let wrap_width = ctx.width.saturating_sub(4).max(1) as usize;
 
         if let Some(details) = &self.details {
             let line = textwrap::wrap(details, wrap_width)
@@ -1791,7 +1760,8 @@ pub(crate) struct PlanUpdateCell {
 }
 
 impl HistoryCell for PlanUpdateCell {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        let width = ctx.width;
         let render_note = |text: &str| -> Vec<Line<'static>> {
             let wrap_width = width.saturating_sub(4).max(1) as usize;
             textwrap::wrap(text, wrap_width)
@@ -1942,7 +1912,8 @@ impl FinalMessageSeparator {
     }
 }
 impl HistoryCell for FinalMessageSeparator {
-    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+        let width = ctx.width;
         let elapsed_seconds = self
             .elapsed_seconds
             .map(super::status_indicator_widget::fmt_elapsed_compact);
@@ -2047,7 +2018,11 @@ mod tests {
     }
 
     fn render_transcript(cell: &dyn HistoryCell) -> Vec<String> {
-        render_lines(&cell.transcript_lines(u16::MAX))
+        render_lines(
+            &cell
+                .transcript_lines_with_joiners(RenderContext::new(u16::MAX))
+                .lines,
+        )
     }
 
     /// Remove a single leading markdown blockquote marker (`> `) from `line`.
@@ -2118,8 +2093,8 @@ mod tests {
         let logical_lines = crate::markdown_stream::simulate_stream_markdown_for_tests(&[md], true);
         let cell = AgentMessageCell::new_logical(logical_lines, true);
 
-        let narrow = cell.transcript_lines_with_joiners(28);
-        let wide = cell.transcript_lines_with_joiners(80);
+        let narrow = cell.transcript_lines_with_joiners(RenderContext::new(28));
+        let wide = cell.transcript_lines_with_joiners(RenderContext::new(80));
 
         assert!(
             narrow.lines.len() > wide.lines.len(),
@@ -2157,7 +2132,7 @@ mod tests {
             terminal
                 .draw(|f| {
                     let area = f.area();
-                    let lines = cell.display_lines(area.width);
+                    let lines = cell.display_lines(RenderContext::new(area.width));
                     Paragraph::new(Text::from(lines))
                         .wrap(Wrap { trim: false })
                         .render(area, f.buffer_mut());
@@ -2262,7 +2237,7 @@ mod tests {
             HashMap::new(),
             &auth_statuses,
         );
-        let rendered = render_lines(&cell.display_lines(120)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(120))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2270,8 +2245,12 @@ mod tests {
     #[test]
     fn empty_agent_message_cell_transcript() {
         let cell = AgentMessageCell::new(vec![Line::default()], false);
-        assert_eq!(cell.transcript_lines(80), vec![Line::from("  ")]);
-        assert_eq!(cell.desired_transcript_height(80), 1);
+        let ctx = RenderContext::new(80);
+        assert_eq!(
+            cell.transcript_lines_with_joiners(ctx).lines,
+            vec![Line::from("  ")]
+        );
+        assert_eq!(cell.desired_transcript_height(ctx), 1);
     }
 
     #[test]
@@ -2284,7 +2263,7 @@ mod tests {
             " this time".bold(),
         ]);
         let cell = PrefixedWrappedHistoryCell::new(summary, "✔ ".green(), "  ");
-        let rendered = render_lines(&cell.display_lines(24));
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(24)));
         assert_eq!(
             rendered,
             vec![
@@ -2302,7 +2281,7 @@ mod tests {
         let cell = new_web_search_call(
             "example search query with several generic words to exercise wrapping".to_string(),
         );
-        let rendered = render_lines(&cell.display_lines(64)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(64))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2312,7 +2291,7 @@ mod tests {
         let cell = new_web_search_call(
             "example search query with several generic words to exercise wrapping".to_string(),
         );
-        let rendered = render_lines(&cell.display_lines(64));
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(64)));
 
         assert_eq!(
             rendered,
@@ -2326,7 +2305,7 @@ mod tests {
     #[test]
     fn web_search_history_cell_short_query_does_not_wrap() {
         let cell = new_web_search_call("short query".to_string());
-        let rendered = render_lines(&cell.display_lines(64));
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(64)));
 
         assert_eq!(rendered, vec!["• Searched short query".to_string()]);
     }
@@ -2336,7 +2315,12 @@ mod tests {
         let cell = new_web_search_call(
             "example search query with several generic words to exercise wrapping".to_string(),
         );
-        let rendered = render_lines(&cell.transcript_lines(64)).join("\n");
+        let rendered = render_lines(
+            &cell
+                .transcript_lines_with_joiners(RenderContext::new(64))
+                .lines,
+        )
+        .join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2353,7 +2337,7 @@ mod tests {
         };
 
         let cell = new_active_mcp_tool_call("call-1".into(), invocation, true);
-        let rendered = render_lines(&cell.display_lines(80)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(80))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2385,7 +2369,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(80)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(80))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2407,7 +2391,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(80)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(80))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2451,7 +2435,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(48)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(48))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2483,7 +2467,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(40)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(40))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2522,7 +2506,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(120)).join("\n");
+        let rendered = render_lines(&cell.display_lines(RenderContext::new(120))).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2539,7 +2523,7 @@ mod tests {
             default_collaboration_mode("gpt-4o"),
         );
 
-        let lines = render_lines(&cell.display_lines(80));
+        let lines = render_lines(&cell.display_lines(RenderContext::new(80)));
         let model_line = lines
             .into_iter()
             .find(|line| line.contains("model:"))
@@ -2561,7 +2545,7 @@ mod tests {
             plan_collaboration_mode("gpt-4o"),
         );
 
-        let lines = render_lines(&cell.display_lines(80));
+        let lines = render_lines(&cell.display_lines(RenderContext::new(80)));
         let mode_line = lines
             .into_iter()
             .find(|line| line.contains("mode:"))
@@ -2584,7 +2568,7 @@ mod tests {
             plan_collaboration_mode("gpt-4o"),
         );
 
-        let lines = render_lines(&cell.display_lines(80));
+        let lines = render_lines(&cell.display_lines(RenderContext::new(80)));
         let mode_line = lines
             .into_iter()
             .find(|line| line.contains("mode:"))
@@ -2654,7 +2638,7 @@ mod tests {
         // Mark call complete so markers are ✓
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
 
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2711,7 +2695,7 @@ mod tests {
             .unwrap();
         cell.complete_call("c3", CommandOutput::default(), Duration::from_millis(1));
 
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2748,7 +2732,7 @@ mod tests {
             true,
         );
         cell.complete_call("c1", CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2775,8 +2759,7 @@ mod tests {
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
 
         // Small width to force wrapping on both lines
-        let width: u16 = 28;
-        let lines = cell.display_lines(width);
+        let lines = cell.display_lines(RenderContext::new(28));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2799,7 +2782,7 @@ mod tests {
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
         // Wide enough that it fits inline
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2822,7 +2805,7 @@ mod tests {
             true,
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(24);
+        let lines = cell.display_lines(RenderContext::new(24));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2845,7 +2828,7 @@ mod tests {
             true,
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2869,7 +2852,7 @@ mod tests {
             true,
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(28);
+        let lines = cell.display_lines(RenderContext::new(28));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2907,7 +2890,7 @@ mod tests {
         );
 
         let rendered = cell
-            .display_lines(80)
+            .display_lines(RenderContext::new(80))
             .iter()
             .map(|l| {
                 l.spans
@@ -2955,9 +2938,8 @@ mod tests {
         );
 
         // Narrow width to force the command to render under the header line.
-        let width: u16 = 28;
         let rendered = cell
-            .display_lines(width)
+            .display_lines(RenderContext::new(28))
             .iter()
             .map(|l| {
                 l.spans
@@ -2979,8 +2961,7 @@ mod tests {
         };
 
         // Small width to force wrapping more clearly. Effective wrap width is width-2 due to the ▌ prefix and trailing space.
-        let width: u16 = 12;
-        let lines = cell.display_lines(width);
+        let lines = cell.display_lines(RenderContext::new(12));
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -3012,7 +2993,7 @@ mod tests {
 
         let cell = new_plan_update(update);
         // Narrow width to force wrapping for both the note and steps
-        let lines = cell.display_lines(32);
+        let lines = cell.display_lines(RenderContext::new(32));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -3034,7 +3015,7 @@ mod tests {
         };
 
         let cell = new_plan_update(update);
-        let lines = cell.display_lines(40);
+        let lines = cell.display_lines(RenderContext::new(40));
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -3044,7 +3025,7 @@ mod tests {
             "**High level reasoning**\n\nDetailed reasoning goes here.".to_string(),
         );
 
-        let rendered_display = render_lines(&cell.display_lines(80));
+        let rendered_display = render_lines(&cell.display_lines(RenderContext::new(80)));
         assert_eq!(rendered_display, vec!["• Detailed reasoning goes here."]);
 
         let rendered_transcript = render_transcript(cell.as_ref());
@@ -3069,7 +3050,7 @@ mod tests {
             "**High level reasoning**\n\nDetailed reasoning goes here.".to_string(),
         );
 
-        let rendered_display = render_lines(&cell.display_lines(80));
+        let rendered_display = render_lines(&cell.display_lines(RenderContext::new(80)));
         assert_eq!(rendered_display, vec!["• Detailed reasoning goes here."]);
     }
 
@@ -3104,7 +3085,7 @@ mod tests {
             "**High level plan**\n\nWe should fix the bug next.".to_string(),
         );
 
-        let rendered_display = render_lines(&cell.display_lines(80));
+        let rendered_display = render_lines(&cell.display_lines(RenderContext::new(80)));
         assert_eq!(rendered_display, vec!["• We should fix the bug next."]);
 
         let rendered_transcript = render_transcript(cell.as_ref());
@@ -3117,7 +3098,7 @@ mod tests {
             "Feature flag `foo`".to_string(),
             Some("Use flag `bar` instead.".to_string()),
         );
-        let lines = cell.display_lines(80);
+        let lines = cell.display_lines(RenderContext::new(80));
         let rendered = render_lines(&lines);
         assert_eq!(
             rendered,

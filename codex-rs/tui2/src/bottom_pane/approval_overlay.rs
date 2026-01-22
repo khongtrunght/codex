@@ -721,6 +721,7 @@ fn exit_plan_mode_options(
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
+    use crate::verbosity::RenderContext;
     use pretty_assertions::assert_eq;
     use tokio::sync::mpsc::unbounded_channel;
 
@@ -869,7 +870,7 @@ mod tests {
             "git add tui/src/render/mod.rs tui/src/render/renderable.rs".into(),
         ];
         let cell = history_cell::new_approval_decision_cell(command, ReviewDecision::Approved);
-        let lines = cell.display_lines(28);
+        let lines = cell.display_lines(RenderContext::new(28));
         let rendered: Vec<String> = lines
             .iter()
             .map(|line| {

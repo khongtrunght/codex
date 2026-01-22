@@ -2584,6 +2584,7 @@ mod tests {
     use crate::bottom_pane::prompt_args::PromptArg;
     use crate::bottom_pane::prompt_args::extract_positional_args_for_prompt_line;
     use crate::bottom_pane::textarea::TextArea;
+    use crate::verbosity::RenderContext;
     use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
@@ -5310,7 +5311,7 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             if let AppEvent::InsertHistoryCell(cell) = event {
                 let message = cell
-                    .display_lines(80)
+                    .display_lines(RenderContext::new(80))
                     .into_iter()
                     .map(|line| line.to_string())
                     .collect::<Vec<_>>()
@@ -5358,7 +5359,7 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             if let AppEvent::InsertHistoryCell(cell) = event {
                 let message = cell
-                    .display_lines(80)
+                    .display_lines(RenderContext::new(80))
                     .into_iter()
                     .map(|line| line.to_string())
                     .collect::<Vec<_>>()

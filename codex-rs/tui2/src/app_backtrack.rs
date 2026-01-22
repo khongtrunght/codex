@@ -233,9 +233,13 @@ impl App {
         if !self.deferred_history_cells.is_empty() {
             let cells = std::mem::take(&mut self.deferred_history_cells);
             let width = tui.terminal.last_known_screen_size.width;
+            let ctx = crate::verbosity::RenderContext::with_verbosity(
+                width,
+                self.chat_widget.verbosity(),
+            );
             let mut lines: Vec<ratatui::text::Line<'static>> = Vec::new();
             for cell in cells {
-                let mut display = cell.display_lines(width);
+                let mut display = cell.display_lines(ctx);
                 if display.is_empty() {
                     continue;
                 }
@@ -270,8 +274,12 @@ impl App {
     pub(crate) fn render_transcript_once(&mut self, tui: &mut tui::Tui) {
         if !self.transcript_cells.is_empty() {
             let width = tui.terminal.last_known_screen_size.width;
+            let ctx = crate::verbosity::RenderContext::with_verbosity(
+                width,
+                self.chat_widget.verbosity(),
+            );
             for cell in &self.transcript_cells {
-                tui.insert_history_lines(cell.display_lines(width));
+                tui.insert_history_lines(cell.display_lines(ctx));
             }
         }
     }
@@ -571,6 +579,7 @@ mod tests {
     use super::*;
     use crate::history_cell::AgentMessageCell;
     use crate::history_cell::HistoryCell;
+    use crate::verbosity::RenderContext;
     use ratatui::prelude::Line;
     use std::sync::Arc;
 
@@ -610,7 +619,7 @@ mod tests {
             .as_any()
             .downcast_ref::<AgentMessageCell>()
             .expect("agent cell");
-        let agent_lines = agent.display_lines(u16::MAX);
+        let agent_lines = agent.display_lines(RenderContext::new(u16::MAX));
         assert_eq!(agent_lines.len(), 1);
         let intro_text: String = agent_lines[0]
             .spans
@@ -647,7 +656,7 @@ mod tests {
             .as_any()
             .downcast_ref::<AgentMessageCell>()
             .expect("intro agent");
-        let intro_lines = agent_intro.display_lines(u16::MAX);
+        let intro_lines = agent_intro.display_lines(RenderContext::new(u16::MAX));
         let intro_text: String = intro_lines[0]
             .spans
             .iter()
@@ -665,7 +674,7 @@ mod tests {
             .as_any()
             .downcast_ref::<AgentMessageCell>()
             .expect("between agent");
-        let between_lines = agent_between.display_lines(u16::MAX);
+        let between_lines = agent_between.display_lines(RenderContext::new(u16::MAX));
         let between_text: String = between_lines[0]
             .spans
             .iter()

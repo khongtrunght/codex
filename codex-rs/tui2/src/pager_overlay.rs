@@ -429,13 +429,15 @@ struct CellRenderable {
 
 impl Renderable for CellRenderable {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let p =
-            Paragraph::new(Text::from(self.cell.transcript_lines(area.width))).style(self.style);
+        let ctx = crate::verbosity::RenderContext::new(area.width);
+        let lines = self.cell.transcript_lines_with_joiners(ctx).lines;
+        let p = Paragraph::new(Text::from(lines)).style(self.style);
         p.render(area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
-        self.cell.desired_transcript_height(width)
+        let ctx = crate::verbosity::RenderContext::new(width);
+        self.cell.desired_transcript_height(ctx)
     }
 }
 
@@ -818,11 +820,7 @@ mod tests {
     }
 
     impl crate::history_cell::HistoryCell for TestCell {
-        fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
-            self.lines.clone()
-        }
-
-        fn transcript_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        fn display_lines(&self, _ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
             self.lines.clone()
         }
     }

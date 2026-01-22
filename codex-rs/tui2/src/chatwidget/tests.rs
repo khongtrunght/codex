@@ -12,6 +12,7 @@ use crate::bottom_pane::LocalImageAttachment;
 use crate::history_cell::UserHistoryCell;
 use crate::test_backend::VT100Backend;
 use crate::tui::FrameRequester;
+use crate::verbosity::RenderContext;
 use assert_matches::assert_matches;
 use codex_common::approval_presets::builtin_approval_presets;
 use codex_core::AuthManager;
@@ -854,7 +855,7 @@ fn drain_insert_history(
     let mut out = Vec::new();
     while let Ok(ev) = rx.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = ev {
-            let mut lines = cell.display_lines(80);
+            let mut lines = cell.display_lines(RenderContext::new(80));
             if !cell.is_stream_continuation() && !out.is_empty() && !lines.is_empty() {
                 lines.insert(0, "".into());
             }
@@ -1339,7 +1340,7 @@ fn active_blob(chat: &ChatWidget) -> String {
         .active_cell
         .as_ref()
         .expect("active cell present")
-        .display_lines(80);
+        .display_lines(RenderContext::new(80));
     lines_to_single_string(&lines)
 }
 
@@ -3952,7 +3953,7 @@ printf 'fenced within fenced\n'
             let mut inserted_any = false;
             while let Ok(app_ev) = rx.try_recv() {
                 if let AppEvent::InsertHistoryCell(cell) = app_ev {
-                    let lines = cell.display_lines(width);
+                    let lines = cell.display_lines(RenderContext::new(width));
                     crate::insert_history::insert_history_lines(&mut term, lines)
                         .expect("Failed to insert history lines in test");
                     inserted_any = true;

@@ -59,10 +59,11 @@ pub(crate) fn build_transcript_lines(
     let mut joiner_before: Vec<Option<String>> = Vec::new();
     let mut has_emitted_lines = false;
 
+    let ctx = RenderContext::new(width);
     for (cell_index, cell) in cells.iter().enumerate() {
         // Cells provide joiners alongside lines so copy can distinguish hard breaks from soft wraps
         // (and preserve the exact whitespace at wrap boundaries).
-        let rendered = cell.transcript_lines_with_joiners(width);
+        let rendered = cell.transcript_lines_with_joiners(ctx);
         if rendered.lines.is_empty() {
             continue;
         }
@@ -184,7 +185,8 @@ pub(crate) fn append_wrapped_transcript_cell(
 
     // Start from each cell's transcript view (prefixes/indents already applied), then apply
     // viewport wrapping to prose while keeping preformatted content intact.
-    let rendered = cell.transcript_lines_with_joiners(width);
+    let ctx = RenderContext::new(width);
+    let rendered = cell.transcript_lines_with_joiners(ctx);
     if rendered.lines.is_empty() {
         return;
     }
@@ -294,7 +296,7 @@ pub(crate) fn append_wrapped_transcript_cell_with_context(
 
     // Start from each cell's transcript view (prefixes/indents already applied), then apply
     // viewport wrapping to prose while keeping preformatted content intact.
-    let rendered = cell.transcript_lines_with_joiners_context(ctx);
+    let rendered = cell.transcript_lines_with_joiners(ctx);
     if rendered.lines.is_empty() {
         return;
     }
@@ -467,11 +469,14 @@ mod tests {
     }
 
     impl HistoryCell for FakeCell {
-        fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        fn display_lines(&self, _ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
             self.lines.clone()
         }
 
-        fn transcript_lines_with_joiners(&self, _width: u16) -> TranscriptLinesWithJoiners {
+        fn transcript_lines_with_joiners(
+            &self,
+            _ctx: crate::verbosity::RenderContext,
+        ) -> TranscriptLinesWithJoiners {
             TranscriptLinesWithJoiners {
                 lines: self.lines.clone(),
                 joiner_before: self.joiner_before.clone(),

@@ -116,6 +116,7 @@ impl StreamController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::verbosity::RenderContext;
 
     fn lines_to_plain_strings(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
         lines
@@ -207,10 +208,11 @@ mod tests {
         ];
 
         // Simulate streaming with a commit tick attempt after each delta.
+        let ctx = RenderContext::new(u16::MAX);
         for d in deltas.iter() {
             ctrl.push(d);
             while let (Some(cell), idle) = ctrl.on_commit_tick() {
-                lines.extend(cell.transcript_lines(u16::MAX));
+                lines.extend(cell.transcript_lines_with_joiners(ctx).lines);
                 if idle {
                     break;
                 }
@@ -218,7 +220,7 @@ mod tests {
         }
         // Finalize and flush remaining lines now.
         if let Some(cell) = ctrl.finalize() {
-            lines.extend(cell.transcript_lines(u16::MAX));
+            lines.extend(cell.transcript_lines_with_joiners(ctx).lines);
         }
 
         let streamed: Vec<_> = lines_to_plain_strings(&lines)

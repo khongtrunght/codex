@@ -137,11 +137,12 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
             LOGGER.write_json_line(value);
         }
         AppEvent::InsertHistoryCell(cell) => {
+            let ctx = crate::verbosity::RenderContext::new(u16::MAX);
             let value = json!({
                 "ts": now_ts(),
                 "dir": "to_tui",
                 "kind": "insert_history_cell",
-                "lines": cell.transcript_lines(u16::MAX).len(),
+                "lines": cell.transcript_lines_with_joiners(ctx).lines.len(),
             });
             LOGGER.write_json_line(value);
         }

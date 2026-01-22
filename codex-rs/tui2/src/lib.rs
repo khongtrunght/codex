@@ -53,6 +53,7 @@ mod clipboard_paste;
 mod collab;
 mod collaboration_modes;
 mod color;
+mod compact_boundary_cell;
 pub mod custom_terminal;
 mod diff_render;
 mod exec_cell;

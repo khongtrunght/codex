@@ -2310,7 +2310,8 @@ impl ChatWidget {
                 .as_ref()
                 .is_some_and(|c| c.as_any().is::<history_cell::SessionHeaderHistoryCell>());
 
-        if !keep_placeholder_header_active && !cell.display_lines(u16::MAX).is_empty() {
+        let ctx = crate::verbosity::RenderContext::new(u16::MAX);
+        if !keep_placeholder_header_active && !cell.display_lines(ctx).is_empty() {
             // Only break exec grouping if the cell renders visible lines.
             self.flush_active_cell();
             self.needs_final_message_separator = true;
@@ -2569,7 +2570,12 @@ impl ChatWidget {
                 self.on_entered_review_mode(review_request)
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
-            EventMsg::ContextCompacted(_) => self.on_agent_message("Context compacted".to_owned()),
+            EventMsg::ContextCompacted(event) => {
+                self.add_to_history(history_cell::CompactBoundaryCell::new(
+                    event.restored_files,
+                    event.summary,
+                ));
+            }
             EventMsg::CollabAgentSpawnBegin(_) => {}
             EventMsg::CollabAgentSpawnEnd(ev) => self.on_collab_event(collab::spawn_end(ev)),
             EventMsg::CollabAgentInteractionBegin(_) => {}
@@ -4684,7 +4690,8 @@ impl ChatWidget {
     /// mismatches between the main viewport and the transcript overlay.
     pub(crate) fn active_cell_transcript_lines(&self, width: u16) -> Option<Vec<Line<'static>>> {
         let cell = self.active_cell.as_ref()?;
-        let lines = cell.transcript_lines(width);
+        let ctx = crate::verbosity::RenderContext::with_verbosity(width, self.verbosity);
+        let lines = cell.transcript_lines_with_joiners(ctx).lines;
         (!lines.is_empty()).then_some(lines)
     }
 
@@ -4755,7 +4762,7 @@ impl Renderable for RunningSubagentsRenderable<'_> {
                 // Add spacing between cells
                 lines.push(Line::default());
             }
-            lines.extend(cell.display_lines_with_context(ctx));
+            lines.extend(cell.display_lines(ctx));
         }
         Paragraph::new(Text::from(lines)).render(area, buf);
     }
@@ -4764,12 +4771,13 @@ impl Renderable for RunningSubagentsRenderable<'_> {
         if self.cells.is_empty() {
             return 0;
         }
+        let ctx = crate::verbosity::RenderContext::with_verbosity(width, self.verbosity);
         let mut height: u16 = 0;
         for (i, cell) in self.cells.iter().enumerate() {
             if i > 0 {
                 height = height.saturating_add(1); // spacing
             }
-            height = height.saturating_add(cell.desired_height(width));
+            height = height.saturating_add(cell.desired_height(ctx));
         }
         height
     }
