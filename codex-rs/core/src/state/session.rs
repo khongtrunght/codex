@@ -23,7 +23,7 @@ pub(crate) struct SessionState {
     /// Path: `~/.codex/plans/{slug}.md`
     pub(crate) plan_slug: Option<String>,
     /// Whether this session is a plan mode subagent.
-    pub(crate) is_plan_subagent: bool,
+    pub(crate) is_subagent: bool,
     /// One-shot flag to emit exit attachment when leaving plan mode.
     pub(crate) needs_plan_exit_attachment: bool,
 
@@ -42,7 +42,7 @@ impl SessionState {
             latest_rate_limits: None,
             server_reasoning_included: false,
             plan_slug: None,
-            is_plan_subagent: false,
+            is_subagent: false,
             needs_plan_exit_attachment: false,
             read_file_state: ReadFileState::new(),
         }
@@ -117,7 +117,7 @@ impl SessionState {
     /// Set the plan slug and subagent flag when entering plan mode.
     pub(crate) fn set_plan_slug(&mut self, slug: String, is_subagent: bool) {
         self.plan_slug = Some(slug);
-        self.is_plan_subagent = is_subagent;
+        self.is_subagent = is_subagent;
     }
 
     /// Get the current plan slug, or create one using the provided generator.
@@ -135,7 +135,7 @@ impl SessionState {
 
     /// Check if this is a plan mode subagent.
     pub(crate) fn is_plan_subagent(&self) -> bool {
-        self.is_plan_subagent
+        self.is_subagent
     }
 
     /// Trigger the one-shot exit attachment flag (call when leaving plan mode).

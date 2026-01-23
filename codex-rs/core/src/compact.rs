@@ -16,7 +16,6 @@ use crate::protocol::RestoredFileInfo;
 use crate::protocol::TurnContextItem;
 use crate::protocol::TurnStartedEvent;
 use crate::protocol::WarningEvent;
-use crate::read_file_state::ReadFileState;
 use crate::session_prefix::TURN_ABORTED_OPEN_TAG;
 use crate::truncate::TruncationPolicy;
 use crate::truncate::approx_token_count;
@@ -181,14 +180,22 @@ async fn run_compact_task_inner(
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
     let user_messages = collect_user_messages(history_items);
 
-    // Build file restoration attachment and clear state
-    let file_restore_attachment = sess
+    // Get recent file paths and clear state
+    let recent_file_paths: Vec<std::path::PathBuf> = sess
         .with_state_mut(|state| {
-            let attachment = build_compact_file_restore(&state.read_file_state);
+            let paths = state
+                .read_file_state
+                .get_recent_files(MAX_RECENT_FILES_TO_RESTORE)
+                .into_iter()
+                .cloned()
+                .collect();
             state.read_file_state.clear();
-            attachment
+            paths
         })
         .await;
+
+    // Build file restoration attachment (reads files from disk)
+    let file_restore_attachment = build_compact_file_restore(&recent_file_paths).await;
 
     // Extract restored files info for TUI display
     let restored_files: Vec<RestoredFileInfo> = file_restore_attachment
@@ -414,31 +421,44 @@ async fn drain_to_completed(
     }
 }
 
-/// Build CompactFileRestore attachment from read file state.
+/// Build CompactFileRestore attachment from file paths.
 /// Called during compaction to restore recently read files.
-pub(crate) fn build_compact_file_restore(read_state: &ReadFileState) -> Option<ResponseItem> {
-    let recent_files = read_state.get_recent_files(MAX_RECENT_FILES_TO_RESTORE);
+/// Reads file content from disk using the same format as read_file tool.
+pub(crate) async fn build_compact_file_restore(
+    paths: &[std::path::PathBuf],
+) -> Option<ResponseItem> {
+    use crate::tools::handlers::read_file::slice;
 
-    if recent_files.is_empty() {
+    if paths.is_empty() {
         return None;
     }
 
     let mut files = Vec::new();
     let mut total_tokens = 0usize;
 
-    for (path, info) in recent_files {
-        let content_tokens = approx_token_count(&info.content);
+    for path in paths {
         let path_str = path.display().to_string();
+
+        // Read file content from disk with line numbers (same format as read_file tool)
+        let content = match slice::read(path, 1, usize::MAX).await {
+            Ok(lines) => lines.join("\n"),
+            Err(_) => {
+                // File no longer exists or unreadable - skip it
+                continue;
+            }
+        };
+
+        let content_tokens = approx_token_count(&content);
 
         if content_tokens > MAX_TOKENS_PER_RESTORED_FILE {
             // Too large - reference only
             files.push(CompactRestoredFile::ReferenceOnly { path: path_str });
         } else if total_tokens + content_tokens <= MAX_TOTAL_RESTORE_TOKENS {
             // Within budget - include content
-            let num_lines = info.content.lines().count();
+            let num_lines = content.lines().count();
             files.push(CompactRestoredFile::WithContent {
                 path: path_str,
-                content: info.content.clone(),
+                content,
                 num_lines,
                 truncated: false,
             });

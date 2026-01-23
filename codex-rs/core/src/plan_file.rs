@@ -142,8 +142,11 @@ mod tests {
         let slug = generate_unique_slug();
 
         // Should be in format: adjective-verb-noun
-        let parts: Vec<&str> = slug.split('-').collect();
-        assert_eq!(parts.len(), 3, "Slug should have 3 parts: {slug}");
+        assert_eq!(
+            slug.split('-').count(),
+            3,
+            "Slug should have 3 parts: {slug}"
+        );
     }
 
     #[test]

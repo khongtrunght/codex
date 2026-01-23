@@ -792,8 +792,11 @@ mod tests {
     #[test]
     fn test_generate_slug_format() {
         let slug = generate_slug();
-        let parts: Vec<&str> = slug.split('-').collect();
-        assert_eq!(parts.len(), 3, "Slug should have 3 parts: {slug}");
+        assert_eq!(
+            slug.split('-').count(),
+            3,
+            "Slug should have 3 parts: {slug}"
+        );
     }
 
     #[test]

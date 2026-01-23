@@ -7,7 +7,7 @@ mod list_dir;
 mod mcp;
 mod mcp_resource;
 mod plan;
-mod read_file;
+pub(crate) mod read_file;
 mod request_user_input;
 mod shell;
 pub(crate) mod task;

@@ -153,7 +153,7 @@ impl ToolHandler for ReadFileHandler {
     }
 }
 
-mod slice {
+pub(crate) mod slice {
     use crate::function_tool::FunctionCallError;
     use crate::tools::handlers::read_file::format_line;
     use std::path::Path;
@@ -161,6 +161,8 @@ mod slice {
     use tokio::io::AsyncBufReadExt;
     use tokio::io::BufReader;
 
+    /// Read a file with line numbers, starting from `offset` (1-indexed) and reading up to `limit` lines.
+    /// Returns lines formatted as `L{line_number}: {content}`.
     pub async fn read(
         path: &Path,
         offset: usize,

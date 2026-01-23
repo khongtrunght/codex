@@ -298,7 +298,7 @@ impl Codex {
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
             model,
-            model_reasoning_effort: config.model_reasoning_effort.clone(),
+            model_reasoning_effort: config.model_reasoning_effort,
             collaboration_mode,
             model_reasoning_summary: config.model_reasoning_summary,
             developer_instructions: config.developer_instructions.clone(),
@@ -1560,7 +1560,7 @@ impl Session {
 
     /// Check if this is a plan mode subagent.
     pub(crate) async fn is_plan_subagent(&self) -> bool {
-        self.with_state(|state| state.is_plan_subagent()).await
+        self.with_state(SessionState::is_plan_subagent).await
     }
 
     pub async fn resolve_elicitation(
@@ -1746,20 +1746,10 @@ impl Session {
     // File read state methods
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// Record that a file has been read.
-    pub(crate) async fn record_file_read(&self, path: &std::path::Path, content: String) {
+    /// Record that a file has been read (for compaction recovery).
+    pub(crate) async fn record_file_read_path(&self, path: &std::path::Path) {
         let mut state = self.state.lock().await;
-        state.read_file_state.record_read(path, content);
-    }
-
-    /// Update file state after a successful write operation.
-    pub(crate) async fn update_file_after_write(
-        &self,
-        path: &std::path::Path,
-        new_content: String,
-    ) {
-        let mut state = self.state.lock().await;
-        state.read_file_state.update_after_write(path, new_content);
+        state.read_file_state.record_read_path(path);
     }
 
     async fn send_raw_response_items(&self, turn_context: &TurnContext, items: &[ResponseItem]) {
@@ -4328,8 +4318,8 @@ mod tests {
             user_shell: Arc::new(default_user_shell()),
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
             exec_policy,
-            auth_manager: auth_manager.clone(),
-            otel_manager: otel_manager.clone(),
+            auth_manager,
+            otel_manager,
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
@@ -4435,7 +4425,7 @@ mod tests {
             show_raw_agent_reasoning: config.show_raw_agent_reasoning,
             exec_policy,
             auth_manager: Arc::clone(&auth_manager),
-            otel_manager: otel_manager.clone(),
+            otel_manager,
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,

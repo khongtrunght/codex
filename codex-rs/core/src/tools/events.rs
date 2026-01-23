@@ -430,6 +430,21 @@ async fn emit_exec_end(
             }),
         )
         .await;
+
+    // Record file reads for compaction recovery (only on success)
+    if exec_result.exit_code == 0 {
+        for parsed in exec_input.parsed_cmd {
+            if let ParsedCommand::Read { path, .. } = parsed {
+                // Resolve relative path against cwd
+                let abs_path = if path.is_absolute() {
+                    path.clone()
+                } else {
+                    exec_input.cwd.join(path)
+                };
+                ctx.session.record_file_read_path(&abs_path).await;
+            }
+        }
+    }
 }
 
 async fn emit_patch_end(
