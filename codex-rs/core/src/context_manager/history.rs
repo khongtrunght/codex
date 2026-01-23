@@ -1,4 +1,3 @@
-use crate::attachments::expand_attachment;
 use crate::codex::TurnContext;
 use crate::context_manager::normalize;
 use crate::instructions::SkillInstructions;
@@ -78,9 +77,9 @@ impl ContextManager {
         self.items
             .into_iter()
             .filter(|item| !matches!(item, ResponseItem::GhostSnapshot { .. }))
-            .flat_map(|item| match item {
-                ResponseItem::Attachment { ref data } => expand_attachment(data),
-                other => vec![other],
+            .map(|item| match item {
+                ResponseItem::Attachment { data } => data.into(),
+                other => other,
             })
             .collect()
     }

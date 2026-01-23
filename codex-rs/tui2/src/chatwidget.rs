@@ -96,7 +96,6 @@ use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Settings;
 use codex_protocol::models::local_image_label_text;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::user_input::TextElement;
@@ -359,12 +358,12 @@ pub(crate) struct ChatWidget {
     /// where the overlay may briefly treat new tail content as already cached.
     active_cell_revision: u64,
     config: Config,
-    /// Stored collaboration mode with model and reasoning effort.
-    ///
-    /// When collaboration modes feature is enabled, this is initialized to the first preset.
-    /// When disabled, this is Custom. The model and reasoning effort are stored here instead of
-    /// being read from config or current_model.
+    /// Current collaboration mode variant (Plan, PairProgramming, Execute).
     stored_collaboration_mode: CollaborationMode,
+    /// Current model name for this session.
+    model: String,
+    /// Current reasoning effort for this session.
+    reasoning_effort: Option<ReasoningEffortConfig>,
     auth_manager: Arc<AuthManager>,
     models_manager: Arc<ModelsManager>,
     session_header: SessionHeader,
@@ -648,15 +647,12 @@ impl ChatWidget {
         let initial_messages = event.initial_messages.clone();
         let model_for_header = event.model.clone();
         self.session_header.set_model(&model_for_header);
-        // Only update stored collaboration settings when collaboration modes are disabled.
-        // When enabled, we preserve the selected variant (Plan/Pair/Execute/Custom) and its
-        // instructions as-is; the session configured event should not override it.
+        // Only update stored model and reasoning effort when collaboration modes are disabled.
+        // When enabled, we preserve the selected variant (Plan/Pair/Execute) and its
+        // settings as-is; the session configured event should not override it.
         if !self.collaboration_modes_enabled() {
-            self.stored_collaboration_mode = self.stored_collaboration_mode.with_updates(
-                Some(model_for_header.clone()),
-                Some(event.reasoning_effort),
-                None,
-            );
+            self.model = model_for_header.clone();
+            self.reasoning_effort = event.reasoning_effort;
         }
         let session_info_cell = history_cell::new_session_info(
             &self.config,
@@ -1530,8 +1526,6 @@ impl ChatWidget {
             turn_id: ev.turn_id,
             plan: ev.plan,
             plan_file_path: ev.plan_file_path,
-            current_model: self.stored_collaboration_mode.model().to_string(),
-            current_reasoning_effort: self.stored_collaboration_mode.reasoning_effort(),
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -1670,21 +1664,9 @@ impl ChatWidget {
         let codex_op_tx = spawn_agent(config.clone(), app_event_tx.clone(), thread_manager);
 
         let model_for_header = model.unwrap_or_else(|| DEFAULT_MODEL_DISPLAY_NAME.to_string());
-        let stored_collaboration_mode = if config.features.enabled(Feature::CollaborationModes) {
-            collaboration_modes::default_mode(models_manager.as_ref()).unwrap_or_else(|| {
-                CollaborationMode::Custom(Settings {
-                    model: model_for_header.clone(),
-                    reasoning_effort: None,
-                    developer_instructions: None,
-                })
-            })
-        } else {
-            CollaborationMode::Custom(Settings {
-                model: model_for_header.clone(),
-                reasoning_effort: None,
-                developer_instructions: None,
-            })
-        };
+        let stored_collaboration_mode = CollaborationMode::default();
+        let stored_model = model_for_header.clone();
+        let stored_reasoning_effort = None;
         let active_cell = Some(Self::placeholder_session_header_cell(
             &config,
             config.features.enabled(Feature::CollaborationModes),
@@ -1709,6 +1691,8 @@ impl ChatWidget {
             active_cell_revision: 0,
             config,
             stored_collaboration_mode,
+            model: stored_model,
+            reasoning_effort: stored_reasoning_effort,
             auth_manager,
             models_manager,
             session_header: SessionHeader::new(model_for_header),
@@ -1790,21 +1774,7 @@ impl ChatWidget {
         let codex_op_tx =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
 
-        let stored_collaboration_mode = if config.features.enabled(Feature::CollaborationModes) {
-            collaboration_modes::default_mode(models_manager.as_ref()).unwrap_or_else(|| {
-                CollaborationMode::Custom(Settings {
-                    model: header_model.clone(),
-                    reasoning_effort: None,
-                    developer_instructions: None,
-                })
-            })
-        } else {
-            CollaborationMode::Custom(Settings {
-                model: header_model.clone(),
-                reasoning_effort: None,
-                developer_instructions: None,
-            })
-        };
+        let stored_collaboration_mode = CollaborationMode::default();
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -1823,6 +1793,8 @@ impl ChatWidget {
             active_cell: None,
             active_cell_revision: 0,
             config,
+            model: header_model.clone(),
+            reasoning_effort: None,
             stored_collaboration_mode,
             auth_manager,
             models_manager,
@@ -2394,8 +2366,8 @@ impl ChatWidget {
             cwd: self.config.cwd.clone(),
             approval_policy: self.config.approval_policy.value(),
             sandbox_policy: self.config.sandbox_policy.get().clone(),
-            model: self.stored_collaboration_mode.model().to_string(),
-            effort: self.stored_collaboration_mode.reasoning_effort(),
+            model: self.model.clone(),
+            effort: self.reasoning_effort,
             summary: self.config.model_reasoning_summary,
             final_output_json_schema: None,
             collaboration_mode: self
@@ -2834,7 +2806,7 @@ impl ChatWidget {
         let total_usage = token_info
             .map(|ti| &ti.total_token_usage)
             .unwrap_or(&default_usage);
-        let reasoning_effort_override = Some(self.stored_collaboration_mode.reasoning_effort());
+        let reasoning_effort_override = Some(self.reasoning_effort);
         self.add_to_history(crate::status::new_status_output(
             &self.config,
             self.auth_manager.as_ref(),
@@ -3163,10 +3135,9 @@ impl ChatWidget {
             .into_iter()
             .map(|preset| {
                 let name = match preset {
-                    CollaborationMode::Plan(_) => "Plan",
-                    CollaborationMode::PairProgramming(_) => "Pair Programming",
-                    CollaborationMode::Execute(_) => "Execute",
-                    CollaborationMode::Custom(_) => "Custom",
+                    CollaborationMode::Plan => "Plan",
+                    CollaborationMode::PairProgramming => "Pair Programming",
+                    CollaborationMode::Execute => "Execute",
                 };
                 let is_current =
                     collaboration_modes::same_variant(&self.stored_collaboration_mode, &preset);
@@ -3289,7 +3260,7 @@ impl ChatWidget {
         let model_slug = preset.model.to_string();
         let is_current_model = self.current_model() == preset.model.as_str();
         let highlight_choice = if is_current_model {
-            self.stored_collaboration_mode.reasoning_effort()
+            self.reasoning_effort
         } else {
             default_choice
         };
@@ -4087,18 +4058,7 @@ impl ChatWidget {
         }
         if feature == Feature::CollaborationModes {
             self.bottom_pane.set_collaboration_modes_enabled(enabled);
-            let settings = match &self.stored_collaboration_mode {
-                CollaborationMode::Plan(settings)
-                | CollaborationMode::PairProgramming(settings)
-                | CollaborationMode::Execute(settings)
-                | CollaborationMode::Custom(settings) => settings.clone(),
-            };
-            self.stored_collaboration_mode = if enabled {
-                collaboration_modes::default_mode(self.models_manager.as_ref())
-                    .unwrap_or(CollaborationMode::Custom(settings))
-            } else {
-                CollaborationMode::Custom(settings)
-            };
+            self.stored_collaboration_mode = CollaborationMode::default();
         }
     }
 
@@ -4125,28 +4085,24 @@ impl ChatWidget {
             .unwrap_or(false)
     }
 
-    /// Set the reasoning effort in the stored collaboration mode.
+    /// Set the reasoning effort.
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {
-        self.stored_collaboration_mode =
-            self.stored_collaboration_mode
-                .with_updates(None, Some(effort), None);
+        self.reasoning_effort = effort;
     }
 
-    /// Set the model in the widget's config copy and stored collaboration mode.
+    /// Set the model in the widget's session header and stored model.
     pub(crate) fn set_model(&mut self, model: &str) {
         self.session_header.set_model(model);
-        self.stored_collaboration_mode =
-            self.stored_collaboration_mode
-                .with_updates(Some(model.to_string()), None, None);
+        self.model = model.to_string();
     }
 
     pub(crate) fn current_model(&self) -> &str {
-        self.stored_collaboration_mode.model()
+        &self.model
     }
 
     #[cfg(test)]
     pub(crate) fn current_reasoning_effort(&self) -> Option<ReasoningEffortConfig> {
-        self.stored_collaboration_mode.reasoning_effort()
+        self.reasoning_effort
     }
 
     fn is_session_configured(&self) -> bool {
@@ -4172,10 +4128,9 @@ impl ChatWidget {
             return None;
         }
         match &self.stored_collaboration_mode {
-            CollaborationMode::Plan(_) => Some("Plan"),
-            CollaborationMode::PairProgramming(_) => Some("Pair Programming"),
-            CollaborationMode::Execute(_) => Some("Execute"),
-            CollaborationMode::Custom(_) => None,
+            CollaborationMode::Plan => Some("Plan"),
+            CollaborationMode::PairProgramming => Some("Pair Programming"),
+            CollaborationMode::Execute => Some("Execute"),
         }
     }
 

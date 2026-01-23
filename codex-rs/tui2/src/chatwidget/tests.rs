@@ -61,7 +61,6 @@ use codex_core::protocol::WarningEvent;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Settings;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::parse_command::ParsedCommand;
@@ -746,23 +745,7 @@ async fn make_chatwidget_manual(
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
     let codex_home = cfg.codex_home.clone();
     let models_manager = Arc::new(ModelsManager::new(codex_home, auth_manager.clone()));
-    let collaboration_modes_enabled = cfg.features.enabled(Feature::CollaborationModes);
-    let reasoning_effort = None;
-    let stored_collaboration_mode = if collaboration_modes_enabled {
-        collaboration_modes::default_mode(models_manager.as_ref()).unwrap_or_else(|| {
-            CollaborationMode::Custom(Settings {
-                model: resolved_model.clone(),
-                reasoning_effort,
-                developer_instructions: None,
-            })
-        })
-    } else {
-        CollaborationMode::Custom(Settings {
-            model: resolved_model.clone(),
-            reasoning_effort,
-            developer_instructions: None,
-        })
-    };
+    let stored_collaboration_mode = CollaborationMode::default();
     let widget = ChatWidget {
         app_event_tx,
         codex_op_tx: op_tx,
@@ -770,6 +753,8 @@ async fn make_chatwidget_manual(
         active_cell: None,
         active_cell_revision: 0,
         config: cfg,
+        model: resolved_model.clone(),
+        reasoning_effort: None,
         stored_collaboration_mode,
         auth_manager,
         models_manager,
@@ -1722,13 +1707,13 @@ async fn collab_mode_shift_tab_cycles_only_when_enabled_and_idle() {
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::Execute(_)
+        CollaborationMode::Execute
     ));
 
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::Plan(_)
+        CollaborationMode::Plan
     ));
 
     chat.on_task_started();
@@ -1762,7 +1747,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming(_)),
+            collaboration_mode: Some(CollaborationMode::PairProgramming),
             ..
         } => {}
         other => {
@@ -1775,7 +1760,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming(_)),
+            collaboration_mode: Some(CollaborationMode::PairProgramming),
             ..
         } => {}
         other => {
@@ -1795,7 +1780,7 @@ async fn collab_mode_defaults_to_pair_programming_when_enabled() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming(_)),
+            collaboration_mode: Some(CollaborationMode::PairProgramming),
             ..
         } => {}
         other => {
@@ -1810,7 +1795,7 @@ async fn collab_mode_enabling_sets_pair_programming_default() {
     chat.set_feature_enabled(Feature::CollaborationModes, true);
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::PairProgramming(_)
+        CollaborationMode::PairProgramming
     ));
 }
 
@@ -4013,11 +3998,7 @@ async fn approval_modal_exit_plan_mode_snapshot() {
     chat.config.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
 
     // Set a specific model to verify it's used in the approval options
-    chat.stored_collaboration_mode = CollaborationMode::Plan(Settings {
-        model: "gpt-4o".to_string(),
-        reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
-        developer_instructions: None,
-    });
+    chat.stored_collaboration_mode = CollaborationMode::Plan;
 
     let ev = ExitPlanModeApprovalRequestEvent {
         call_id: "call-exit-plan".into(),
@@ -4051,122 +4032,13 @@ async fn approval_modal_exit_plan_mode_snapshot() {
     assert_snapshot!("approval_modal_exit_plan_mode", contents);
 }
 
-// Test that exit plan mode approval uses the current model from stored_collaboration_mode
-#[tokio::test]
-async fn exit_plan_mode_approval_uses_stored_model() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
-    chat.config.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
-
-    // Set up a specific model in the stored collaboration mode
-    let test_model = "claude-sonnet-4-20250514";
-    let test_effort = codex_protocol::openai_models::ReasoningEffort::High;
-    chat.stored_collaboration_mode = CollaborationMode::Plan(Settings {
-        model: test_model.to_string(),
-        reasoning_effort: Some(test_effort),
-        developer_instructions: None,
-    });
-
-    let ev = ExitPlanModeApprovalRequestEvent {
-        call_id: "call-exit-plan-model".into(),
-        turn_id: "turn-exit-plan-model".into(),
-        plan: "Test plan content".into(),
-        plan_file_path: PathBuf::from("/tmp/test-plan.md"),
-    };
-    chat.handle_codex_event(Event {
-        id: "sub-exit-plan-model".into(),
-        msg: EventMsg::ExitPlanModeApprovalRequest(ev),
-    });
-
-    // Simulate pressing 'y' to approve with pair programming mode
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
-
-    // Find the ExitPlanModeApproval op in the channel (via AppEvent::CodexOp)
-    let mut found_op = None;
-    while let Ok(app_ev) = rx.try_recv() {
-        if let AppEvent::CodexOp(Op::ExitPlanModeApproval { response, .. }) = app_ev {
-            found_op = Some(response);
-            break;
-        }
-    }
-
-    let response = found_op.expect("expected ExitPlanModeApproval op to be emitted");
-    assert!(response.approved, "expected approval to be true");
-
-    // Verify the target mode contains the correct model
-    let target_mode = response
-        .target_mode
-        .expect("expected target_mode to be Some");
-    assert_eq!(
-        target_mode.model(),
-        test_model,
-        "expected model to be preserved from stored_collaboration_mode"
-    );
-    assert_eq!(
-        target_mode.reasoning_effort(),
-        Some(test_effort),
-        "expected reasoning_effort to be preserved from stored_collaboration_mode"
-    );
-}
-
-// Test that pressing 'e' selects execute mode with the correct model
-#[tokio::test]
-async fn exit_plan_mode_approval_execute_mode_uses_stored_model() {
-    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
-    chat.config.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
-
-    // Set up a specific model
-    let test_model = "o3";
-    chat.stored_collaboration_mode = CollaborationMode::Plan(Settings {
-        model: test_model.to_string(),
-        reasoning_effort: None,
-        developer_instructions: Some("test instructions".to_string()),
-    });
-
-    let ev = ExitPlanModeApprovalRequestEvent {
-        call_id: "call-exit-plan-exec".into(),
-        turn_id: "turn-exit-plan-exec".into(),
-        plan: "Test plan for execute".into(),
-        plan_file_path: PathBuf::from("/tmp/test-plan-exec.md"),
-    };
-    chat.handle_codex_event(Event {
-        id: "sub-exit-plan-exec".into(),
-        msg: EventMsg::ExitPlanModeApprovalRequest(ev),
-    });
-
-    // Press 'e' to approve with execute mode
-    chat.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
-
-    // Find the ExitPlanModeApproval op (via AppEvent::CodexOp)
-    let mut found_op = None;
-    while let Ok(app_ev) = rx.try_recv() {
-        if let AppEvent::CodexOp(Op::ExitPlanModeApproval { response, .. }) = app_ev {
-            found_op = Some(response);
-            break;
-        }
-    }
-
-    let response = found_op.expect("expected ExitPlanModeApproval op to be emitted");
-    assert!(response.approved);
-
-    let target_mode = response.target_mode.expect("expected target_mode");
-    assert!(
-        matches!(target_mode, CollaborationMode::Execute(_)),
-        "expected Execute mode, got {target_mode:?}"
-    );
-    assert_eq!(target_mode.model(), test_model);
-}
-
 // Test that rejecting exit plan mode (pressing 'n' or Esc) emits correct response
 #[tokio::test]
 async fn exit_plan_mode_approval_reject() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
     chat.config.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
 
-    chat.stored_collaboration_mode = CollaborationMode::Plan(Settings {
-        model: "test-model".to_string(),
-        reasoning_effort: None,
-        developer_instructions: None,
-    });
+    chat.stored_collaboration_mode = CollaborationMode::Plan;
 
     let ev = ExitPlanModeApprovalRequestEvent {
         call_id: "call-exit-plan-reject".into(),

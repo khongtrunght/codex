@@ -26,7 +26,6 @@ use codex_core::protocol::Op;
 use codex_core::protocol::ReviewDecision;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Settings;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -71,10 +70,6 @@ pub(crate) enum ApprovalRequest {
         plan: String,
         /// Path to the plan file
         plan_file_path: PathBuf,
-        /// Current model from stored_collaboration_mode
-        current_model: String,
-        /// Current reasoning effort from stored_collaboration_mode
-        current_reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
     },
 }
 
@@ -143,12 +138,8 @@ impl ApprovalOverlay {
                 elicitation_options(),
                 format!("{server_name} needs your approval."),
             ),
-            ApprovalVariant::ExitPlanMode {
-                current_model,
-                current_reasoning_effort,
-                ..
-            } => (
-                exit_plan_mode_options(current_model, *current_reasoning_effort),
+            ApprovalVariant::ExitPlanMode { .. } => (
+                exit_plan_mode_options(),
                 "Would you like to exit plan mode with this plan?".to_string(),
             ),
         };
@@ -507,8 +498,6 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                 turn_id,
                 plan,
                 plan_file_path,
-                current_model,
-                current_reasoning_effort,
             } => {
                 let mut lines: Vec<Line<'static>> = vec![
                     Line::from("Exit plan mode with the following plan:".bold()),
@@ -528,11 +517,7 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                 }
                 let header = Paragraph::new(lines).wrap(Wrap { trim: false });
                 Self {
-                    variant: ApprovalVariant::ExitPlanMode {
-                        turn_id,
-                        current_model,
-                        current_reasoning_effort,
-                    },
+                    variant: ApprovalVariant::ExitPlanMode { turn_id },
                     header: Box::new(header),
                 }
             }
@@ -558,8 +543,6 @@ enum ApprovalVariant {
     },
     ExitPlanMode {
         turn_id: String,
-        current_model: String,
-        current_reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
     },
 }
 
@@ -675,23 +658,13 @@ fn elicitation_options() -> Vec<ApprovalOption> {
     ]
 }
 
-fn exit_plan_mode_options(
-    current_model: &str,
-    current_reasoning_effort: Option<codex_protocol::openai_models::ReasoningEffort>,
-) -> Vec<ApprovalOption> {
-    // Use the current model and reasoning effort from the stored collaboration mode
-    let settings = Settings {
-        model: current_model.to_string(),
-        reasoning_effort: current_reasoning_effort,
-        developer_instructions: None,
-    };
-
+fn exit_plan_mode_options() -> Vec<ApprovalOption> {
     vec![
         ApprovalOption {
             label: "Yes, start pair programming mode".to_string(),
             decision: ApprovalDecision::ExitPlanMode(ExitPlanModeApprovalResponse {
                 approved: true,
-                target_mode: Some(CollaborationMode::PairProgramming(settings.clone())),
+                target_mode: Some(CollaborationMode::PairProgramming),
             }),
             display_shortcut: None,
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('y'))],
@@ -700,7 +673,7 @@ fn exit_plan_mode_options(
             label: "Yes, start execute mode".to_string(),
             decision: ApprovalDecision::ExitPlanMode(ExitPlanModeApprovalResponse {
                 approved: true,
-                target_mode: Some(CollaborationMode::Execute(settings)),
+                target_mode: Some(CollaborationMode::Execute),
             }),
             display_shortcut: None,
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('e'))],
@@ -912,11 +885,8 @@ mod tests {
     }
 
     #[test]
-    fn exit_plan_mode_options_uses_provided_model() {
-        let test_model = "claude-sonnet-4-20250514";
-        let test_effort = codex_protocol::openai_models::ReasoningEffort::High;
-
-        let options = exit_plan_mode_options(test_model, Some(test_effort));
+    fn exit_plan_mode_options_returns_correct_modes() {
+        let options = exit_plan_mode_options();
 
         // Should have 3 options: pair programming, execute, and reject
         assert_eq!(options.len(), 3);
@@ -924,10 +894,10 @@ mod tests {
         // First option: pair programming mode
         if let ApprovalDecision::ExitPlanMode(response) = &options[0].decision {
             assert!(response.approved);
-            let mode = response.target_mode.as_ref().expect("target_mode");
-            assert!(matches!(mode, CollaborationMode::PairProgramming(_)));
-            assert_eq!(mode.model(), test_model);
-            assert_eq!(mode.reasoning_effort(), Some(test_effort));
+            assert_eq!(
+                response.target_mode,
+                Some(CollaborationMode::PairProgramming)
+            );
         } else {
             panic!("expected ExitPlanMode decision for first option");
         }
@@ -935,10 +905,7 @@ mod tests {
         // Second option: execute mode
         if let ApprovalDecision::ExitPlanMode(response) = &options[1].decision {
             assert!(response.approved);
-            let mode = response.target_mode.as_ref().expect("target_mode");
-            assert!(matches!(mode, CollaborationMode::Execute(_)));
-            assert_eq!(mode.model(), test_model);
-            assert_eq!(mode.reasoning_effort(), Some(test_effort));
+            assert_eq!(response.target_mode, Some(CollaborationMode::Execute));
         } else {
             panic!("expected ExitPlanMode decision for second option");
         }
@@ -953,34 +920,14 @@ mod tests {
     }
 
     #[test]
-    fn exit_plan_mode_options_without_reasoning_effort() {
-        let test_model = "gpt-4o";
-
-        let options = exit_plan_mode_options(test_model, None);
-
-        // First option should have the model but no reasoning effort
-        if let ApprovalDecision::ExitPlanMode(response) = &options[0].decision {
-            let mode = response.target_mode.as_ref().expect("target_mode");
-            assert_eq!(mode.model(), test_model);
-            assert_eq!(mode.reasoning_effort(), None);
-        } else {
-            panic!("expected ExitPlanMode decision");
-        }
-    }
-
-    #[test]
     fn exit_plan_mode_approval_emits_correct_op() {
         let (tx, mut rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx);
-        let test_model = "test-model";
-        let test_effort = codex_protocol::openai_models::ReasoningEffort::Medium;
 
         let request = ApprovalRequest::ExitPlanMode {
             turn_id: "turn-123".to_string(),
             plan: "Test plan".to_string(),
             plan_file_path: PathBuf::from("/tmp/test.md"),
-            current_model: test_model.to_string(),
-            current_reasoning_effort: Some(test_effort),
         };
 
         let mut view = ApprovalOverlay::new(request, tx, Features::with_defaults());
@@ -1000,10 +947,9 @@ mod tests {
         let (id, response) = found_op.expect("expected ExitPlanModeApproval op");
         assert_eq!(id, "turn-123");
         assert!(response.approved);
-
-        let target_mode = response.target_mode.expect("target_mode");
-        assert!(matches!(target_mode, CollaborationMode::PairProgramming(_)));
-        assert_eq!(target_mode.model(), test_model);
-        assert_eq!(target_mode.reasoning_effort(), Some(test_effort));
+        assert_eq!(
+            response.target_mode,
+            Some(CollaborationMode::PairProgramming)
+        );
     }
 }

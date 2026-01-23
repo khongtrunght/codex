@@ -12,7 +12,6 @@ use codex_core::protocol_config_types::ReasoningSummary;
 use codex_core::shell::Shell;
 use codex_core::shell::default_user_shell;
 use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::config_types::Settings;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::user_input::UserInput;
@@ -137,6 +136,7 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
         "read_mcp_resource",
         "update_plan",
         "request_user_input",
+        "exit_plan_mode",
         "apply_patch",
         "web_search",
         "view_image",
@@ -411,11 +411,7 @@ async fn override_before_first_turn_emits_environment_context() -> anyhow::Resul
 
     let TestCodex { codex, .. } = test_codex().build(&server).await?;
 
-    let collaboration_mode = CollaborationMode::Custom(Settings {
-        model: "gpt-5.1".to_string(),
-        reasoning_effort: Some(ReasoningEffort::High),
-        developer_instructions: None,
-    });
+    let collaboration_mode = CollaborationMode::default();
 
     codex
         .submit(Op::OverrideTurnContext {
@@ -442,12 +438,12 @@ async fn override_before_first_turn_emits_environment_context() -> anyhow::Resul
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let body = req.single_request().body_json();
-    assert_eq!(body["model"].as_str(), Some("gpt-5.1"));
+    assert_eq!(body["model"].as_str(), Some("gpt-5.1-codex"));
     assert_eq!(
         body.get("reasoning")
             .and_then(|reasoning| reasoning.get("effort"))
             .and_then(|value| value.as_str()),
-        Some("high")
+        Some("low")
     );
     let input = body["input"]
         .as_array()

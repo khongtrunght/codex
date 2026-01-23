@@ -35,12 +35,12 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::ExecPolicyAmendment;
-use codex_protocol::config_types::Settings;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::items::TurnItem;
 use codex_protocol::items::UserMessageItem;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::ItemCompletedEvent;
@@ -294,13 +294,11 @@ impl Codex {
 
         // TODO (aibrahim): Consolidate config.model and config.model_reasoning_effort into config.collaboration_mode
         // to avoid extracting these fields separately and constructing CollaborationMode here.
-        let collaboration_mode = CollaborationMode::Custom(Settings {
-            model: model.clone(),
-            reasoning_effort: config.model_reasoning_effort,
-            developer_instructions: None,
-        });
+        let collaboration_mode = CollaborationMode::default();
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
+            model,
+            model_reasoning_effort: config.model_reasoning_effort.clone(),
             collaboration_mode,
             model_reasoning_summary: config.model_reasoning_summary,
             developer_instructions: config.developer_instructions.clone(),
@@ -449,6 +447,9 @@ pub(crate) struct SessionConfiguration {
     /// Provider identifier ("openai", "openrouter", ...).
     provider: ModelProviderInfo,
 
+    model: String,
+    model_reasoning_effort: Option<ReasoningEffort>,
+
     collaboration_mode: CollaborationMode,
     model_reasoning_summary: ReasoningSummaryConfig,
 
@@ -487,6 +488,12 @@ pub(crate) struct SessionConfiguration {
 impl SessionConfiguration {
     pub(crate) fn apply(&self, updates: &SessionSettingsUpdate) -> ConstraintResult<Self> {
         let mut next_configuration = self.clone();
+        if let Some(model) = updates.model.clone() {
+            next_configuration.model = model;
+        }
+        if let Some(effort) = updates.reasoning_effort {
+            next_configuration.model_reasoning_effort = effort;
+        }
         if let Some(collaboration_mode) = updates.collaboration_mode.clone() {
             next_configuration.collaboration_mode = collaboration_mode;
         }
@@ -511,6 +518,8 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) cwd: Option<PathBuf>,
     pub(crate) approval_policy: Option<AskForApproval>,
     pub(crate) sandbox_policy: Option<SandboxPolicy>,
+    pub(crate) model: Option<String>,
+    pub(crate) reasoning_effort: Option<Option<ReasoningEffort>>,
     pub(crate) collaboration_mode: Option<CollaborationMode>,
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
@@ -522,8 +531,7 @@ impl Session {
         // todo(aibrahim): store this state somewhere else so we don't need to mut config
         let config = session_configuration.original_config_do_not_use.clone();
         let mut per_turn_config = (*config).clone();
-        per_turn_config.model_reasoning_effort =
-            session_configuration.collaboration_mode.reasoning_effort();
+        per_turn_config.model_reasoning_effort = session_configuration.model_reasoning_effort;
         per_turn_config.model_reasoning_summary = session_configuration.model_reasoning_summary;
         per_turn_config.features = config.features.clone();
         per_turn_config
@@ -541,10 +549,9 @@ impl Session {
         sub_id: String,
         agent_type_manager: &AgentTypeManager,
     ) -> TurnContext {
-        let otel_manager = otel_manager.clone().with_model(
-            session_configuration.collaboration_mode.model(),
-            model_info.slug.as_str(),
-        );
+        let otel_manager = otel_manager
+            .clone()
+            .with_model(&session_configuration.model, model_info.slug.as_str());
         let per_turn_config = Arc::new(per_turn_config);
         let client = ModelClient::new(
             per_turn_config.clone(),
@@ -552,7 +559,7 @@ impl Session {
             model_info.clone(),
             otel_manager,
             provider,
-            session_configuration.collaboration_mode.reasoning_effort(),
+            session_configuration.model_reasoning_effort,
             session_configuration.model_reasoning_summary,
             conversation_id,
             session_configuration.session_source.clone(),
@@ -600,8 +607,7 @@ impl Session {
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
-            session_configuration.collaboration_mode.model(),
-            session_configuration.provider
+            &session_configuration.model, session_configuration.provider
         );
         if !session_configuration.cwd.is_absolute() {
             return Err(anyhow::anyhow!(
@@ -692,8 +698,8 @@ impl Session {
         let auth = auth.as_ref();
         let otel_manager = OtelManager::new(
             conversation_id,
-            session_configuration.collaboration_mode.model(),
-            session_configuration.collaboration_mode.model(),
+            &session_configuration.model,
+            &session_configuration.model,
             auth.and_then(CodexAuth::get_account_id),
             auth.and_then(CodexAuth::get_account_email),
             auth.map(|a| a.mode),
@@ -717,7 +723,7 @@ impl Session {
 
         otel_manager.conversation_starts(
             config.model_provider.name.as_str(),
-            session_configuration.collaboration_mode.reasoning_effort(),
+            session_configuration.model_reasoning_effort,
             config.model_reasoning_summary,
             config.model_context_window,
             config.model_auto_compact_token_limit,
@@ -785,12 +791,12 @@ impl Session {
             msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
                 session_id: conversation_id,
                 forked_from_id,
-                model: session_configuration.collaboration_mode.model().to_string(),
+                model: session_configuration.model.clone(),
                 model_provider_id: config.model_provider_id.clone(),
                 approval_policy: session_configuration.approval_policy.value(),
                 sandbox_policy: session_configuration.sandbox_policy.get().clone(),
                 cwd: session_configuration.cwd.clone(),
-                reasoning_effort: session_configuration.collaboration_mode.reasoning_effort(),
+                reasoning_effort: session_configuration.model_reasoning_effort,
                 history_log_id,
                 history_entry_count,
                 initial_messages,
@@ -1034,10 +1040,7 @@ impl Session {
         let model_info = self
             .services
             .models_manager
-            .get_model_info(
-                session_configuration.collaboration_mode.model(),
-                &per_turn_config,
-            )
+            .get_model_info(&session_configuration.model, &per_turn_config)
             .await;
         let mut turn_context: TurnContext = Self::make_turn_context(
             Some(Arc::clone(&self.services.auth_manager)),
@@ -1136,12 +1139,13 @@ impl Session {
 
             // If next_mode is Plan mode, we return None as handle plan mode transitions already
             // emitted the necessary update.
-            if matches!(next_mode, CollaborationMode::Plan { .. }) {
+            if matches!(next_mode, CollaborationMode::Plan) {
                 return None;
             }
+            None
             // If the next mode has empty developer instructions, this returns None and we emit no
             // update, so prior collaboration instructions remain in the prompt history.
-            Some(DeveloperInstructions::from_collaboration_mode(next_mode)?.into())
+            // Some(DeveloperInstructions::from_collaboration_mode(next_mode)?.into())
         } else {
             None
         }
@@ -1680,7 +1684,7 @@ impl Session {
     pub(crate) async fn collect_attachments(
         &self,
         turn: &TurnContext,
-    ) -> Vec<codex_protocol::models::AttachmentData> {
+    ) -> Vec<codex_protocol::attachment::AttachmentData> {
         let mut attachments = Vec::new();
         attachments.extend(crate::attachments::collect_plan_mode(self, turn).await);
         attachments.extend(crate::attachments::collect_plan_mode_exit(self, turn).await);
@@ -1714,8 +1718,8 @@ impl Session {
         previous: &CollaborationMode,
         next: Option<&CollaborationMode>,
     ) {
-        let was_plan = matches!(previous, CollaborationMode::Plan(_));
-        let is_plan = matches!(next, Some(CollaborationMode::Plan(_)));
+        let was_plan = matches!(previous, CollaborationMode::Plan);
+        let is_plan = matches!(next, Some(CollaborationMode::Plan));
 
         match (was_plan, is_plan) {
             (false, true) => {
@@ -1743,17 +1747,9 @@ impl Session {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Record that a file has been read.
-    pub(crate) async fn record_file_read(
-        &self,
-        path: &std::path::Path,
-        content: String,
-        offset: Option<usize>,
-        limit: Option<usize>,
-    ) {
+    pub(crate) async fn record_file_read(&self, path: &std::path::Path, content: String) {
         let mut state = self.state.lock().await;
-        state
-            .read_file_state
-            .record_read(path, content, offset, limit);
+        state.read_file_state.record_read(path, content);
     }
 
     /// Update file state after a successful write operation.
@@ -1793,16 +1789,14 @@ impl Session {
         if let Some(developer_instructions) = turn_context.developer_instructions.as_deref() {
             items.push(DeveloperInstructions::new(developer_instructions.to_string()).into());
         }
-        // Add developer instructions from collaboration_mode if they exist and are non-empty
-        let collaboration_mode = {
-            let state = self.state.lock().await;
-            state.session_configuration.collaboration_mode.clone()
-        };
+        // Add developer instructions from collaboration_mode if they exist
+        let collaboration_mode = self.collaboration_mode().await;
         if let Some(collab_instructions) =
             DeveloperInstructions::from_collaboration_mode(&collaboration_mode)
         {
             items.push(collab_instructions.into());
         }
+
         if let Some(user_instructions) = turn_context.user_instructions.as_deref() {
             items.push(
                 UserInstructions {
@@ -2244,16 +2238,6 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 summary,
                 collaboration_mode,
             } => {
-                let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
-                    collab_mode
-                } else {
-                    let state = sess.state.lock().await;
-                    state.session_configuration.collaboration_mode.with_updates(
-                        model.clone(),
-                        effort,
-                        None,
-                    )
-                };
                 handlers::override_turn_context(
                     &sess,
                     sub.id.clone(),
@@ -2261,7 +2245,9 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                         cwd,
                         approval_policy,
                         sandbox_policy,
-                        collaboration_mode: Some(collaboration_mode),
+                        model,
+                        reasoning_effort: effort,
+                        collaboration_mode,
                         reasoning_summary: summary,
                         ..Default::default()
                     },
@@ -2376,8 +2362,6 @@ mod handlers {
     use codex_protocol::request_user_input::RequestUserInputResponse;
 
     use crate::context_manager::is_user_turn_boundary;
-    use codex_protocol::config_types::CollaborationMode;
-    use codex_protocol::config_types::Settings;
     use codex_protocol::user_input::UserInput;
     use codex_rmcp_client::ElicitationAction;
     use codex_rmcp_client::ElicitationResponse;
@@ -2452,26 +2436,19 @@ mod handlers {
                 final_output_json_schema,
                 items,
                 collaboration_mode,
-            } => {
-                let collaboration_mode = collaboration_mode.or_else(|| {
-                    Some(CollaborationMode::Custom(Settings {
-                        model: model.clone(),
-                        reasoning_effort: effort,
-                        developer_instructions: None,
-                    }))
-                });
-                (
-                    items,
-                    SessionSettingsUpdate {
-                        cwd: Some(cwd),
-                        approval_policy: Some(approval_policy),
-                        sandbox_policy: Some(sandbox_policy),
-                        collaboration_mode,
-                        reasoning_summary: Some(summary),
-                        final_output_json_schema: Some(final_output_json_schema),
-                    },
-                )
-            }
+            } => (
+                items,
+                SessionSettingsUpdate {
+                    cwd: Some(cwd),
+                    approval_policy: Some(approval_policy),
+                    sandbox_policy: Some(sandbox_policy),
+                    model: Some(model),
+                    reasoning_effort: Some(effort),
+                    collaboration_mode,
+                    reasoning_summary: Some(summary),
+                    final_output_json_schema: Some(final_output_json_schema),
+                },
+            ),
             Op::UserInput {
                 items,
                 final_output_json_schema,
@@ -3961,14 +3938,12 @@ mod tests {
         let config = Arc::new(config);
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let model_info = ModelsManager::construct_model_info_offline(model.as_str(), &config);
-        let reasoning_effort = config.model_reasoning_effort;
-        let collaboration_mode = CollaborationMode::Custom(Settings {
-            model,
-            reasoning_effort,
-            developer_instructions: None,
-        });
+        let model_reasoning_effort = config.model_reasoning_effort;
+        let collaboration_mode = CollaborationMode::default();
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
+            model,
+            model_reasoning_effort,
             collaboration_mode,
             model_reasoning_summary: config.model_reasoning_summary,
             developer_instructions: config.developer_instructions.clone(),
@@ -4036,14 +4011,12 @@ mod tests {
         let config = Arc::new(config);
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let model_info = ModelsManager::construct_model_info_offline(model.as_str(), &config);
-        let reasoning_effort = config.model_reasoning_effort;
-        let collaboration_mode = CollaborationMode::Custom(Settings {
-            model,
-            reasoning_effort,
-            developer_instructions: None,
-        });
+        let model_reasoning_effort = config.model_reasoning_effort;
+        let collaboration_mode = CollaborationMode::default();
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
+            model,
+            model_reasoning_effort,
             collaboration_mode,
             model_reasoning_summary: config.model_reasoning_summary,
             developer_instructions: config.developer_instructions.clone(),
@@ -4296,13 +4269,11 @@ mod tests {
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let model_info = ModelsManager::construct_model_info_offline(model.as_str(), &config);
         let reasoning_effort = config.model_reasoning_effort;
-        let collaboration_mode = CollaborationMode::Custom(Settings {
-            model,
-            reasoning_effort,
-            developer_instructions: None,
-        });
+        let collaboration_mode = CollaborationMode::default();
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
+            model,
+            model_reasoning_effort: reasoning_effort,
             collaboration_mode,
             model_reasoning_summary: config.model_reasoning_summary,
             developer_instructions: config.developer_instructions.clone(),
@@ -4320,7 +4291,7 @@ mod tests {
         };
         let per_turn_config = Session::build_per_turn_config(&session_configuration);
         let model_info = ModelsManager::construct_model_info_offline(
-            session_configuration.collaboration_mode.model(),
+            &session_configuration.model,
             &per_turn_config,
         );
         let otel_manager = otel_manager(
@@ -4405,13 +4376,11 @@ mod tests {
         let model = ModelsManager::get_model_offline(config.model.as_deref());
         let model_info = ModelsManager::construct_model_info_offline(model.as_str(), &config);
         let reasoning_effort = config.model_reasoning_effort;
-        let collaboration_mode = CollaborationMode::Custom(Settings {
-            model,
-            reasoning_effort,
-            developer_instructions: None,
-        });
+        let collaboration_mode = CollaborationMode::default();
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
+            model,
+            model_reasoning_effort: reasoning_effort,
             collaboration_mode,
             model_reasoning_summary: config.model_reasoning_summary,
             developer_instructions: config.developer_instructions.clone(),
@@ -4429,7 +4398,7 @@ mod tests {
         };
         let per_turn_config = Session::build_per_turn_config(&session_configuration);
         let model_info = ModelsManager::construct_model_info_offline(
-            session_configuration.collaboration_mode.model(),
+            &session_configuration.model,
             &per_turn_config,
         );
         let otel_manager = otel_manager(

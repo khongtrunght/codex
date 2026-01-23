@@ -998,9 +998,7 @@ impl App {
                 self.chat_widget.set_model(&model);
             }
             AppEvent::UpdateCollaborationMode(mode) => {
-                let model = mode.model().to_string();
                 self.chat_widget.set_collaboration_mode(mode);
-                self.chat_widget.set_model(&model);
             }
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);

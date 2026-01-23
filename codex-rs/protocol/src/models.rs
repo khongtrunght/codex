@@ -10,12 +10,13 @@ use serde::Serialize;
 use serde::ser::Serializer;
 use ts_rs::TS;
 
+use crate::attachment::AttachmentData;
 use crate::config_types::CollaborationMode;
 use crate::config_types::SandboxMode;
 use crate::protocol::AskForApproval;
-use crate::protocol::COLLABORATION_MODE_CLOSE_TAG;
-use crate::protocol::COLLABORATION_MODE_OPEN_TAG;
 use crate::protocol::NetworkAccess;
+use crate::protocol::SYSTEM_REMINDER_CLOSE_TAG;
+use crate::protocol::SYSTEM_REMINDER_OPEN_TAG;
 use crate::protocol::SandboxPolicy;
 use crate::protocol::WritableRoot;
 use crate::user_input::UserInput;
@@ -69,25 +70,6 @@ pub enum ContentItem {
     InputText { text: String },
     InputImage { image_url: String },
     OutputText { text: String },
-}
-
-/// Data payload for attachment types.
-/// Attachments are contextual markers stored in history and expanded to messages before API calls.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AttachmentData {
-    /// Collected when entering/re-entering plan mode.
-    PlanMode {
-        plan_file_path: String,
-        is_subagent: bool,
-        plan_exists: bool,
-    },
-    /// Collected when re-entering plan mode after being in a different mode.
-    PlanModeReentry { plan_file_path: String },
-    /// Collected when exiting plan mode.
-    PlanModeExit { plan_file_path: Option<String> },
-    /// Collected after compaction to restore file context.
-    CompactFileRestore { files: Vec<CompactRestoredFile> },
 }
 
 /// Represents a file that should be restored after compaction.
@@ -246,6 +228,12 @@ const SANDBOX_MODE_WORKSPACE_WRITE: &str =
     include_str!("prompts/permissions/sandbox_mode/workspace_write.md");
 const SANDBOX_MODE_READ_ONLY: &str = include_str!("prompts/permissions/sandbox_mode/read_only.md");
 
+// Collaboration mode templates
+const COLLABORATION_MODE_PLAN: &str = include_str!("prompts/collaboration_mode/plan.md");
+const COLLABORATION_MODE_PAIR_PROGRAMMING: &str =
+    include_str!("prompts/collaboration_mode/pair_programming.md");
+const COLLABORATION_MODE_EXECUTE: &str = include_str!("prompts/collaboration_mode/execute.md");
+
 impl DeveloperInstructions {
     pub fn new<T: Into<String>>(text: T) -> Self {
         Self { text: text.into() }
@@ -288,25 +276,6 @@ impl DeveloperInstructions {
             approval_policy,
             writable_roots,
         )
-    }
-
-    /// Returns developer instructions from a collaboration mode if they exist and are non-empty.
-    pub fn from_collaboration_mode(collaboration_mode: &CollaborationMode) -> Option<Self> {
-        let settings = match collaboration_mode {
-            CollaborationMode::Plan(settings)
-            | CollaborationMode::PairProgramming(settings)
-            | CollaborationMode::Execute(settings)
-            | CollaborationMode::Custom(settings) => settings,
-        };
-        settings
-            .developer_instructions
-            .as_ref()
-            .filter(|instructions| !instructions.is_empty())
-            .map(|instructions| {
-                DeveloperInstructions::new(format!(
-                    "{COLLABORATION_MODE_OPEN_TAG}{instructions}{COLLABORATION_MODE_CLOSE_TAG}"
-                ))
-            })
     }
 
     fn from_permissions_with_network(
@@ -357,6 +326,21 @@ impl DeveloperInstructions {
         let text = template.replace("{network_access}", &network_access.to_string());
 
         DeveloperInstructions::new(text)
+    }
+
+    /// Returns collaboration mode instructions for injection in initial context.
+    ///
+    /// Each collaboration mode has corresponding instructions that guide the model's
+    /// behavior and interaction style. Returns `None` if the mode has no instructions.
+    pub fn from_collaboration_mode(mode: &CollaborationMode) -> Option<DeveloperInstructions> {
+        let instructions = match mode {
+            CollaborationMode::Plan => COLLABORATION_MODE_PLAN,
+            CollaborationMode::PairProgramming => COLLABORATION_MODE_PAIR_PROGRAMMING,
+            CollaborationMode::Execute => COLLABORATION_MODE_EXECUTE,
+        };
+        Some(DeveloperInstructions::new(format!(
+            "{SYSTEM_REMINDER_OPEN_TAG}\n{instructions}\n{SYSTEM_REMINDER_CLOSE_TAG}"
+        )))
     }
 }
 

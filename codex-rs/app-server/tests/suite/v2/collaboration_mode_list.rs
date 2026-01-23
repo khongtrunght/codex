@@ -15,7 +15,6 @@ use codex_app_server_protocol::CollaborationModeListParams;
 use codex_app_server_protocol::CollaborationModeListResponse;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
-use codex_core::models_manager::test_builtin_collaboration_mode_presets;
 use codex_protocol::config_types::CollaborationMode;
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
@@ -44,43 +43,11 @@ async fn list_collaboration_modes_returns_presets() -> Result<()> {
     let CollaborationModeListResponse { data: items } =
         to_response::<CollaborationModeListResponse>(response)?;
 
-    let expected = vec![plan_preset(), pair_programming_preset(), execute_preset()];
+    let expected = vec![
+        CollaborationMode::Plan,
+        CollaborationMode::PairProgramming,
+        CollaborationMode::Execute,
+    ];
     assert_eq!(expected, items);
     Ok(())
-}
-
-/// Builds the plan preset that the list response is expected to return.
-///
-/// If the defaults change in the app server, this helper should be updated alongside the
-/// contract, or the test will fail in ways that imply a regression in the API.
-fn plan_preset() -> CollaborationMode {
-    let presets = test_builtin_collaboration_mode_presets();
-    presets
-        .into_iter()
-        .find(|p| matches!(p, CollaborationMode::Plan(_)))
-        .unwrap()
-}
-
-/// Builds the pair programming preset that the list response is expected to return.
-///
-/// The helper keeps the expected model and reasoning defaults co-located with the test
-/// so that mismatches point directly at the API contract being exercised.
-fn pair_programming_preset() -> CollaborationMode {
-    let presets = test_builtin_collaboration_mode_presets();
-    presets
-        .into_iter()
-        .find(|p| matches!(p, CollaborationMode::PairProgramming(_)))
-        .unwrap()
-}
-
-/// Builds the execute preset that the list response is expected to return.
-///
-/// The execute preset uses a different reasoning effort to capture the higher-effort
-/// execution contract the server currently exposes.
-fn execute_preset() -> CollaborationMode {
-    let presets = test_builtin_collaboration_mode_presets();
-    presets
-        .into_iter()
-        .find(|p| matches!(p, CollaborationMode::Execute(_)))
-        .unwrap()
 }

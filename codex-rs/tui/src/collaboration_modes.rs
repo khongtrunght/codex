@@ -6,25 +6,14 @@ enum ModeKind {
     Plan,
     PairProgramming,
     Execute,
-    Custom,
 }
 
 fn mode_kind(mode: &CollaborationMode) -> ModeKind {
     match mode {
-        CollaborationMode::Plan(_) => ModeKind::Plan,
-        CollaborationMode::PairProgramming(_) => ModeKind::PairProgramming,
-        CollaborationMode::Execute(_) => ModeKind::Execute,
-        CollaborationMode::Custom(_) => ModeKind::Custom,
+        CollaborationMode::Plan => ModeKind::Plan,
+        CollaborationMode::PairProgramming => ModeKind::PairProgramming,
+        CollaborationMode::Execute => ModeKind::Execute,
     }
-}
-
-pub(crate) fn default_mode(models_manager: &ModelsManager) -> Option<CollaborationMode> {
-    let presets = models_manager.list_collaboration_modes();
-    presets
-        .iter()
-        .find(|preset| matches!(preset, CollaborationMode::PairProgramming(_)))
-        .cloned()
-        .or_else(|| presets.into_iter().next())
 }
 
 pub(crate) fn same_variant(a: &CollaborationMode, b: &CollaborationMode) -> bool {

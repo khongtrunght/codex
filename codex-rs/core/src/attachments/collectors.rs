@@ -4,8 +4,8 @@
 //! Each collector returns a Vec<AttachmentData> which may be empty if
 //! no attachment should be generated for the current context.
 
+use codex_protocol::attachment::AttachmentData;
 use codex_protocol::config_types::CollaborationMode;
-use codex_protocol::models::AttachmentData;
 use codex_protocol::models::ResponseItem;
 use futures::future::BoxFuture;
 
@@ -27,7 +27,7 @@ pub(crate) fn collect_plan_mode<'a>(
     Box::pin(async move {
         // Check if in plan mode via CollaborationMode
         let collab_mode = session.collaboration_mode().await;
-        if !matches!(collab_mode, CollaborationMode::Plan(_)) {
+        if !matches!(collab_mode, CollaborationMode::Plan) {
             return vec![];
         }
 
@@ -84,7 +84,7 @@ pub(crate) fn collect_plan_mode_exit<'a>(
 
         // Double-check: only emit if NOT in plan mode anymore
         let collab_mode = session.collaboration_mode().await;
-        if matches!(collab_mode, CollaborationMode::Plan(_)) {
+        if matches!(collab_mode, CollaborationMode::Plan) {
             return vec![];
         }
 
@@ -100,7 +100,11 @@ pub(crate) fn collect_plan_mode_exit<'a>(
             })
             .await;
 
-        vec![AttachmentData::PlanModeExit { plan_file_path }]
+        // Include the next mode so transition instructions can be injected
+        vec![AttachmentData::PlanModeExit {
+            plan_file_path,
+            next_mode: Some(collab_mode),
+        }]
     })
 }
 
@@ -209,6 +213,7 @@ mod tests {
             ResponseItem::Attachment {
                 data: AttachmentData::PlanModeExit {
                     plan_file_path: Some("/tmp/plan.md".to_string()),
+                    next_mode: None,
                 },
             },
             ResponseItem::Message {

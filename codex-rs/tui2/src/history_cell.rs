@@ -1123,10 +1123,9 @@ impl SessionHeaderHistoryCell {
             return None;
         }
         match &self.collaboration_mode {
-            CollaborationMode::Plan(_) => Some("Plan"),
-            CollaborationMode::PairProgramming(_) => Some("Pair Programming"),
-            CollaborationMode::Execute(_) => Some("Execute"),
-            CollaborationMode::Custom(_) => None,
+            CollaborationMode::Plan => Some("Plan"),
+            CollaborationMode::PairProgramming => Some("Pair Programming"),
+            CollaborationMode::Execute => Some("Execute"),
         }
     }
 
@@ -1967,7 +1966,6 @@ mod tests {
     use codex_core::config::types::McpServerTransportConfig;
     use codex_core::protocol::McpAuthStatus;
     use codex_protocol::config_types::CollaborationMode;
-    use codex_protocol::config_types::Settings;
     use codex_protocol::parse_command::ParsedCommand;
     use dirs::home_dir;
     use pretty_assertions::assert_eq;
@@ -1988,23 +1986,6 @@ mod tests {
             .await
             .expect("config")
     }
-
-    fn default_collaboration_mode(model: &str) -> CollaborationMode {
-        CollaborationMode::Custom(Settings {
-            model: model.to_string(),
-            reasoning_effort: None,
-            developer_instructions: None,
-        })
-    }
-
-    fn plan_collaboration_mode(model: &str) -> CollaborationMode {
-        CollaborationMode::Plan(Settings {
-            model: model.to_string(),
-            reasoning_effort: None,
-            developer_instructions: None,
-        })
-    }
-
     fn render_lines(lines: &[Line<'static>]) -> Vec<String> {
         lines
             .iter()
@@ -2520,7 +2501,7 @@ mod tests {
             std::env::temp_dir(),
             "test",
             false,
-            default_collaboration_mode("gpt-4o"),
+            CollaborationMode::default(),
         );
 
         let lines = render_lines(&cell.display_lines(RenderContext::new(80)));
@@ -2542,7 +2523,7 @@ mod tests {
             std::env::temp_dir(),
             "test",
             true,
-            plan_collaboration_mode("gpt-4o"),
+            CollaborationMode::Plan,
         );
 
         let lines = render_lines(&cell.display_lines(RenderContext::new(80)));
@@ -2565,7 +2546,7 @@ mod tests {
             std::env::temp_dir(),
             "test",
             true,
-            plan_collaboration_mode("gpt-4o"),
+            CollaborationMode::Plan,
         );
 
         let lines = render_lines(&cell.display_lines(RenderContext::new(80)));

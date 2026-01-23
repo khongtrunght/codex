@@ -17,10 +17,6 @@ pub struct ReadFileInfo {
     pub mtime: SystemTime,
     /// File content when read (used for compaction recovery).
     pub content: String,
-    /// Line offset if this was a partial read.
-    pub offset: Option<usize>,
-    /// Line limit if this was a partial read.
-    pub limit: Option<usize>,
 }
 
 /// Session-level tracking of files that have been read.
@@ -81,13 +77,7 @@ impl ReadFileState {
     /// * `content` - The file content that was read
     /// * `offset` - Optional line offset for partial reads
     /// * `limit` - Optional line limit for partial reads
-    pub fn record_read(
-        &mut self,
-        path: &Path,
-        content: String,
-        offset: Option<usize>,
-        limit: Option<usize>,
-    ) {
+    pub fn record_read(&mut self, path: &Path, content: String) {
         let canonical = match dunce::canonicalize(path) {
             Ok(p) => p,
             Err(_) => return, // Silently fail if canonicalization fails
@@ -97,15 +87,8 @@ impl ReadFileState {
             .and_then(|m| m.modified())
             .unwrap_or_else(|_| SystemTime::now());
 
-        self.files.insert(
-            canonical,
-            ReadFileInfo {
-                mtime,
-                content,
-                offset,
-                limit,
-            },
-        );
+        self.files
+            .insert(canonical, ReadFileInfo { mtime, content });
     }
 
     /// Check if a file has been read and is still valid for editing.
@@ -137,23 +120,20 @@ impl ReadFileState {
                 path: path.to_path_buf(),
             })?;
 
-        if check_mtime {
-            if let Ok(metadata) = std::fs::metadata(path) {
-                if let Ok(current_mtime) = metadata.modified() {
-                    if current_mtime > info.mtime {
-                        return Err(FileValidationError::ModifiedSinceRead {
-                            path: path.to_path_buf(),
-                        });
-                    }
-                }
-            }
+        if check_mtime
+            && let Ok(metadata) = std::fs::metadata(path)
+            && let Ok(current_mtime) = metadata.modified()
+            && current_mtime > info.mtime
+        {
+            return Err(FileValidationError::ModifiedSinceRead {
+                path: path.to_path_buf(),
+            });
         }
 
         Ok(())
     }
 
     /// Check if a file has been read (without mtime validation).
-    #[allow(dead_code)]
     pub fn was_file_read(&self, path: &Path) -> bool {
         if let Ok(canonical) = dunce::canonicalize(path) {
             self.files.contains_key(&canonical)
@@ -163,7 +143,6 @@ impl ReadFileState {
     }
 
     /// Get the cached content for a file, if available.
-    #[allow(dead_code)]
     pub fn get_content(&self, path: &Path) -> Option<&str> {
         let canonical = dunce::canonicalize(path).ok()?;
         self.files.get(&canonical).map(|info| info.content.as_str())
@@ -186,35 +165,28 @@ impl ReadFileState {
         if let Some(info) = self.files.get_mut(&canonical) {
             info.mtime = mtime;
             info.content = new_content;
-            info.offset = None; // Full file after write
-            info.limit = None;
         } else {
             self.files.insert(
                 canonical,
                 ReadFileInfo {
                     mtime,
                     content: new_content,
-                    offset: None,
-                    limit: None,
                 },
             );
         }
     }
 
     /// Get number of tracked files.
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.files.len()
     }
 
     /// Check if no files are tracked.
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
 
     /// Iterate over all tracked files.
-    #[allow(dead_code)]
     pub fn iter(&self) -> impl Iterator<Item = (&PathBuf, &ReadFileInfo)> {
         self.files.iter()
     }
@@ -246,7 +218,7 @@ mod tests {
         fs::write(&file_path, "hello world").unwrap();
 
         let mut state = ReadFileState::new();
-        state.record_read(&file_path, "hello world".to_string(), None, None);
+        state.record_read(&file_path, "hello world".to_string());
 
         // Should pass validation
         assert!(state.validate_for_edit(&file_path, true).is_ok());
@@ -273,7 +245,7 @@ mod tests {
         fs::write(&file_path, "hello world").unwrap();
 
         let mut state = ReadFileState::new();
-        state.record_read(&file_path, "hello world".to_string(), None, None);
+        state.record_read(&file_path, "hello world".to_string());
 
         // Modify the file externally
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -294,7 +266,7 @@ mod tests {
         fs::write(&file_path, "hello world").unwrap();
 
         let mut state = ReadFileState::new();
-        state.record_read(&file_path, "hello world".to_string(), None, None);
+        state.record_read(&file_path, "hello world".to_string());
 
         // Simulate a write
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -312,7 +284,7 @@ mod tests {
         fs::write(&file_path, "hello world").unwrap();
 
         let mut state = ReadFileState::new();
-        state.record_read(&file_path, "hello world".to_string(), None, None);
+        state.record_read(&file_path, "hello world".to_string());
 
         // Modify the file externally
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -329,7 +301,7 @@ mod tests {
         fs::write(&file_path, "hello world").unwrap();
 
         let mut state = ReadFileState::new();
-        state.record_read(&file_path, "hello world".to_string(), None, None);
+        state.record_read(&file_path, "hello world".to_string());
 
         assert_eq!(state.get_content(&file_path), Some("hello world"));
     }
@@ -344,7 +316,7 @@ mod tests {
         assert!(state.is_empty());
         assert_eq!(state.len(), 0);
 
-        state.record_read(&file_path, "hello world".to_string(), None, None);
+        state.record_read(&file_path, "hello world".to_string());
         assert!(!state.is_empty());
         assert_eq!(state.len(), 1);
     }
@@ -368,9 +340,9 @@ mod tests {
         fs::write(&file3, "content3").unwrap();
 
         let mut state = ReadFileState::new();
-        state.record_read(&file1, "content1".to_string(), None, None);
-        state.record_read(&file2, "content2".to_string(), None, None);
-        state.record_read(&file3, "content3".to_string(), None, None);
+        state.record_read(&file1, "content1".to_string());
+        state.record_read(&file2, "content2".to_string());
+        state.record_read(&file3, "content3".to_string());
 
         // Should return most recent first
         let recent = state.get_recent_files(2);
@@ -386,7 +358,7 @@ mod tests {
         fs::write(&file_path, "hello world").unwrap();
 
         let mut state = ReadFileState::new();
-        state.record_read(&file_path, "hello world".to_string(), None, None);
+        state.record_read(&file_path, "hello world".to_string());
         assert_eq!(state.len(), 1);
 
         state.clear();

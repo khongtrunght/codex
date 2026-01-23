@@ -755,23 +755,9 @@ async fn make_chatwidget_manual(
     let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("test"));
     let codex_home = cfg.codex_home.clone();
     let models_manager = Arc::new(ModelsManager::new(codex_home, auth_manager.clone()));
-    let collaboration_modes_enabled = cfg.features.enabled(Feature::CollaborationModes);
-    let reasoning_effort = None;
-    let stored_collaboration_mode = if collaboration_modes_enabled {
-        collaboration_modes::default_mode(models_manager.as_ref()).unwrap_or_else(|| {
-            CollaborationMode::Custom(Settings {
-                model: resolved_model.clone(),
-                reasoning_effort,
-                developer_instructions: None,
-            })
-        })
-    } else {
-        CollaborationMode::Custom(Settings {
-            model: resolved_model.clone(),
-            reasoning_effort,
-            developer_instructions: None,
-        })
-    };
+    let stored_collaboration_mode = CollaborationMode::default();
+    let stored_model = resolved_model.clone();
+    let stored_reasoning_effort = None;
     let widget = ChatWidget {
         app_event_tx,
         codex_op_tx: op_tx,
@@ -780,6 +766,8 @@ async fn make_chatwidget_manual(
         active_cell_revision: 0,
         config: cfg,
         stored_collaboration_mode,
+        stored_model,
+        stored_reasoning_effort,
         auth_manager,
         models_manager,
         session_header: SessionHeader::new(resolved_model),
@@ -1936,13 +1924,13 @@ async fn collab_mode_shift_tab_cycles_only_when_enabled_and_idle() {
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::Execute(_)
+        CollaborationMode::Execute,
     ));
 
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::Plan(_)
+        CollaborationMode::Plan,
     ));
 
     chat.on_task_started();
@@ -1976,7 +1964,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming(_)),
+            collaboration_mode: Some(CollaborationMode::PairProgramming),
             ..
         } => {}
         other => {
@@ -1989,7 +1977,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming(_)),
+            collaboration_mode: Some(CollaborationMode::PairProgramming),
             ..
         } => {}
         other => {
@@ -2009,7 +1997,7 @@ async fn collab_mode_defaults_to_pair_programming_when_enabled() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming(_)),
+            collaboration_mode: Some(CollaborationMode::PairProgramming),
             ..
         } => {}
         other => {
@@ -2024,7 +2012,7 @@ async fn collab_mode_enabling_sets_pair_programming_default() {
     chat.set_feature_enabled(Feature::CollaborationModes, true);
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::PairProgramming(_)
+        CollaborationMode::PairProgramming,
     ));
 }
 

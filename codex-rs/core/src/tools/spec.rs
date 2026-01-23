@@ -35,15 +35,8 @@ pub const APPLY_PATCH_TOOL_NAME: &str = "apply_patch";
 pub const SHELL_TOOL_NAME: &str = "shell";
 pub const SHELL_COMMAND_TOOL_NAME: &str = "shell_command";
 pub const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
-pub const WRITE_STDIN_TOOL_NAME: &str = "write_stdin";
 pub const LIST_DIR_TOOL_NAME: &str = "list_dir";
-pub const TEST_SYNC_TOOL_NAME: &str = "test_sync_tool";
-pub const LIST_MCP_RESOURCES_TOOL_NAME: &str = "list_mcp_resources";
-pub const LIST_MCP_RESOURCE_TEMPLATES_TOOL_NAME: &str = "list_mcp_resource_templates";
-pub const READ_MCP_RESOURCE_TOOL_NAME: &str = "read_mcp_resource";
 pub const TODO_WRITE_TOOL_NAME: &str = "todo_write";
-pub const BASH_OUTPUT_TOOL_NAME: &str = "bash_output";
-pub const KILL_SHELL_TOOL_NAME: &str = "kill_shell";
 pub const ENTER_PLAN_MODE_TOOL_NAME: &str = "enter_plan_mode";
 pub const EXIT_PLAN_MODE_TOOL_NAME: &str = "exit_plan_mode";
 pub const ASK_USER_QUESTION_TOOL_NAME: &str = "ask_user_question";
@@ -246,13 +239,6 @@ impl ToolsConfig {
             experimental_supported_tools: model_info.experimental_supported_tools.clone(),
             agent_configs,
         }
-    }
-
-    /// Set the agent descriptions for the Task tool.
-    /// This is typically called with configs from `AgentTypeManager::agent_configs()`.
-    pub fn with_agent_configs(mut self, configs: Vec<AgentTypeConfig>) -> Self {
-        self.agent_configs = Some(configs);
-        self
     }
 }
 

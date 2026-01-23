@@ -9,7 +9,6 @@ use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::Settings;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_protocol::user_input::UserInput;
@@ -132,11 +131,7 @@ async fn request_user_input_round_trip_resolves_pending() -> anyhow::Result<()> 
             model: session_model,
             effort: None,
             summary: ReasoningSummary::Auto,
-            collaboration_mode: Some(CollaborationMode::Plan(Settings {
-                model: session_configured.model.clone(),
-                reasoning_effort: None,
-                developer_instructions: None,
-            })),
+            collaboration_mode: Some(CollaborationMode::Plan),
         })
         .await?;
 
@@ -183,7 +178,7 @@ async fn request_user_input_round_trip_resolves_pending() -> anyhow::Result<()> 
 
 async fn assert_request_user_input_rejected<F>(mode_name: &str, build_mode: F) -> anyhow::Result<()>
 where
-    F: FnOnce(String) -> CollaborationMode,
+    F: FnOnce() -> CollaborationMode,
 {
     skip_if_no_network!(Ok(()));
 
@@ -234,7 +229,7 @@ where
     let second_mock = responses::mount_sse_once(&server, second_response).await;
 
     let session_model = session_configured.model.clone();
-    let collaboration_mode = build_mode(session_model.clone());
+    let collaboration_mode = build_mode();
 
     codex
         .submit(Op::UserTurn {
@@ -268,24 +263,5 @@ where
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn request_user_input_rejected_in_execute_mode() -> anyhow::Result<()> {
-    assert_request_user_input_rejected("Execute", |model| {
-        CollaborationMode::Execute(Settings {
-            model,
-            reasoning_effort: None,
-            developer_instructions: None,
-        })
-    })
-    .await
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn request_user_input_rejected_in_custom_mode() -> anyhow::Result<()> {
-    assert_request_user_input_rejected("Custom", |model| {
-        CollaborationMode::Custom(Settings {
-            model,
-            reasoning_effort: None,
-            developer_instructions: None,
-        })
-    })
-    .await
+    assert_request_user_input_rejected("Execute", || CollaborationMode::Execute).await
 }

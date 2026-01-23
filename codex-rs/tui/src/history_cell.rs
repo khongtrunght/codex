@@ -1047,10 +1047,9 @@ impl SessionHeaderHistoryCell {
             return None;
         }
         match &self.collaboration_mode {
-            CollaborationMode::Plan(_) => Some("Plan"),
-            CollaborationMode::PairProgramming(_) => Some("Pair Programming"),
-            CollaborationMode::Execute(_) => Some("Execute"),
-            CollaborationMode::Custom(_) => None,
+            CollaborationMode::Plan => Some("Plan"),
+            CollaborationMode::PairProgramming => Some("Pair Programming"),
+            CollaborationMode::Execute => Some("Execute"),
         }
     }
 
@@ -1884,7 +1883,6 @@ mod tests {
     use codex_core::config::types::McpServerTransportConfig;
     use codex_core::protocol::McpAuthStatus;
     use codex_protocol::config_types::CollaborationMode;
-    use codex_protocol::config_types::Settings;
     use codex_protocol::parse_command::ParsedCommand;
     use dirs::home_dir;
     use pretty_assertions::assert_eq;
@@ -2342,11 +2340,7 @@ mod tests {
             std::env::temp_dir(),
             "test",
             false,
-            CollaborationMode::Custom(Settings {
-                model: "gpt-4o".to_string(),
-                reasoning_effort: Some(ReasoningEffortConfig::High),
-                developer_instructions: None,
-            }),
+            CollaborationMode::Execute,
         );
 
         let lines = render_lines(&cell.display_lines(80));

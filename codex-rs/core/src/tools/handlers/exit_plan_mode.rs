@@ -126,10 +126,9 @@ pub fn generate_approval_message(
         r#"User has approved the plan. There is nothing else needed from you now. Please respond with "ok""#.to_string()
     } else {
         let mode_name = match target_mode {
-            CollaborationMode::PairProgramming(_) => "pair programming",
-            CollaborationMode::Execute(_) => "execute",
-            CollaborationMode::Plan(_) => "plan",
-            CollaborationMode::Custom(_) => "custom",
+            CollaborationMode::PairProgramming => "pair programming",
+            CollaborationMode::Execute => "execute",
+            CollaborationMode::Plan => "plan",
         };
         format!(
             r#"User has approved your plan and selected {mode_name} mode. You can now start coding. Start with updating your todo list if applicable

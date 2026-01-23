@@ -1734,9 +1734,7 @@ impl App {
                 self.chat_widget.set_model(&model);
             }
             AppEvent::UpdateCollaborationMode(mode) => {
-                let model = mode.model().to_string();
                 self.chat_widget.set_collaboration_mode(mode);
-                self.chat_widget.set_model(&model);
             }
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
@@ -2797,13 +2795,7 @@ mod tests {
                 event,
                 is_first,
                 false,
-                codex_protocol::config_types::CollaborationMode::Custom(
-                    codex_protocol::config_types::Settings {
-                        model: "gpt-test".to_string(),
-                        reasoning_effort: None,
-                        developer_instructions: None,
-                    },
-                ),
+                codex_protocol::config_types::CollaborationMode::Execute,
             )) as Arc<dyn HistoryCell>
         };
 
