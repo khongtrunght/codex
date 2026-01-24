@@ -58,14 +58,12 @@ impl CompactBoundaryCell {
         lines.push(Line::from(divider_line).dim());
 
         // Show summary when in verbose mode
-        if verbose {
-            if let Some(summary) = self.summary.as_ref() {
-                lines.push(Line::from("").dim());
-                for line in summary.lines() {
-                    lines.push(Line::from(line.to_string()).dim());
-                }
-                lines.push(Line::from("").dim());
+        if verbose && let Some(summary) = self.summary.as_ref() {
+            lines.push(Line::from("").dim());
+            for line in summary.lines() {
+                lines.push(Line::from(line.to_string()).dim());
             }
+            lines.push(Line::from("").dim());
         }
 
         // Restored files

@@ -120,6 +120,14 @@ impl SubAgentCell {
         self.agents.iter().any(|a| !a.is_completed())
     }
 
+    /// Get thread IDs of all running agents in this cell.
+    pub(crate) fn running_thread_ids(&self) -> impl Iterator<Item = ThreadId> + '_ {
+        self.agents
+            .iter()
+            .filter(|a| !a.is_completed())
+            .filter_map(|a| a.thread_id)
+    }
+
     /// Get the start time of the first active agent (for spinner).
     pub(crate) fn active_start_time(&self) -> Option<Instant> {
         self.agents
@@ -173,5 +181,16 @@ impl SubAgentCell {
             agents: entries,
             animations_enabled,
         })
+    }
+
+    /// Mark all agents in this cell as interrupted (session ended before completion).
+    /// Used when resuming a session where subagents were still running.
+    pub(crate) fn mark_interrupted(&mut self) {
+        for agent in &mut self.agents {
+            if !agent.is_completed() {
+                agent.status = SubAgentStatus::Error("Session interrupted".to_string());
+                agent.duration = agent.start_time.map(|st| st.elapsed());
+            }
+        }
     }
 }

@@ -48,7 +48,11 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::ExitedReviewMode(_)
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::UndoCompleted(_)
-        | EventMsg::TurnAborted(_) => true,
+        | EventMsg::TurnAborted(_)
+        // SubAgent events are persisted for resume support
+        | EventMsg::SubAgentSpawnBegin(_)
+        | EventMsg::SubAgentSpawnEnd(_)
+        | EventMsg::SubAgentComplete(_) => true,
         EventMsg::Error(_)
         | EventMsg::Warning(_)
         | EventMsg::TurnStarted(_)
@@ -101,10 +105,79 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::CollabWaitingEnd(_)
         | EventMsg::CollabCloseBegin(_)
         | EventMsg::CollabCloseEnd(_)
-        | EventMsg::SubAgentSpawnBegin(_)
-        | EventMsg::SubAgentSpawnEnd(_)
-        | EventMsg::SubAgentComplete(_)
         | EventMsg::ExitPlanModeApprovalRequest(_)
         | EventMsg::ExitedPlanMode(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_protocol::ThreadId;
+    use codex_protocol::protocol::AgentStatus;
+    use codex_protocol::protocol::SubAgentBeginEvent;
+    use codex_protocol::protocol::SubAgentCompleteEvent;
+    use codex_protocol::protocol::SubAgentEndEvent;
+
+    #[test]
+    fn subagent_spawn_begin_is_persisted() {
+        let event = EventMsg::SubAgentSpawnBegin(SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test agent".to_string(),
+            prompt: "Do something".to_string(),
+            sender_thread_id: ThreadId::new(),
+            resumed: false,
+        });
+        assert!(
+            should_persist_event_msg(&event),
+            "SubAgentSpawnBegin should be persisted for resume support"
+        );
+    }
+
+    #[test]
+    fn subagent_spawn_end_is_persisted() {
+        let event = EventMsg::SubAgentSpawnEnd(SubAgentEndEvent {
+            call_id: "call-1".to_string(),
+            sender_thread_id: ThreadId::new(),
+            new_thread_id: Some(ThreadId::new()),
+            prompt: "Do something".to_string(),
+            status: AgentStatus::Running,
+        });
+        assert!(
+            should_persist_event_msg(&event),
+            "SubAgentSpawnEnd should be persisted for resume support"
+        );
+    }
+
+    #[test]
+    fn subagent_complete_is_persisted() {
+        let event = EventMsg::SubAgentComplete(SubAgentCompleteEvent {
+            call_id: "call-1".to_string(),
+            sender_thread_id: ThreadId::new(),
+            agent_thread_id: ThreadId::new(),
+            status: AgentStatus::Completed(Some("Done".to_string())),
+        });
+        assert!(
+            should_persist_event_msg(&event),
+            "SubAgentComplete should be persisted for resume support"
+        );
+    }
+
+    #[test]
+    fn subagent_events_in_rollout_item_are_persisted() {
+        let begin_event = EventMsg::SubAgentSpawnBegin(SubAgentBeginEvent {
+            call_id: "call-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Test".to_string(),
+            prompt: "prompt".to_string(),
+            sender_thread_id: ThreadId::new(),
+            resumed: false,
+        });
+        let item = RolloutItem::EventMsg(begin_event);
+        assert!(
+            is_persisted_response_item(&item),
+            "RolloutItem containing SubAgent event should be persisted"
+        );
     }
 }

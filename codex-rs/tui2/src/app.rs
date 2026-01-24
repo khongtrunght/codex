@@ -1687,6 +1687,12 @@ impl App {
             AppEvent::SubscribeSubAgentThread(thread_id) => {
                 self.subscribe_to_subagent_thread(thread_id);
             }
+            AppEvent::LoadSubAgentHistory { call_id, thread_id } => {
+                self.load_subagent_history(call_id, thread_id);
+            }
+            AppEvent::SubAgentHistoryLoaded { call_id, events } => {
+                self.chat_widget.populate_subagent_history(call_id, events);
+            }
             AppEvent::SubAgentOp { thread_id, op } => {
                 self.submit_op_to_subagent(thread_id, op);
             }
@@ -1699,7 +1705,16 @@ impl App {
             AppEvent::FatalExitRequest(message) => {
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }
-            AppEvent::CodexOp(op) => self.chat_widget.submit_op(op),
+            AppEvent::CodexOp(op) => {
+                // When interrupting the main agent, also interrupt foreground subagents
+                if matches!(op, Op::Interrupt) {
+                    let subagent_thread_ids = self.chat_widget.running_subagent_thread_ids();
+                    for thread_id in subagent_thread_ids {
+                        self.submit_op_to_subagent(thread_id, Op::Interrupt);
+                    }
+                }
+                self.chat_widget.submit_op(op);
+            }
             AppEvent::DiffResult(text) => {
                 // Clear the in-progress state in the bottom pane
                 self.chat_widget.on_diff_complete();
@@ -2227,6 +2242,41 @@ impl App {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to get subagent thread {thread_id}: {e}");
+                }
+            }
+        });
+    }
+
+    /// Load a subagent's rollout history on resume and populate the cell with events.
+    fn load_subagent_history(&self, call_id: String, thread_id: ThreadId) {
+        let codex_home = self.chat_widget.config_ref().codex_home.clone();
+        let app_event_tx = self.app_event_tx.clone();
+
+        tokio::spawn(async move {
+            // Find the subagent's rollout file by thread_id
+            let thread_id_str = thread_id.to_string();
+            match codex_core::find_thread_path_by_id_str(&codex_home, &thread_id_str).await {
+                Ok(Some(path)) => {
+                    // Load events from the rollout file
+                    match codex_core::RolloutRecorder::get_rollout_history(&path).await {
+                        Ok(history) => {
+                            if let Some(events) = history.get_event_msgs() {
+                                app_event_tx
+                                    .send(AppEvent::SubAgentHistoryLoaded { call_id, events });
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to load subagent rollout history for {thread_id}: {e}"
+                            );
+                        }
+                    }
+                }
+                Ok(None) => {
+                    tracing::debug!("No rollout file found for subagent {thread_id}");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to find subagent rollout path for {thread_id}: {e}");
                 }
             }
         });

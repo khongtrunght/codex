@@ -2416,13 +2416,39 @@ impl ChatWidget {
                 continue;
             }
             // `id: None` indicates a synthetic/fake id coming from replay.
-            self.dispatch_event_msg(None, msg, true);
+            self.dispatch_event_msg(None, msg);
         }
+
+        // After replay, any subagents still in self.subagents were interrupted
+        // (no SubAgentComplete event). Move them to history with error status.
+        self.finalize_interrupted_subagents();
+    }
+
+    /// Move any remaining active subagents to history with interrupted status.
+    /// Called after replay to handle sessions that were interrupted mid-execution.
+    fn finalize_interrupted_subagents(&mut self) {
+        if self.subagents.is_empty() {
+            return;
+        }
+
+        // Mark all remaining subagents as interrupted
+        for cell in self.subagents.values_mut() {
+            cell.mark_interrupted();
+        }
+
+        // Move them to history
+        let cells: Vec<_> = self.subagents.drain().map(|(_, c)| c).collect();
+        if let Some(grouped) = SubAgentCell::merge(cells) {
+            self.add_to_history(grouped);
+        }
+
+        // Clean up thread mappings
+        self.thread_to_call_id.clear();
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
         let Event { id, msg } = event;
-        self.dispatch_event_msg(Some(id), msg, false);
+        self.dispatch_event_msg(Some(id), msg);
     }
 
     /// Dispatch a protocol `EventMsg` to the appropriate handler.
@@ -2430,7 +2456,8 @@ impl ChatWidget {
     /// `id` is `Some` for live events and `None` for replayed events from
     /// `replay_initial_messages()`. Callers should treat `None` as a "fake" id
     /// that must not be used to correlate follow-up actions.
-    fn dispatch_event_msg(&mut self, id: Option<String>, msg: EventMsg, from_replay: bool) {
+    fn dispatch_event_msg(&mut self, id: Option<String>, msg: EventMsg) {
+        let from_replay = id.is_none();
         let is_stream_error = matches!(&msg, EventMsg::StreamError(_));
         if !is_stream_error {
             self.restore_retry_status_header_if_present();
@@ -2567,8 +2594,8 @@ impl ChatWidget {
             | EventMsg::ReasoningRawContentDelta(_)
             | EventMsg::RequestUserInput(_) => {}
             EventMsg::SubAgentSpawnBegin(ev) => self.on_subagent_begin(ev),
-            EventMsg::SubAgentSpawnEnd(ev) => self.on_subagent_end(ev),
-            EventMsg::SubAgentComplete(ev) => self.on_subagent_complete(ev),
+            EventMsg::SubAgentSpawnEnd(ev) => self.on_subagent_end(ev, from_replay),
+            EventMsg::SubAgentComplete(ev) => self.on_subagent_complete(ev, from_replay),
             EventMsg::ExitedPlanMode(ev) => {
                 // Update stored collaboration mode when exiting plan mode
                 self.set_collaboration_mode(ev.target_mode);
@@ -2646,27 +2673,38 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_subagent_end(&mut self, ev: SubAgentEndEvent) {
+    fn on_subagent_end(&mut self, ev: SubAgentEndEvent, from_replay: bool) {
         if let Some(cell) = self.subagents.get_mut(&ev.call_id)
             && let Some(thread_id) = ev.new_thread_id
         {
             cell.set_thread_id(thread_id);
             self.thread_to_call_id.insert(thread_id, ev.call_id.clone());
-            // Signal App to subscribe to this thread for live event streaming.
-            self.app_event_tx
-                .send(AppEvent::SubscribeSubAgentThread(thread_id));
+
+            if from_replay {
+                // On resume, load subagent's rollout history to populate events
+                self.app_event_tx.send(AppEvent::LoadSubAgentHistory {
+                    call_id: ev.call_id.clone(),
+                    thread_id,
+                });
+            } else {
+                // Live session - subscribe for streaming events
+                self.app_event_tx
+                    .send(AppEvent::SubscribeSubAgentThread(thread_id));
+            }
         }
         self.request_redraw();
     }
 
-    fn on_subagent_complete(&mut self, ev: SubAgentCompleteEvent) {
+    fn on_subagent_complete(&mut self, ev: SubAgentCompleteEvent, from_replay: bool) {
         // Mark the cell as completed
         if let Some(cell) = self.subagents.get_mut(&ev.call_id) {
             cell.complete_with_status(&ev.status);
         }
 
-        // Clean up thread mapping
-        self.thread_to_call_id.remove(&ev.agent_thread_id);
+        // Clean up thread mapping (only for live sessions, not replay)
+        if !from_replay {
+            self.thread_to_call_id.remove(&ev.agent_thread_id);
+        }
 
         // When ALL subagents completed, group and add to history
         if self.subagents.values().all(SubAgentCell::is_completed) {
@@ -2697,6 +2735,16 @@ impl ChatWidget {
             && let Some(cell) = self.subagents.get_mut(&call_id)
         {
             cell.add_event(event.msg);
+            self.request_redraw();
+        }
+    }
+
+    /// Populate a subagent cell with events loaded from its rollout file on resume.
+    pub(crate) fn populate_subagent_history(&mut self, call_id: String, events: Vec<EventMsg>) {
+        if let Some(cell) = self.subagents.get_mut(&call_id) {
+            for event in events {
+                cell.add_event(event);
+            }
             self.request_redraw();
         }
     }
@@ -4421,6 +4469,18 @@ impl ChatWidget {
         if let Err(e) = self.codex_op_tx.send(op) {
             tracing::error!("failed to submit op: {e}");
         }
+    }
+
+    /// Get thread IDs of all running subagents.
+    ///
+    /// Used when interrupting the main agent to also interrupt subagents.
+    /// Currently all subagents are foreground. When background agents are added,
+    /// this can be filtered to only return foreground agents.
+    pub(crate) fn running_subagent_thread_ids(&self) -> Vec<ThreadId> {
+        self.subagents
+            .values()
+            .flat_map(SubAgentCell::running_thread_ids)
+            .collect()
     }
 
     fn on_list_mcp_tools(&mut self, ev: McpListToolsResponseEvent) {

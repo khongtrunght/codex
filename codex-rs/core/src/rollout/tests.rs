@@ -1129,3 +1129,166 @@ async fn test_model_provider_filter_selects_only_matching_sessions() -> Result<(
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_subagent_events_are_persisted_and_loaded_on_resume() -> Result<()> {
+    use crate::rollout::recorder::RolloutRecorder;
+    use codex_protocol::protocol::AgentStatus;
+    use codex_protocol::protocol::InitialHistory;
+    use codex_protocol::protocol::SubAgentBeginEvent;
+    use codex_protocol::protocol::SubAgentCompleteEvent;
+    use codex_protocol::protocol::SubAgentEndEvent;
+
+    let temp = TempDir::new().unwrap();
+    let home = temp.path();
+
+    let ts = "2025-06-15T10-30-00";
+    let uuid = Uuid::from_u128(999);
+    let day_dir = home.join("sessions").join("2025").join("06").join("15");
+    fs::create_dir_all(&day_dir)?;
+    let file_path = day_dir.join(format!("rollout-{ts}-{uuid}.jsonl"));
+    let mut file = File::create(&file_path)?;
+
+    let conversation_id = ThreadId::from_string(&uuid.to_string())?;
+    let subagent_thread_id = ThreadId::new();
+
+    // Write session meta
+    let meta_line = RolloutLine {
+        timestamp: ts.to_string(),
+        item: RolloutItem::SessionMeta(SessionMetaLine {
+            meta: SessionMeta {
+                id: conversation_id,
+                forked_from_id: None,
+                timestamp: ts.to_string(),
+                cwd: ".".into(),
+                originator: "test".into(),
+                cli_version: "test".into(),
+                source: SessionSource::VSCode,
+                model_provider: Some("test-provider".into()),
+                base_instructions: None,
+            },
+            git: None,
+        }),
+    };
+    writeln!(file, "{}", serde_json::to_string(&meta_line)?)?;
+
+    // Write a user message
+    let user_msg_line = RolloutLine {
+        timestamp: ts.to_string(),
+        item: RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            message: "spawn a task".into(),
+            images: None,
+            text_elements: Vec::new(),
+            local_images: Vec::new(),
+        })),
+    };
+    writeln!(file, "{}", serde_json::to_string(&user_msg_line)?)?;
+
+    // Write SubAgentSpawnBegin event
+    let subagent_begin_line = RolloutLine {
+        timestamp: ts.to_string(),
+        item: RolloutItem::EventMsg(EventMsg::SubAgentSpawnBegin(SubAgentBeginEvent {
+            call_id: "task-call-1".to_string(),
+            agent_type: "explore".to_string(),
+            description: "Explore the codebase".to_string(),
+            prompt: "Find all test files".to_string(),
+            sender_thread_id: conversation_id,
+            resumed: false,
+        })),
+    };
+    writeln!(file, "{}", serde_json::to_string(&subagent_begin_line)?)?;
+
+    // Write SubAgentSpawnEnd event
+    let subagent_end_line = RolloutLine {
+        timestamp: ts.to_string(),
+        item: RolloutItem::EventMsg(EventMsg::SubAgentSpawnEnd(SubAgentEndEvent {
+            call_id: "task-call-1".to_string(),
+            sender_thread_id: conversation_id,
+            new_thread_id: Some(subagent_thread_id),
+            prompt: "Find all test files".to_string(),
+            status: AgentStatus::Running,
+        })),
+    };
+    writeln!(file, "{}", serde_json::to_string(&subagent_end_line)?)?;
+
+    // Write SubAgentComplete event
+    let subagent_complete_line = RolloutLine {
+        timestamp: ts.to_string(),
+        item: RolloutItem::EventMsg(EventMsg::SubAgentComplete(SubAgentCompleteEvent {
+            call_id: "task-call-1".to_string(),
+            sender_thread_id: conversation_id,
+            agent_thread_id: subagent_thread_id,
+            status: AgentStatus::Completed(Some("Found 42 test files".to_string())),
+        })),
+    };
+    writeln!(file, "{}", serde_json::to_string(&subagent_complete_line)?)?;
+
+    drop(file);
+
+    // Load the rollout history
+    let history = RolloutRecorder::get_rollout_history(&file_path).await?;
+
+    // Verify it's a resumed history
+    assert!(
+        matches!(history, InitialHistory::Resumed(_)),
+        "expected InitialHistory::Resumed"
+    );
+
+    // Extract initial messages using the InitialHistory method
+    let events = history
+        .get_event_msgs()
+        .expect("expected initial_messages to be present");
+
+    // Verify SubAgent events are included
+    let subagent_begin_count = events
+        .iter()
+        .filter(|e| matches!(e, EventMsg::SubAgentSpawnBegin(_)))
+        .count();
+    let subagent_end_count = events
+        .iter()
+        .filter(|e| matches!(e, EventMsg::SubAgentSpawnEnd(_)))
+        .count();
+    let subagent_complete_count = events
+        .iter()
+        .filter(|e| matches!(e, EventMsg::SubAgentComplete(_)))
+        .count();
+
+    assert_eq!(
+        subagent_begin_count, 1,
+        "SubAgentSpawnBegin should be in initial_messages"
+    );
+    assert_eq!(
+        subagent_end_count, 1,
+        "SubAgentSpawnEnd should be in initial_messages"
+    );
+    assert_eq!(
+        subagent_complete_count, 1,
+        "SubAgentComplete should be in initial_messages"
+    );
+
+    // Verify the SubAgentSpawnEnd contains the correct thread_id
+    let subagent_end = events
+        .iter()
+        .find_map(|e| match e {
+            EventMsg::SubAgentSpawnEnd(ev) => Some(ev),
+            _ => None,
+        })
+        .expect("SubAgentSpawnEnd event");
+    assert_eq!(subagent_end.new_thread_id, Some(subagent_thread_id));
+    assert_eq!(subagent_end.call_id, "task-call-1");
+
+    // Verify the SubAgentComplete has the final status
+    let subagent_complete = events
+        .iter()
+        .find_map(|e| match e {
+            EventMsg::SubAgentComplete(ev) => Some(ev),
+            _ => None,
+        })
+        .expect("SubAgentComplete event");
+    assert!(matches!(
+        &subagent_complete.status,
+        AgentStatus::Completed(Some(msg)) if msg == "Found 42 test files"
+    ));
+
+    Ok(())
+}

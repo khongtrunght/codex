@@ -60,6 +60,18 @@ pub(crate) enum AppEvent {
         op: Op,
     },
 
+    /// Request to load subagent history from rollout file on resume.
+    LoadSubAgentHistory {
+        call_id: String,
+        thread_id: ThreadId,
+    },
+
+    /// Loaded subagent events ready to populate.
+    SubAgentHistoryLoaded {
+        call_id: String,
+        events: Vec<codex_core::protocol::EventMsg>,
+    },
+
     /// Start a new session.
     NewSession,
 
