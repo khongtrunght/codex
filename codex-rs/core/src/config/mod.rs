@@ -1346,6 +1346,19 @@ impl Config {
                 }
             }
         }
+
+        // Add plans directory to writable roots
+        if let SandboxPolicy::WorkspaceWrite { writable_roots, .. } = &mut sandbox_policy {
+            let plans_dir = codex_home.join("plans");
+            if let Ok(plans_path) = AbsolutePathBuf::from_absolute_path(&plans_dir)
+                && !writable_roots
+                    .iter()
+                    .any(|existing| existing == &plans_path)
+            {
+                writable_roots.push(plans_path);
+            }
+        }
+
         let approval_policy = approval_policy_override
             .or(config_profile.approval_policy)
             .or(cfg.approval_policy)
@@ -2190,6 +2203,47 @@ trust_level = "trusted"
                         1,
                         "expected single writable root entry for {}",
                         expected_backend.display()
+                    );
+                }
+                other => panic!("expected workspace-write policy, got {other:?}"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn plans_directory_added_to_writable_roots() -> std::io::Result<()> {
+        let codex_home = TempDir::new()?;
+        let workspace = codex_home.path().join("workspace");
+        std::fs::create_dir_all(&workspace)?;
+
+        let overrides = ConfigOverrides {
+            cwd: Some(workspace),
+            sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+            ..Default::default()
+        };
+
+        let config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            overrides,
+            codex_home.path().to_path_buf(),
+        )?;
+
+        let expected_plans_dir =
+            AbsolutePathBuf::try_from(codex_home.path().join("plans")).unwrap();
+
+        if cfg!(target_os = "windows") {
+            // On Windows, workspace-write is downgraded to read-only
+            assert!(config.forced_auto_mode_downgraded_on_windows);
+        } else {
+            match config.sandbox_policy.get() {
+                SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
+                    assert!(
+                        writable_roots.contains(&expected_plans_dir),
+                        "expected writable_roots to contain plans directory: {}\nactual writable_roots: {:?}",
+                        expected_plans_dir.display(),
+                        writable_roots
                     );
                 }
                 other => panic!("expected workspace-write policy, got {other:?}"),
