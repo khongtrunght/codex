@@ -42,11 +42,13 @@ impl ReadFileState {
     }
 
     /// Get number of tracked files.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.files.len()
     }
 
     /// Check if no files are tracked.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }

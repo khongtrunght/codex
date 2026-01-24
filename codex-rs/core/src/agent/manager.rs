@@ -57,13 +57,6 @@ impl DeveloperPrompt for DeveloperPromptKind {
 }
 
 impl AgentTypeManager {
-    /// Create a new empty registry.
-    pub fn new() -> Self {
-        Self {
-            agents: HashMap::new(),
-        }
-    }
-
     /// Create registry with built-in default agent types.
     pub fn with_defaults() -> Self {
         let mut agents = HashMap::new();
@@ -148,6 +141,8 @@ impl AgentTypeManager {
     /// Merge user-defined agent types from config.
     ///
     /// User-defined agents override built-in agents with the same key.
+    // TODO: Wire up to config loading for user-defined agent types in config.toml
+    #[allow(dead_code)]
     pub fn merge_from_config(&mut self, user_agents: HashMap<String, AgentTypeConfig>) {
         for (key, mut config) in user_agents {
             // Ensure name is set if not provided
@@ -186,6 +181,8 @@ impl AgentTypeManager {
             .collect()
     }
     /// Get all agent type names (including hidden ones).
+    // TODO: Useful for debugging/introspection
+    #[allow(dead_code)]
     pub fn all_names(&self) -> Vec<&str> {
         self.agents.keys().map(String::as_str).collect()
     }
@@ -250,16 +247,6 @@ pub struct AgentTypeConfig {
 }
 
 impl AgentTypeConfig {
-    /// Render developer instructions with the given tool configuration.
-    ///
-    /// Returns `None` if no developer instructions are configured.
-    /// The tool names in the rendered prompt will match the model's capabilities.
-    pub fn render_developer_instructions<T: ToolNames>(&self, tools: &T) -> Option<String> {
-        self.developer_instructions
-            .as_ref()
-            .map(|prompt| prompt.render(tools))
-    }
-
     pub fn apply_to_config(
         self,
         config: &mut Config,
