@@ -9,6 +9,7 @@ use crate::prompt_template::ExploreAgentPrompt;
 use crate::prompt_template::GeneralMainPrompt;
 use crate::prompt_template::PlanSubagentPrompt;
 use crate::prompt_template::ToolNames;
+use crate::protocol::SandboxPolicy;
 use crate::tools::spec::APPLY_PATCH_TOOL_NAME;
 use crate::tools::spec::EDIT_FILE_TOOL_NAME;
 use crate::tools::spec::GLOB_TOOL_NAME;
@@ -74,6 +75,7 @@ impl AgentTypeManager {
                 fork_context: false,
                 disallowed_tools: None,
                 is_built_in: true,
+                read_only: false,
             },
         );
 
@@ -99,6 +101,7 @@ impl AgentTypeManager {
                     APPLY_PATCH_TOOL_NAME.to_string(),
                 ]),
                 is_built_in: true,
+                read_only: true,
             },
         );
 
@@ -125,6 +128,7 @@ impl AgentTypeManager {
                 fork_context: false,
                 disallowed_tools: None, // Explicit tools list is already restrictive
                 is_built_in: true,
+                read_only: true,
             },
         );
 
@@ -229,6 +233,10 @@ pub struct AgentTypeConfig {
     /// Built-in agents have fewer restrictions than user-defined agents.
     #[serde(default)]
     pub is_built_in: bool,
+
+    /// Whether to force a read-only sandbox policy.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 impl AgentTypeConfig {
@@ -256,7 +264,15 @@ impl AgentTypeConfig {
                 .push_str(&format!("\n\n{prompt}"));
         }
 
-        //TODO: read only and tools filter
+        // Apply read-only sandbox policy if configured
+        if self.read_only {
+            config
+                .sandbox_policy
+                .set(SandboxPolicy::new_read_only_policy())
+                .map_err(|err| format!("sandbox_policy is invalid: {err}"))?;
+        }
+
+        //TODO: tools filter
 
         Ok(())
     }
