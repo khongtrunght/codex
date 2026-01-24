@@ -12,11 +12,21 @@ use crate::prompt_template::ToolNames;
 use crate::protocol::SandboxPolicy;
 use crate::tools::spec::APPLY_PATCH_TOOL_NAME;
 use crate::tools::spec::EDIT_FILE_TOOL_NAME;
+use crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME;
 use crate::tools::spec::GLOB_TOOL_NAME;
 use crate::tools::spec::GREP_FILES_TOOL_NAME;
 use crate::tools::spec::LIST_DIR_TOOL_NAME;
 use crate::tools::spec::READ_FILE_TOOL_NAME;
+use crate::tools::spec::TASK_TOOL_NAME;
+use crate::tools::spec::ToolsConfig;
 use crate::tools::spec::WRITE_FILE_TOOL_NAME;
+
+/// Tools that are globally banned for all subagents.
+/// These tools are not available to any subagent regardless of configuration.
+const SUBAGENT_BANNED_TOOLS: &[&str] = &[
+    EXIT_PLAN_MODE_TOOL_NAME, // Only the main agent can exit plan mode
+    TASK_TOOL_NAME,           // Prevent nested task spawning
+];
 
 pub struct AgentTypeManager {
     agents: HashMap<String, AgentTypeConfig>,
@@ -253,11 +263,11 @@ impl AgentTypeConfig {
     pub fn apply_to_config(
         self,
         config: &mut Config,
-        tools_config: impl ToolNames,
+        tools_config: &mut ToolsConfig,
     ) -> Result<(), String> {
         // Apply developer instructions
         if let Some(developer_instructions) = self.developer_instructions {
-            let prompt = developer_instructions.render(&tools_config);
+            let prompt = developer_instructions.render(tools_config);
             config
                 .developer_instructions
                 .get_or_insert_with(String::new)
@@ -272,7 +282,16 @@ impl AgentTypeConfig {
                 .map_err(|err| format!("sandbox_policy is invalid: {err}"))?;
         }
 
-        //TODO: tools filter
+        // Apply tool filtering for subagents
+        // 1. Add globally banned tools
+        for tool in SUBAGENT_BANNED_TOOLS {
+            tools_config.disabled_tools.push((*tool).to_string());
+        }
+
+        // 2. Add agent-specific disallowed tools
+        if let Some(disallowed) = &self.disallowed_tools {
+            tools_config.disabled_tools.extend(disallowed.clone());
+        }
 
         Ok(())
     }

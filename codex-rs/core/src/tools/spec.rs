@@ -81,6 +81,9 @@ pub(crate) struct ToolsConfig {
     /// Descriptions of available agent types for the Task tool.
     /// If None, the task tool will not be registered.
     pub agent_configs: Option<Vec<AgentTypeConfig>>,
+    /// Tools to exclude from registration. Used by subagents to filter out
+    /// globally banned tools and agent-specific disallowed tools.
+    pub disabled_tools: Vec<String>,
 }
 
 impl Default for ToolsConfig {
@@ -93,6 +96,7 @@ impl Default for ToolsConfig {
             collaboration_modes_tools: false,
             experimental_supported_tools: vec![],
             agent_configs: None,
+            disabled_tools: vec![],
         }
     }
 }
@@ -238,6 +242,7 @@ impl ToolsConfig {
             collaboration_modes_tools: include_collaboration_modes_tools,
             experimental_supported_tools: model_info.experimental_supported_tools.clone(),
             agent_configs,
+            disabled_tools: vec![],
         }
     }
 }
@@ -1810,7 +1815,8 @@ pub(crate) fn build_specs(
         }
     }
 
-    builder
+    // Filter out disabled tools
+    builder.filter_disabled(&config.disabled_tools)
 }
 
 #[cfg(test)]

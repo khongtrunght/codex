@@ -122,7 +122,7 @@ impl ToolHandler for TaskHandler {
             .await;
 
         // set config base on agent_type and the model_info recently get
-        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        let mut tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_info: &task_model_info,
             features: &config.features,
             web_search_mode: config.web_search_mode,
@@ -130,7 +130,7 @@ impl ToolHandler for TaskHandler {
         });
 
         agent_type
-            .apply_to_config(&mut config, &tools_config)
+            .apply_to_config(&mut config, &mut tools_config)
             .map_err(FunctionCallError::RespondToModel)?;
 
         // Spawn the agent

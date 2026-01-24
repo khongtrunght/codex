@@ -219,6 +219,21 @@ impl ToolRegistryBuilder {
     //     }
     // }
 
+    /// Filter out tools whose names are in the disabled set.
+    pub fn filter_disabled(mut self, disabled: &[String]) -> Self {
+        if disabled.is_empty() {
+            return self;
+        }
+        // Filter specs by name
+        self.specs
+            .retain(|configured| !disabled.contains(&configured.spec.name().to_string()));
+        // Filter handlers by name
+        for name in disabled {
+            self.handlers.remove(name);
+        }
+        self
+    }
+
     pub fn build(self) -> (Vec<ConfiguredToolSpec>, ToolRegistry) {
         let registry = ToolRegistry::new(self.handlers);
         (self.specs, registry)
