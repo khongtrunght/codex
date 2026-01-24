@@ -98,7 +98,9 @@ impl ToolHandler for ReadFileHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
-        let ToolInvocation { payload, .. } = invocation;
+        let ToolInvocation {
+            session, payload, ..
+        } = invocation;
 
         let arguments = match payload {
             ToolPayload::Function { arguments } => arguments,
@@ -145,6 +147,10 @@ impl ToolHandler for ReadFileHandler {
                 indentation::read_block(&path, offset, limit, indentation).await?
             }
         };
+
+        // Record file read for compaction recovery
+        session.record_file_read_path(&path).await;
+
         Ok(ToolOutput::Function {
             content: collected.join("\n"),
             content_items: None,
@@ -490,7 +496,11 @@ mod tests {
     use super::indentation::read_block;
     use super::slice::read;
     use super::*;
+    use crate::codex::make_session_and_context;
+    use crate::tools::context::ToolPayload;
+    use crate::tools::registry::ToolHandler;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
     use tempfile::NamedTempFile;
 
     #[tokio::test]
@@ -988,6 +998,66 @@ private:
                 "L23:     }".to_string(),
             ]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_file_handler_records_file_read_state() -> anyhow::Result<()> {
+        use crate::turn_diff_tracker::TurnDiffTracker;
+        use tokio::sync::Mutex;
+
+        let mut temp = NamedTempFile::new()?;
+        use std::io::Write as _;
+        write!(temp, "line1\nline2\nline3\n")?;
+        let file_path = temp.path().to_string_lossy().to_string();
+
+        let (session, turn_context) = make_session_and_context().await;
+        let session = Arc::new(session);
+        let turn_context = Arc::new(turn_context);
+        let tracker = Arc::new(Mutex::new(TurnDiffTracker::new()));
+
+        // Verify no files recorded initially
+        let initial_files = session
+            .with_state(|state| state.read_file_state.get_recent_files(10).len())
+            .await;
+        assert_eq!(initial_files, 0);
+
+        // Invoke the read_file handler
+        let handler = ReadFileHandler;
+        let invocation = ToolInvocation {
+            session: Arc::clone(&session),
+            turn: turn_context,
+            tracker,
+            payload: ToolPayload::Function {
+                arguments: serde_json::json!({
+                    "file_path": file_path,
+                    "offset": 1,
+                    "limit": 10
+                })
+                .to_string(),
+            },
+            call_id: "test-call".to_string(),
+            tool_name: "read_file".to_string(),
+        };
+
+        let result = handler.handle(invocation).await;
+        assert!(result.is_ok());
+
+        // Verify the file was recorded in read_file_state
+        let recorded_files = session
+            .with_state(|state| {
+                state
+                    .read_file_state
+                    .get_recent_files(10)
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .await;
+
+        assert_eq!(recorded_files.len(), 1);
+        assert!(recorded_files[0].ends_with(temp.path().file_name().unwrap()));
+
         Ok(())
     }
 }
