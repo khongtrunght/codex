@@ -24,7 +24,6 @@ pub enum AttachmentData {
     /// Collected when entering/re-entering plan mode.
     PlanMode {
         plan_file_path: String,
-        is_subagent: bool,
         plan_exists: bool,
     },
     /// Collected when re-entering plan mode after being in a different mode.
@@ -44,9 +43,8 @@ impl From<AttachmentData> for ResponseItem {
         match data {
             AttachmentData::PlanMode {
                 plan_file_path,
-                is_subagent,
                 plan_exists,
-            } => generate_plan_mode_items(&plan_file_path, is_subagent, plan_exists),
+            } => generate_plan_mode_items(&plan_file_path, plan_exists),
             AttachmentData::PlanModeReentry { plan_file_path } => {
                 generate_reentry_items(&plan_file_path)
             }
@@ -61,11 +59,7 @@ impl From<AttachmentData> for ResponseItem {
     }
 }
 
-fn generate_plan_mode_items(
-    plan_file_path: &str,
-    is_subagent: bool,
-    plan_exists: bool,
-) -> ResponseItem {
+fn generate_plan_mode_items(plan_file_path: &str, plan_exists: bool) -> ResponseItem {
     let plan_file_info = if plan_exists {
         format!(
             "A plan file already exists at {plan_file_path}. You can read it and make incremental edits to it."
@@ -74,14 +68,8 @@ fn generate_plan_mode_items(
         format!("No plan file exists yet. You should create your plan at {plan_file_path}.")
     };
 
-    let subagent_note = if is_subagent {
-        "\nNote: You are a subagent. Focus on your specific task."
-    } else {
-        ""
-    };
-
     let contents = format!(
-        "{SYSTEM_REMINDER_OPEN_TAG}\nPlan mode is active.{subagent_note}\n\n## Plan File Info:\n{plan_file_info}\n\n{COLLABORATION_MODE_PLAN}\n{SYSTEM_REMINDER_CLOSE_TAG}"
+        "{SYSTEM_REMINDER_OPEN_TAG}\nPlan mode is active.\n\n## Plan File Info:\n{plan_file_info}\n\n{COLLABORATION_MODE_PLAN}\n{SYSTEM_REMINDER_CLOSE_TAG}"
     );
 
     wrap_in_developer_message(&contents)
@@ -186,7 +174,6 @@ mod tests {
     fn test_plan_mode_new_plan() {
         let data = AttachmentData::PlanMode {
             plan_file_path: "/tmp/plan.md".to_string(),
-            is_subagent: false,
             plan_exists: false,
         };
 
@@ -207,7 +194,6 @@ mod tests {
     fn test_plan_mode_existing_plan() {
         let data = AttachmentData::PlanMode {
             plan_file_path: "/tmp/plan.md".to_string(),
-            is_subagent: false,
             plan_exists: true,
         };
 
@@ -215,25 +201,6 @@ mod tests {
             if let ContentItem::InputText { text } = &content[0] {
                 assert!(text.contains("already exists"));
                 assert!(text.contains("incremental edits"));
-            } else {
-                panic!("Expected InputText");
-            }
-        } else {
-            panic!("Expected Message");
-        }
-    }
-
-    #[test]
-    fn test_plan_mode_subagent() {
-        let data = AttachmentData::PlanMode {
-            plan_file_path: "/tmp/plan.md".to_string(),
-            is_subagent: true,
-            plan_exists: false,
-        };
-
-        if let ResponseItem::Message { content, .. } = data.into() {
-            if let ContentItem::InputText { text } = &content[0] {
-                assert!(text.contains("You are a subagent"));
             } else {
                 panic!("Expected InputText");
             }

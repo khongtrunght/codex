@@ -134,28 +134,6 @@ where
     pub multi_agent_mode: bool,
 }
 
-/// Template for legacy plan mode instructions.
-#[derive(Template)]
-#[template(path = "plan_mode/legacy.md")]
-pub struct PlanModeLegacyPrompt<T>
-where
-    T: ToolNames,
-{
-    pub tools: T,
-    pub is_subagent: bool,
-}
-
-/// Template for sub-agent plan mode instructions.
-#[derive(Template)]
-#[template(path = "plan_mode/subagent.md")]
-pub struct PlanModeSubagentPrompt<T>
-where
-    T: ToolNames,
-{
-    pub tools: T,
-    pub plan_file_info: String,
-}
-
 /// Template for plan mode reentry instructions.
 #[derive(Template)]
 #[template(path = "plan_mode/reentry.md")]

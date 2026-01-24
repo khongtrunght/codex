@@ -1558,11 +1558,6 @@ impl Session {
             .await
     }
 
-    /// Check if this is a plan mode subagent.
-    pub(crate) async fn is_plan_subagent(&self) -> bool {
-        self.with_state(SessionState::is_plan_subagent).await
-    }
-
     pub async fn resolve_elicitation(
         &self,
         server_name: String,

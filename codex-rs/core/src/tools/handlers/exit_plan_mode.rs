@@ -46,9 +46,6 @@ impl ToolHandler for ExitPlanModeHandler {
             }
         }
 
-        // Check if this is a subagent (affects response message)
-        let is_subagent = session.is_plan_subagent().await;
-
         // Get slug from session state (was set when entering plan mode)
         let slug = session.get_plan_slug().await.ok_or_else(|| {
             FunctionCallError::RespondToModel(
@@ -57,11 +54,11 @@ impl ToolHandler for ExitPlanModeHandler {
         })?;
 
         // Resolve plan file path using the slug
-        let plan_file_path = resolve_plan_file_path_with_slug(&slug, None);
+        let plan_file_path = resolve_plan_file_path_with_slug(&slug);
         let path_str = plan_file_path.to_string_lossy().to_string();
 
         // Read plan from file
-        let plan_content = extract_plan_from_file_with_slug(&slug, None)
+        let plan_content = extract_plan_from_file_with_slug(&slug)
             .await
             .ok_or_else(|| {
                 let error_template = ExitPlanModeNoFileError {
@@ -104,8 +101,7 @@ impl ToolHandler for ExitPlanModeHandler {
             .await;
 
         // Build response with plan data
-        let response_msg =
-            generate_approval_message(is_subagent, &target_mode, &plan_content, &path_str);
+        let response_msg = generate_approval_message(&target_mode, &plan_content, &path_str);
         Ok(ToolOutput::Function {
             content: response_msg,
             content_items: None,
@@ -115,29 +111,23 @@ impl ToolHandler for ExitPlanModeHandler {
 }
 
 /// Generate the tool result message after user approval.
-pub fn generate_approval_message(
-    is_subagent: bool,
+fn generate_approval_message(
     target_mode: &CollaborationMode,
     plan_content: &str,
     file_path: &str,
 ) -> String {
-    if is_subagent {
-        // Subagents should just acknowledge and let the parent handle things
-        r#"User has approved the plan. There is nothing else needed from you now. Please respond with "ok""#.to_string()
-    } else {
-        let mode_name = match target_mode {
-            CollaborationMode::PairProgramming => "pair programming",
-            CollaborationMode::Execute => "execute",
-            CollaborationMode::Plan => "plan",
-        };
-        format!(
-            r#"User has approved your plan and selected {mode_name} mode. You can now start coding. Start with updating your todo list if applicable
+    let mode_name = match target_mode {
+        CollaborationMode::PairProgramming => "pair programming",
+        CollaborationMode::Execute => "execute",
+        CollaborationMode::Plan => "plan",
+    };
+    format!(
+        r#"User has approved your plan and selected {mode_name} mode. You can now start coding. Start with updating your todo list if applicable
 
 Your plan has been saved to: {file_path}
 You can refer back to it if needed during implementation.
 
 ## Approved Plan:
 {plan_content}"#
-        )
-    }
+    )
 }

@@ -32,14 +32,8 @@ pub(crate) fn collect_plan_mode<'a>(
         }
 
         // Single lock acquisition to get all needed state
-        let (slug, is_subagent, history) = session
-            .with_state(|state| {
-                (
-                    state.plan_slug.clone(),
-                    state.is_plan_subagent,
-                    state.clone_history(),
-                )
-            })
+        let (slug, history) = session
+            .with_state(|state| (state.plan_slug.clone(), state.clone_history()))
             .await;
 
         // Need plan slug to be set
@@ -54,11 +48,10 @@ pub(crate) fn collect_plan_mode<'a>(
         }
 
         // Resolve slug to path
-        let plan_path = resolve_plan_file_path_with_slug(&slug, None);
+        let plan_path = resolve_plan_file_path_with_slug(&slug);
 
         vec![AttachmentData::PlanMode {
             plan_file_path: plan_path.to_string_lossy().into_owned(),
-            is_subagent,
             plan_exists: plan_path.exists(),
         }]
     })
@@ -93,7 +86,7 @@ pub(crate) fn collect_plan_mode_exit<'a>(
             .with_state_mut(|state| {
                 state.clear_plan_exit_flag();
                 state.plan_slug.as_ref().map(|slug| {
-                    resolve_plan_file_path_with_slug(slug, None)
+                    resolve_plan_file_path_with_slug(slug)
                         .to_string_lossy()
                         .into_owned()
                 })
@@ -168,7 +161,6 @@ mod tests {
             ResponseItem::Attachment {
                 data: AttachmentData::PlanMode {
                     plan_file_path: "/tmp/plan.md".to_string(),
-                    is_subagent: false,
                     plan_exists: true,
                 },
             },
@@ -199,7 +191,6 @@ mod tests {
             ResponseItem::Attachment {
                 data: AttachmentData::PlanMode {
                     plan_file_path: "/tmp/plan.md".to_string(),
-                    is_subagent: false,
                     plan_exists: true,
                 },
             },

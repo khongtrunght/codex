@@ -6,13 +6,14 @@
 //! ## Slug Format
 //!
 //! Slugs use the memorable format `{adjective}-{verb}-{noun}`:
-//! - Main session: `atomic-marinating-pumpkin.md`
-//! - Sub-agent: `atomic-marinating-pumpkin-agent-{agentId}.md`
+//! - Example: `atomic-marinating-pumpkin.md`
 //!
 //! ## Persistence
 //!
-//! The slug is stored in SessionModeContext and persisted with the session.
+//! The slug is stored in SessionState and persisted with the session.
 //! On resume, the slug is restored from the session state.
+//!
+//! Note: Subagents do not create plan files - only the main session manages plans.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -66,38 +67,23 @@ pub fn generate_unique_slug() -> String {
 ///
 /// # Arguments
 /// * `slug` - The memorable slug (e.g., "atomic-marinating-pumpkin")
-/// * `agent_id` - Optional agent ID for sub-agents
 ///
 /// # Returns
-/// - Main session: `~/.codex/plans/{slug}.md`
-/// - Sub-agent: `~/.codex/plans/{slug}-agent-{agentId}.md`
-pub fn resolve_plan_file_path_with_slug(slug: &str, agent_id: Option<&str>) -> PathBuf {
+/// Path: `~/.codex/plans/{slug}.md`
+pub fn resolve_plan_file_path_with_slug(slug: &str) -> PathBuf {
     let plans_dir = get_plans_dir();
-
-    match agent_id {
-        Some(aid) => {
-            // Agent context: {slug}-agent-{agentId}.md
-            plans_dir.join(format!("{slug}-agent-{aid}.md"))
-        }
-        None => {
-            // Main session: {slug}.md
-            plans_dir.join(format!("{slug}.md"))
-        }
-    }
+    plans_dir.join(format!("{slug}.md"))
 }
 
 /// Read plan content from file using a slug.
-pub async fn extract_plan_from_file_with_slug(
-    slug: &str,
-    agent_id: Option<&str>,
-) -> Option<String> {
-    let path = resolve_plan_file_path_with_slug(slug, agent_id);
+pub async fn extract_plan_from_file_with_slug(slug: &str) -> Option<String> {
+    let path = resolve_plan_file_path_with_slug(slug);
     fs::read_to_string(&path).await.ok()
 }
 
 /// Check if a plan file exists using a slug.
-pub fn plan_exists_with_slug(slug: &str, agent_id: Option<&str>) -> bool {
-    let path = resolve_plan_file_path_with_slug(slug, agent_id);
+pub fn plan_exists_with_slug(slug: &str) -> bool {
+    let path = resolve_plan_file_path_with_slug(slug);
     path.exists()
 }
 
@@ -106,7 +92,7 @@ pub fn plan_exists_with_slug(slug: &str, agent_id: Option<&str>) -> bool {
 /// Derives the plan file path from the plan slug stored in SessionState.
 pub(crate) fn is_plan_file_path(path: &Path, session_state: &SessionState) -> bool {
     if let Some(slug) = session_state.plan_slug() {
-        let plan_file_path = resolve_plan_file_path_with_slug(slug, None);
+        let plan_file_path = resolve_plan_file_path_with_slug(slug);
 
         // Simple path comparison first (fast path)
         if path == plan_file_path {
@@ -150,20 +136,9 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_plan_file_path_with_slug_main() {
-        let path = resolve_plan_file_path_with_slug("test-happy-slug", None);
+    fn test_resolve_plan_file_path_with_slug() {
+        let path = resolve_plan_file_path_with_slug("test-happy-slug");
 
         assert!(path.to_string_lossy().ends_with("test-happy-slug.md"));
-        assert!(!path.to_string_lossy().contains("-agent-"));
-    }
-
-    #[test]
-    fn test_resolve_plan_file_path_with_slug_agent() {
-        let path = resolve_plan_file_path_with_slug("test-happy-slug", Some("agent-123"));
-
-        assert!(
-            path.to_string_lossy()
-                .ends_with("test-happy-slug-agent-agent-123.md")
-        );
     }
 }
