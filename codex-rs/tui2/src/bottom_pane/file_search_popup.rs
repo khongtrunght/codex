@@ -113,6 +113,24 @@ impl FileSearchPopup {
 
         self.matches.len().clamp(1, MAX_POPUP_ROWS) as u16
     }
+
+    /// Returns help text appropriate for the current state.
+    /// Returns None if no help text is relevant.
+    // TODO: Integrate this into the file search popup UI to show contextual tips
+    #[allow(dead_code)]
+    pub(crate) fn help_text(&self) -> Option<&'static str> {
+        if self.matches.is_empty() {
+            return None;
+        }
+
+        // If we have file matches (not directories), show line range tip
+        if self.matches.iter().any(|m| !m.is_directory) {
+            Some("Tip: Add #L10-20 for line ranges")
+        } else {
+            // All directories
+            Some("Select a directory to browse")
+        }
+    }
 }
 
 impl WidgetRef for &FileSearchPopup {
@@ -123,15 +141,24 @@ impl WidgetRef for &FileSearchPopup {
         } else {
             self.matches
                 .iter()
-                .map(|m| GenericDisplayRow {
-                    name: m.path.clone(),
-                    match_indices: m
-                        .indices
-                        .as_ref()
-                        .map(|v| v.iter().map(|&i| i as usize).collect()),
-                    display_shortcut: None,
-                    description: None,
-                    wrap_indent: None,
+                .map(|m| {
+                    // Add trailing / for directories
+                    let display_name = if m.is_directory {
+                        format!("{}/", m.path)
+                    } else {
+                        m.path.clone()
+                    };
+
+                    GenericDisplayRow {
+                        name: display_name,
+                        match_indices: m
+                            .indices
+                            .as_ref()
+                            .map(|v| v.iter().map(|&i| i as usize).collect()),
+                        display_shortcut: None,
+                        description: None,
+                        wrap_indent: None,
+                    }
                 })
                 .collect()
         };

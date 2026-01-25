@@ -3025,10 +3025,29 @@ pub(crate) async fn run_turn(
             .await;
     }
 
+    // Collect file mentions from @ syntax in user input
+    let (file_mention_attachments, file_mention_warnings) =
+        crate::attachments::collect_file_mentions(&input, &turn_context.cwd).await;
+
+    for message in file_mention_warnings {
+        sess.send_event(&turn_context, EventMsg::Warning(WarningEvent { message }))
+            .await;
+    }
+
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input.clone());
     let response_item: ResponseItem = initial_input_for_turn.clone().into();
     sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
         .await;
+
+    // Record file mention attachments after user prompt
+    if !file_mention_attachments.is_empty() {
+        let attachment_items: Vec<ResponseItem> = file_mention_attachments
+            .into_iter()
+            .map(|data| ResponseItem::Attachment { data })
+            .collect();
+        sess.record_conversation_items(&turn_context, &attachment_items)
+            .await;
+    }
 
     if !skill_items.is_empty() {
         sess.record_conversation_items(&turn_context, &skill_items)

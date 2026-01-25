@@ -99,3 +99,12 @@ impl From<std::ops::Range<usize>> for ByteRange {
         }
     }
 }
+
+/// Line range for file mentions with #L syntax
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, TS, JsonSchema)]
+pub struct LineRange {
+    /// Start line number (1-indexed, inclusive)
+    pub start: u32,
+    /// End line number (1-indexed, inclusive). If None, only single line.
+    pub end: Option<u32>,
+}

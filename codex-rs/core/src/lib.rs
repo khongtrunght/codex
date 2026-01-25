@@ -42,6 +42,8 @@ pub use mcp_connection_manager::MCP_SANDBOX_STATE_CAPABILITY;
 pub use mcp_connection_manager::MCP_SANDBOX_STATE_METHOD;
 pub use mcp_connection_manager::SandboxState;
 mod mcp_tool_call;
+pub mod mention_extraction;
+pub mod mention_loading;
 mod message_history;
 mod model_provider_info;
 pub mod parse_command;

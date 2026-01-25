@@ -20,6 +20,7 @@
 
 use codex_file_search as file_search;
 use std::num::NonZeroUsize;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -40,12 +41,101 @@ const FILE_SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
 
 const ACTIVE_SEARCH_COMPLETE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Parsed components of an @ mention query
+struct ParsedQuery {
+    /// Resolved absolute path to search in
+    search_directory: PathBuf,
+    /// Remaining pattern for fuzzy matching
+    pattern: String,
+}
+
+/// Parse an @ mention query to extract directory prefix and pattern
+fn parse_file_query(query: &str, base_dir: &Path) -> Result<ParsedQuery, String> {
+    let trimmed = query.trim();
+
+    // Absolute path: starts with /
+    if trimmed.starts_with('/') {
+        let (dir_prefix, pattern) = split_path_pattern(trimmed);
+        return Ok(ParsedQuery {
+            search_directory: PathBuf::from(dir_prefix),
+            pattern: pattern.to_string(),
+        });
+    }
+
+    // Home directory: starts with ~
+    if trimmed.starts_with('~') {
+        let expanded = expand_tilde(trimmed)?;
+        let (dir_prefix, pattern) = split_path_pattern(&expanded);
+        return Ok(ParsedQuery {
+            search_directory: PathBuf::from(dir_prefix),
+            pattern: pattern.to_string(),
+        });
+    }
+
+    // Relative path with ../
+    if trimmed.starts_with("../") || trimmed.contains("/../") {
+        let (dir_prefix, pattern) = split_path_pattern(trimmed);
+        let resolved = base_dir
+            .join(dir_prefix)
+            .canonicalize()
+            .map_err(|e| format!("Cannot resolve path: {e}"))?;
+        return Ok(ParsedQuery {
+            search_directory: resolved,
+            pattern: pattern.to_string(),
+        });
+    }
+
+    // Relative path within current directory
+    let (dir_prefix, pattern) = split_path_pattern(trimmed);
+    let search_dir = if dir_prefix.is_empty() {
+        base_dir.to_path_buf()
+    } else {
+        base_dir.join(dir_prefix)
+    };
+
+    Ok(ParsedQuery {
+        search_directory: search_dir,
+        pattern: pattern.to_string(),
+    })
+}
+
+/// Split a path into directory prefix and filename pattern
+/// Example: "src/utils/file" → ("src/utils/", "file")
+fn split_path_pattern(path: &str) -> (&str, &str) {
+    match path.rfind('/') {
+        Some(idx) => {
+            let dir = &path[..=idx]; // Include trailing /
+            let pattern = &path[idx + 1..];
+            (dir, pattern)
+        }
+        None => ("", path),
+    }
+}
+
+/// Expand ~ to home directory
+fn expand_tilde(path: &str) -> Result<String, String> {
+    if !path.starts_with('~') {
+        return Ok(path.to_string());
+    }
+
+    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
+
+    if path == "~" {
+        Ok(home.to_string_lossy().to_string())
+    } else if let Some(stripped) = path.strip_prefix("~/") {
+        Ok(home.join(stripped).to_string_lossy().to_string())
+    } else {
+        Err("Unsupported ~ syntax (only ~ and ~/ supported)".to_string())
+    }
+}
+
 /// State machine for file-search orchestration.
 pub(crate) struct FileSearchManager {
     /// Unified state guarded by one mutex.
     state: Arc<Mutex<SearchState>>,
 
-    search_dir: PathBuf,
+    /// Base directory (config.cwd), queries are resolved relative to this
+    base_dir: PathBuf,
     app_tx: AppEventSender,
 }
 
@@ -66,14 +156,14 @@ struct ActiveSearch {
 }
 
 impl FileSearchManager {
-    pub fn new(search_dir: PathBuf, tx: AppEventSender) -> Self {
+    pub fn new(base_dir: PathBuf, tx: AppEventSender) -> Self {
         Self {
             state: Arc::new(Mutex::new(SearchState {
                 latest_query: String::new(),
                 is_search_scheduled: false,
                 active_search: None,
             })),
-            search_dir,
+            base_dir,
             app_tx: tx,
         }
     }
@@ -115,7 +205,7 @@ impl FileSearchManager {
         // dropping the lock. This means we are the only thread that can spawn a
         // debounce timer.
         let state = self.state.clone();
-        let search_dir = self.search_dir.clone();
+        let base_dir = self.base_dir.clone();
         let tx_clone = self.app_tx.clone();
         thread::spawn(move || {
             // Always do a minimum debounce, but then poll until the
@@ -147,7 +237,7 @@ impl FileSearchManager {
 
             FileSearchManager::spawn_file_search(
                 query,
-                search_dir,
+                base_dir,
                 tx_clone,
                 cancellation_token,
                 state,
@@ -157,17 +247,30 @@ impl FileSearchManager {
 
     fn spawn_file_search(
         query: String,
-        search_dir: PathBuf,
+        base_dir: PathBuf,
         tx: AppEventSender,
         cancellation_token: Arc<AtomicBool>,
         search_state: Arc<Mutex<SearchState>>,
     ) {
         let compute_indices = true;
         std::thread::spawn(move || {
+            // Parse query to extract directory and pattern
+            let parsed = match parse_file_query(&query, &base_dir) {
+                Ok(p) => p,
+                Err(err) => {
+                    tracing::warn!("Failed to parse file query '{query}': {err}");
+                    // Fallback: use base_dir and full query as pattern
+                    ParsedQuery {
+                        search_directory: base_dir.clone(),
+                        pattern: query.clone(),
+                    }
+                }
+            };
+
             let matches = file_search::run(
-                &query,
+                &parsed.pattern,
                 MAX_FILE_SEARCH_RESULTS,
-                &search_dir,
+                &parsed.search_directory,
                 Vec::new(),
                 NUM_FILE_SEARCH_THREADS,
                 cancellation_token.clone(),

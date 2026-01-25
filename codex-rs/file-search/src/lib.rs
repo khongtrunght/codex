@@ -38,6 +38,7 @@ pub struct FileMatch {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indices: Option<Vec<u32>>, // Sorted & deduplicated when present
+    pub is_directory: bool,
 }
 
 /// Returns the final path component for a matched path, falling back to the full path.
@@ -208,8 +209,8 @@ pub fn run(
         let cancel = cancel_flag.clone();
 
         Box::new(move |entry| {
-            if let Some(path) = get_file_path(&entry, search_directory) {
-                best_list.insert(path);
+            if let Some(info) = get_entry_info(&entry, search_directory) {
+                best_list.insert(info.path, info.is_directory);
             }
 
             processed += 1;
@@ -221,20 +222,29 @@ pub fn run(
         })
     });
 
-    fn get_file_path<'a>(
+    struct EntryInfo<'a> {
+        path: &'a str,
+        is_directory: bool,
+    }
+
+    fn get_entry_info<'a>(
         entry_result: &'a Result<ignore::DirEntry, ignore::Error>,
         search_directory: &std::path::Path,
-    ) -> Option<&'a str> {
+    ) -> Option<EntryInfo<'a>> {
         let entry = match entry_result {
             Ok(e) => e,
             Err(_) => return None,
         };
-        if entry.file_type().is_some_and(|ft| ft.is_dir()) {
-            return None;
-        }
+
+        // Include both files and directories
+        let is_directory = entry.file_type().is_some_and(|ft| ft.is_dir());
+
         let path = entry.path();
         match path.strip_prefix(search_directory) {
-            Ok(rel_path) => rel_path.to_str(),
+            Ok(rel_path) => rel_path.to_str().map(|p| EntryInfo {
+                path: p,
+                is_directory,
+            }),
             Err(_) => None,
         }
     }
@@ -248,24 +258,24 @@ pub fn run(
     }
 
     // Merge results across best_matchers_per_worker.
-    let mut global_heap: BinaryHeap<Reverse<(u32, String)>> = BinaryHeap::new();
+    let mut global_heap: BinaryHeap<Reverse<(u32, String, bool)>> = BinaryHeap::new();
     let mut total_match_count = 0;
     for best_list_cell in best_matchers_per_worker.iter() {
         let best_list = unsafe { &*best_list_cell.get() };
         total_match_count += best_list.num_matches;
-        for &Reverse((score, ref line)) in best_list.binary_heap.iter() {
+        for &Reverse((score, ref line, is_directory)) in best_list.binary_heap.iter() {
             if global_heap.len() < limit.get() {
-                global_heap.push(Reverse((score, line.clone())));
+                global_heap.push(Reverse((score, line.clone(), is_directory)));
             } else if let Some(min_element) = global_heap.peek()
                 && score > min_element.0.0
             {
                 global_heap.pop();
-                global_heap.push(Reverse((score, line.clone())));
+                global_heap.push(Reverse((score, line.clone(), is_directory)));
             }
         }
     }
 
-    let mut raw_matches: Vec<(u32, String)> = global_heap.into_iter().map(|r| r.0).collect();
+    let mut raw_matches: Vec<(u32, String, bool)> = global_heap.into_iter().map(|r| r.0).collect();
     sort_matches(&mut raw_matches);
 
     // Transform into `FileMatch`, optionally computing indices.
@@ -277,7 +287,7 @@ pub fn run(
 
     let matches: Vec<FileMatch> = raw_matches
         .into_iter()
-        .map(|(score, path)| {
+        .map(|(score, path, is_directory)| {
             let indices = if compute_indices {
                 let mut buf = Vec::<char>::new();
                 let haystack: Utf32Str<'_> = Utf32Str::new(&path, &mut buf);
@@ -297,6 +307,7 @@ pub fn run(
                 score,
                 path,
                 indices,
+                is_directory,
             }
         })
         .collect();
@@ -308,11 +319,10 @@ pub fn run(
 }
 
 /// Sort matches in-place by descending score, then ascending path.
-fn sort_matches(matches: &mut [(u32, String)]) {
-    matches.sort_by(cmp_by_score_desc_then_path_asc::<(u32, String), _, _>(
-        |t| t.0,
-        |t| t.1.as_str(),
-    ));
+fn sort_matches(matches: &mut [(u32, String, bool)]) {
+    matches.sort_by(
+        cmp_by_score_desc_then_path_asc::<(u32, String, bool), _, _>(|t| t.0, |t| t.1.as_str()),
+    );
 }
 
 /// Returns a comparator closure suitable for `slice.sort_by(...)` that orders
@@ -338,7 +348,8 @@ struct BestMatchesList {
     num_matches: usize,
     pattern: Pattern,
     matcher: Matcher,
-    binary_heap: BinaryHeap<Reverse<(u32, String)>>,
+    // (score, path, is_directory)
+    binary_heap: BinaryHeap<Reverse<(u32, String, bool)>>,
 
     /// Internal buffer for converting strings to UTF-32.
     utf32buf: Vec<char>,
@@ -356,7 +367,7 @@ impl BestMatchesList {
         }
     }
 
-    fn insert(&mut self, line: &str) {
+    fn insert(&mut self, line: &str, is_directory: bool) {
         let haystack: Utf32Str<'_> = Utf32Str::new(line, &mut self.utf32buf);
         if let Some(score) = self.pattern.score(haystack, &mut self.matcher) {
             // In the tests below, we verify that score() returns None for a
@@ -364,12 +375,14 @@ impl BestMatchesList {
             self.num_matches += 1;
 
             if self.binary_heap.len() < self.max_count {
-                self.binary_heap.push(Reverse((score, line.to_string())));
+                self.binary_heap
+                    .push(Reverse((score, line.to_string(), is_directory)));
             } else if let Some(min_element) = self.binary_heap.peek()
                 && score > min_element.0.0
             {
                 self.binary_heap.pop();
-                self.binary_heap.push(Reverse((score, line.to_string())));
+                self.binary_heap
+                    .push(Reverse((score, line.to_string(), is_directory)));
             }
         }
     }
@@ -427,18 +440,18 @@ mod tests {
     #[test]
     fn tie_breakers_sort_by_path_when_scores_equal() {
         let mut matches = vec![
-            (100, "b_path".to_string()),
-            (100, "a_path".to_string()),
-            (90, "zzz".to_string()),
+            (100, "b_path".to_string(), false),
+            (100, "a_path".to_string(), false),
+            (90, "zzz".to_string(), true),
         ];
 
         sort_matches(&mut matches);
 
         // Highest score first; ties broken alphabetically.
         let expected = vec![
-            (100, "a_path".to_string()),
-            (100, "b_path".to_string()),
-            (90, "zzz".to_string()),
+            (100, "a_path".to_string(), false),
+            (100, "b_path".to_string(), false),
+            (90, "zzz".to_string(), true),
         ];
 
         assert_eq!(matches, expected);

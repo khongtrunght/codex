@@ -6,5 +6,6 @@
 
 mod collectors;
 
+pub(crate) use collectors::collect_file_mentions;
 pub(crate) use collectors::collect_plan_mode;
 pub(crate) use collectors::collect_plan_mode_exit;

@@ -36,6 +36,25 @@ pub enum AttachmentData {
     },
     /// Collected after compaction to restore file context.
     CompactFileRestore { files: Vec<CompactRestoredFile> },
+    /// Collected when @ mentions are detected in user input.
+    FileMentions { contents: Vec<MentionAttachment> },
+}
+
+/// Content from an @ mention (file or directory).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
+#[serde(tag = "mention_type", rename_all = "snake_case")]
+pub enum MentionAttachment {
+    File {
+        path: String,
+        content: String,
+        line_start: Option<u32>,
+        line_end: Option<u32>,
+        truncated: bool,
+    },
+    Directory {
+        path: String,
+        listing: String,
+    },
 }
 
 impl From<AttachmentData> for ResponseItem {
@@ -55,6 +74,7 @@ impl From<AttachmentData> for ResponseItem {
             AttachmentData::CompactFileRestore { files } => {
                 generate_compact_file_restore_items(&files)
             }
+            AttachmentData::FileMentions { contents } => generate_file_mention_items(&contents),
         }
     }
 }
@@ -153,6 +173,57 @@ fn generate_compact_file_restore_items(files: &[CompactRestoredFile]) -> Respons
         role: "developer".to_string(),
         content: items,
     }
+}
+
+/// Generate items for file mentions.
+fn generate_file_mention_items(contents: &[MentionAttachment]) -> ResponseItem {
+    if contents.is_empty() {
+        return wrap_in_developer_message(&format!(
+            "{SYSTEM_REMINDER_OPEN_TAG}\nNo file mentions were loaded.\n{SYSTEM_REMINDER_CLOSE_TAG}"
+        ));
+    }
+
+    let mut messages = Vec::new();
+
+    for mention in contents {
+        match mention {
+            MentionAttachment::File {
+                path,
+                content,
+                line_start,
+                line_end,
+                truncated,
+            } => {
+                // Build the arguments description
+                let args = if let Some(start) = line_start {
+                    if let Some(end) = line_end {
+                        format!(
+                            "{{\"file_path\":\"{path}\",\"offset\":{start},\"limit\":{}}}",
+                            end - start + 1
+                        )
+                    } else {
+                        format!("{{\"file_path\":\"{path}\",\"offset\":{start},\"limit\":1}}")
+                    }
+                } else {
+                    format!("{{\"file_path\":\"{path}\"}}")
+                };
+
+                let truncated_note = if *truncated { " [truncated]" } else { "" };
+                messages.push(format!("Read file with input: {args}"));
+                messages.push(format!("File contents:{truncated_note}\n{content}"));
+            }
+            MentionAttachment::Directory { path, listing } => {
+                messages.push(format!("List directory: {path}"));
+                messages.push(format!("Directory contents:\n{listing}"));
+            }
+        }
+    }
+
+    // Wrap all messages in a developer message
+    let combined = messages.join("\n\n");
+    wrap_in_developer_message(&format!(
+        "{SYSTEM_REMINDER_OPEN_TAG}\n{combined}\n{SYSTEM_REMINDER_CLOSE_TAG}"
+    ))
 }
 
 /// Wrap content in a user message.

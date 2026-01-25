@@ -4,13 +4,20 @@
 //! Each collector returns a Vec<AttachmentData> which may be empty if
 //! no attachment should be generated for the current context.
 
+use std::path::Path;
+
 use codex_protocol::attachment::AttachmentData;
+use codex_protocol::attachment::MentionAttachment;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::user_input::UserInput;
 use futures::future::BoxFuture;
 
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::mention_extraction::extract_mentions;
+use crate::mention_loading::MentionContent;
+use crate::mention_loading::load_mention_contents;
 use crate::plan_file::resolve_plan_file_path_with_slug;
 
 /// Minimum turns between plan mode reminder attachments.
@@ -99,6 +106,60 @@ pub(crate) fn collect_plan_mode_exit<'a>(
             next_mode: Some(collab_mode),
         }]
     })
+}
+
+/// Collects file mention attachments from user input.
+///
+/// Extracts @ mentions from user input, loads file/directory content,
+/// and returns attachment data that will be expanded before API calls.
+pub(crate) async fn collect_file_mentions(
+    input: &[UserInput],
+    cwd: &Path,
+) -> (Vec<AttachmentData>, Vec<String>) {
+    let extraction_result = extract_mentions(input, cwd);
+
+    // Return warnings for logging
+    let warnings = extraction_result.warnings;
+
+    if extraction_result.mentions.is_empty() {
+        return (vec![], warnings);
+    }
+
+    // Load content for all mentions
+    let contents = load_mention_contents(extraction_result.mentions).await;
+
+    if contents.is_empty() {
+        return (vec![], warnings);
+    }
+
+    // Convert to MentionAttachment
+    let attachments: Vec<MentionAttachment> = contents
+        .into_iter()
+        .map(|content| match content {
+            MentionContent::File {
+                path,
+                content,
+                line_range,
+                truncated,
+            } => MentionAttachment::File {
+                path,
+                content,
+                line_start: line_range.as_ref().map(|r| r.start),
+                line_end: line_range.as_ref().and_then(|r| r.end),
+                truncated,
+            },
+            MentionContent::Directory { path, listing } => {
+                MentionAttachment::Directory { path, listing }
+            }
+        })
+        .collect();
+
+    (
+        vec![AttachmentData::FileMentions {
+            contents: attachments,
+        }],
+        warnings,
+    )
 }
 
 /// Count assistant turns since last PlanMode/PlanModeReentry attachment.
