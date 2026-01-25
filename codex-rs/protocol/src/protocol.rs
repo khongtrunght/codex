@@ -755,6 +755,9 @@ pub enum EventMsg {
     /// Notification that the agent attached a local image via the view_image tool.
     ViewImageToolCall(ViewImageToolCallEvent),
 
+    /// Notification that the agent generated a Mermaid diagram.
+    MermaidToolCall(MermaidToolCallEvent),
+
     ExecApprovalRequest(ExecApprovalRequestEvent),
 
     RequestUserInput(RequestUserInputEvent),
@@ -1879,6 +1882,16 @@ pub struct ViewImageToolCallEvent {
     pub call_id: String,
     /// Local filesystem path provided to the tool.
     pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct MermaidToolCallEvent {
+    /// Identifier for the originating tool call.
+    pub call_id: String,
+    /// The Mermaid diagram code.
+    pub code: String,
+    /// Map of node/edge IDs to file:// URIs for clickable code navigation.
+    pub citations: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]

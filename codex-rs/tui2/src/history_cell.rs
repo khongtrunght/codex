@@ -1863,6 +1863,62 @@ pub(crate) fn new_view_image_tool_call(path: PathBuf, cwd: &Path) -> PlainHistor
     PlainHistoryCell { lines }
 }
 
+pub(crate) fn new_mermaid_tool_call(
+    code: String,
+    citations: std::collections::HashMap<String, String>,
+) -> MermaidHistoryCell {
+    MermaidHistoryCell::new(code, citations)
+}
+
+/// A history cell for displaying Mermaid diagrams with a clickable "View" link.
+#[derive(Debug)]
+pub(crate) struct MermaidHistoryCell {
+    code: String,
+    #[allow(dead_code)]
+    citations: std::collections::HashMap<String, String>,
+}
+
+impl MermaidHistoryCell {
+    fn new(code: String, citations: std::collections::HashMap<String, String>) -> Self {
+        Self { code, citations }
+    }
+
+    /// Generates a mermaid.live URL for the diagram.
+    fn generate_mermaid_live_url(&self) -> String {
+        // Create the JSON payload that mermaid.live expects
+        let payload = serde_json::json!({
+            "code": self.code,
+            "mermaid": "{}",
+            "autoSync": true,
+            "updateDiagram": true
+        });
+
+        // Serialize to JSON string
+        let json_str = payload.to_string();
+
+        // Base64 encode with URL-safe alphabet
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json_str.as_bytes());
+
+        format!("https://mermaid.live/edit#base64:{encoded}")
+    }
+}
+
+impl HistoryCell for MermaidHistoryCell {
+    fn display_lines(&self, _ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
+        let line_count = self.code.lines().count();
+        let url = self.generate_mermaid_live_url();
+
+        vec![Line::from(vec![
+            "✓ ".green(),
+            "Mermaid".bold(),
+            " diagram ".into(),
+            format!("({line_count} lines) ").dim(),
+            "View".cyan().underlined(),
+            format!(" {url}").dim(),
+        ])]
+    }
+}
+
 pub(crate) fn new_reasoning_summary_block(full_reasoning_buffer: String) -> Box<dyn HistoryCell> {
     // Experimental format is following:
     // ** header **

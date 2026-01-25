@@ -40,6 +40,7 @@ pub const TODO_WRITE_TOOL_NAME: &str = "todo_write";
 pub const ENTER_PLAN_MODE_TOOL_NAME: &str = "enter_plan_mode";
 pub const EXIT_PLAN_MODE_TOOL_NAME: &str = "exit_plan_mode";
 pub const ASK_USER_QUESTION_TOOL_NAME: &str = "ask_user_question";
+pub const MERMAID_TOOL_NAME: &str = "mermaid";
 
 /// Renders agent descriptions into a formatted string for the task tool.
 pub fn render_agent_descriptions(agents: &[AgentTypeConfig]) -> String {
@@ -199,6 +200,20 @@ impl ToolsConfig {
         let include_collab_tools = features.enabled(Feature::Collab);
         let include_collaboration_modes_tools = features.enabled(Feature::CollaborationModes);
         let include_task_tool = features.enabled(Feature::TaskTool);
+        let include_mermaid_tool = features.enabled(Feature::MermaidTool);
+        let include_read_file_tool = true; // Always include read_file tool
+
+        let mut experimental_supported_tools = model_info.experimental_supported_tools.clone();
+        if include_mermaid_tool
+            && !experimental_supported_tools.contains(&MERMAID_TOOL_NAME.to_string())
+        {
+            experimental_supported_tools.push(MERMAID_TOOL_NAME.to_string());
+        }
+        if include_read_file_tool
+            && !experimental_supported_tools.contains(&READ_FILE_TOOL_NAME.to_string())
+        {
+            experimental_supported_tools.push(READ_FILE_TOOL_NAME.to_string());
+        }
 
         let shell_type = if !features.enabled(Feature::ShellTool) {
             ConfigShellToolType::Disabled
@@ -240,7 +255,7 @@ impl ToolsConfig {
             web_search_mode: *web_search_mode,
             collab_tools: include_collab_tools,
             collaboration_modes_tools: include_collaboration_modes_tools,
-            experimental_supported_tools: model_info.experimental_supported_tools.clone(),
+            experimental_supported_tools,
             agent_configs,
             disabled_tools: vec![],
         }
@@ -595,6 +610,70 @@ fn create_view_image_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["path".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_mermaid_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "code".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "The Mermaid diagram code to render (DO NOT override with custom colors or other styles, DO NOT use HTML tags in node labels)"
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "citations".to_string(),
+            JsonSchema::Object {
+                properties: BTreeMap::new(),
+                required: None,
+                additional_properties: Some(AdditionalProperties::Schema(Box::new(
+                    JsonSchema::String { description: None },
+                ))),
+            },
+        ),
+    ]);
+
+    let description = r#"Renders a Mermaid diagram from the provided code.
+
+PROACTIVELY USE DIAGRAMS when they would better convey information than prose alone. The diagrams produced by this tool are shown to the user.
+
+You should create diagrams WITHOUT being explicitly asked in these scenarios:
+- When explaining system architecture or component relationships
+- When describing workflows, data flows, or user journeys
+- When explaining algorithms or complex processes
+- When illustrating class hierarchies or entity relationships
+- When showing state transitions or event sequences
+
+Diagrams are especially valuable for visualizing:
+- Application architecture and dependencies
+- API interactions and data flow
+- Component hierarchies and relationships
+- State machines and transitions
+- Sequence and timing of operations
+- Decision trees and conditional logic
+
+# Citations
+- **Always include `citations` to as many nodes and edges as possible to make diagram elements clickable, linking to code locations.**
+- Do not add wrong citation and if needed read the file again to validate the code links.
+- Keys: node IDs (e.g., `"api"`) or edge labels (e.g., `"authenticate(token)"`)
+- Values: file:// URIs with optional line range (e.g., `file:///src/api.ts#L10-L50`)
+
+# Styling
+- When defining custom classDefs, always define fill color, stroke color, and text color ("fill", "stroke", "color") explicitly
+- IMPORTANT!!! Use DARK fill colors (close to #000) with light stroke and text colors (close to #fff)"#.to_string();
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: MERMAID_TOOL_NAME.to_string(),
+        description,
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["code".to_string(), "citations".to_string()]),
             additional_properties: Some(false.into()),
         },
     })
@@ -1623,6 +1702,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
+    use crate::tools::handlers::MermaidHandler;
     use crate::tools::handlers::PlanHandler;
     use crate::tools::handlers::ReadFileHandler;
     use crate::tools::handlers::RequestUserInputHandler;
@@ -1774,6 +1854,17 @@ pub(crate) fn build_specs(
 
     builder.push_spec_with_parallel_support(create_view_image_tool(), true);
     builder.register_handler("view_image", view_image_handler);
+
+    // Register Mermaid tool if the feature is enabled
+    if config
+        .experimental_supported_tools
+        .iter()
+        .any(|tool| tool == MERMAID_TOOL_NAME)
+    {
+        let mermaid_handler = Arc::new(MermaidHandler);
+        builder.push_spec_with_parallel_support(create_mermaid_tool(), true);
+        builder.register_handler(MERMAID_TOOL_NAME, mermaid_handler);
+    }
 
     // Register Task tool if agent configurations are provided
     if let Some(agent_configs) = &config.agent_configs {

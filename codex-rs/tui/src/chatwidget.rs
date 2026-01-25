@@ -67,6 +67,7 @@ use codex_core::protocol::McpStartupStatus;
 use codex_core::protocol::McpStartupUpdateEvent;
 use codex_core::protocol::McpToolCallBeginEvent;
 use codex_core::protocol::McpToolCallEndEvent;
+use codex_core::protocol::MermaidToolCallEvent;
 use codex_core::protocol::Op;
 use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::RateLimitSnapshot;
@@ -1295,6 +1296,15 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_view_image_tool_call(
             event.path,
             &self.config.cwd,
+        ));
+        self.request_redraw();
+    }
+
+    fn on_mermaid_tool_call(&mut self, event: MermaidToolCallEvent) {
+        self.flush_answer_stream_with_separator();
+        self.add_to_history(history_cell::new_mermaid_tool_call(
+            event.code,
+            event.citations,
         ));
         self.request_redraw();
     }
@@ -2659,6 +2669,7 @@ impl ChatWidget {
             EventMsg::PatchApplyEnd(ev) => self.on_patch_apply_end(ev),
             EventMsg::ExecCommandEnd(ev) => self.on_exec_command_end(ev),
             EventMsg::ViewImageToolCall(ev) => self.on_view_image_tool_call(ev),
+            EventMsg::MermaidToolCall(ev) => self.on_mermaid_tool_call(ev),
             EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),
             EventMsg::McpToolCallEnd(ev) => self.on_mcp_tool_call_end(ev),
             EventMsg::WebSearchBegin(ev) => self.on_web_search_begin(ev),

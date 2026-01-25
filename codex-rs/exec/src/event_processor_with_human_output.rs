@@ -557,6 +557,15 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     view.path.display()
                 );
             }
+            EventMsg::MermaidToolCall(mermaid) => {
+                let line_count = mermaid.code.lines().count();
+                ts_msg!(
+                    self,
+                    "{} ({} lines)",
+                    "mermaid diagram".style(self.magenta),
+                    line_count
+                );
+            }
             EventMsg::TurnAborted(abort_reason) => match abort_reason.reason {
                 TurnAbortReason::Interrupted => {
                     ts_msg!(self, "task interrupted");

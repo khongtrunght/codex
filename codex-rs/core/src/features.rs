@@ -109,6 +109,8 @@ pub enum Feature {
     CollaborationModes,
     /// Enable the Task tool for spawning sub-agents.
     TaskTool,
+    /// Enable the Mermaid diagram tool.
+    MermaidTool,
 }
 
 impl Feature {
@@ -467,6 +469,16 @@ pub const FEATURES: &[FeatureSpec] = &[
         id: Feature::TaskTool,
         key: "task_tool",
         stage: Stage::Beta,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::MermaidTool,
+        key: "mermaid_tool",
+        stage: Stage::Experimental {
+            name: "Mermaid diagrams",
+            menu_description: "Generate Mermaid diagrams to visualize architecture and flows.",
+            announcement: "NEW! Visualize architecture with Mermaid diagrams. Enable in /experimental!",
+        },
         default_enabled: false,
     },
 ];
