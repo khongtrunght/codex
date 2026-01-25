@@ -2277,8 +2277,10 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             Op::Undo => {
                 handlers::undo(&sess, sub.id.clone()).await;
             }
-            Op::Compact => {
-                handlers::compact(&sess, sub.id.clone()).await;
+            Op::Compact {
+                custom_instructions,
+            } => {
+                handlers::compact(&sess, sub.id.clone(), custom_instructions).await;
             }
             Op::ThreadRollback { num_turns } => {
                 handlers::thread_rollback(&sess, sub.id.clone(), num_turns).await;
@@ -2704,13 +2706,21 @@ mod handlers {
             .await;
     }
 
-    pub async fn compact(sess: &Arc<Session>, sub_id: String) {
+    pub async fn compact(sess: &Arc<Session>, sub_id: String, custom_instructions: Option<String>) {
         let turn_context = sess.new_default_turn_with_sub_id(sub_id).await;
+
+        let base_prompt = turn_context.compact_prompt().to_string();
+        let prompt = match custom_instructions {
+            Some(instructions) if !instructions.trim().is_empty() => {
+                format!("{base_prompt}\n\nAdditional Instructions:\n{instructions}")
+            }
+            _ => base_prompt,
+        };
 
         sess.spawn_task(
             Arc::clone(&turn_context),
             vec![UserInput::Text {
-                text: turn_context.compact_prompt().to_string(),
+                text: prompt,
                 // Compaction prompt is synthesized; no UI element ranges to preserve.
                 text_elements: Vec::new(),
             }],

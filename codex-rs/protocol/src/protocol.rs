@@ -258,7 +258,12 @@ pub enum Op {
     /// Request the agent to summarize the current conversation context.
     /// The agent will use its existing context (either conversation history or previous response id)
     /// to generate a summary which will be returned as an AgentMessage event.
-    Compact,
+    Compact {
+        /// Optional custom instructions to guide the summarization focus.
+        /// Example: "focus on the authentication flow changes"
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        custom_instructions: Option<String>,
+    },
 
     /// Request Codex to undo a turn (turn are stacked so it is the same effect as CMD + Z).
     Undo,

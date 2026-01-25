@@ -2208,7 +2208,9 @@ impl ChatWidget {
             }
             SlashCommand::Compact => {
                 self.clear_token_usage();
-                self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
+                self.app_event_tx.send(AppEvent::CodexOp(Op::Compact {
+                    custom_instructions: None,
+                }));
             }
             SlashCommand::Review => {
                 self.open_review_popup();

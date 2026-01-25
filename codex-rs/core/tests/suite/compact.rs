@@ -170,7 +170,12 @@ async fn summarize_context_three_requests_and_instructions() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     // 2) Summarize – second hit should include the summarization prompt.
-    codex.submit(Op::Compact).await.unwrap();
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await
+        .unwrap();
     let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
     let EventMsg::Warning(WarningEvent { message }) = warning_event else {
         panic!("expected warning event after compact");
@@ -353,7 +358,12 @@ async fn manual_compact_uses_custom_prompt() {
         .expect("create conversation")
         .thread;
 
-    codex.submit(Op::Compact).await.expect("trigger compact");
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await
+        .expect("trigger compact");
     let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
     let EventMsg::Warning(WarningEvent { message }) = warning_event else {
         panic!("expected warning event after compact");
@@ -426,7 +436,12 @@ async fn manual_compact_emits_api_and_local_token_usage_events() {
     let NewThread { thread: codex, .. } = thread_manager.start_thread(config).await.unwrap();
 
     // Trigger manual compact and collect TokenCount events for the compact turn.
-    codex.submit(Op::Compact).await.unwrap();
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await
+        .unwrap();
 
     // First TokenCount: from the compact API call (usage.total_tokens = 0).
     let first = wait_for_event_match(&codex, |ev| match ev {
@@ -609,13 +624,18 @@ async fn multiple_auto_compact_per_task_runs_after_token_limit_hit() {
                     .and_then(|item| item.get("text"))
                     .and_then(|text| text.as_str());
 
-                // Ignore cached prefix messages (project docs + permissions) since they are not
-                // relevant to compaction behavior and can change as bundled prompts evolve.
+                // Ignore cached prefix messages (project docs + permissions + collaboration mode)
+                // since they are not relevant to compaction behavior and can change as bundled
+                // prompts evolve.
                 let role = value.get("role").and_then(|role| role.as_str());
-                if role == Some("developer")
-                    && text.is_some_and(|text| text.contains("`sandbox_mode`"))
-                {
-                    return false;
+                if role == Some("developer") {
+                    if text.is_some_and(|text| text.contains("`sandbox_mode`")) {
+                        return false;
+                    }
+                    // Collaboration mode instructions
+                    if text.is_some_and(|text| text.starts_with("<system-reminder>")) {
+                        return false;
+                    }
                 }
                 !text.is_some_and(|text| text.starts_with("# AGENTS.md instructions for "))
             })
@@ -1517,7 +1537,12 @@ async fn manual_compact_retries_after_context_window_error() {
         .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    codex.submit(Op::Compact).await.unwrap();
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await
+        .unwrap();
     let EventMsg::BackgroundEvent(event) =
         wait_for_event(&codex, |ev| matches!(ev, EventMsg::BackgroundEvent(_))).await
     else {
@@ -1651,7 +1676,12 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
         .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    codex.submit(Op::Compact).await.unwrap();
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await
+        .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex
@@ -1666,7 +1696,12 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
         .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    codex.submit(Op::Compact).await.unwrap();
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await
+        .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex
@@ -1750,6 +1785,8 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
         .collect::<VecDeque<_>>();
 
     // Permissions developer message
+    final_output.pop_front();
+    // Collaboration mode developer message
     final_output.pop_front();
     // User instructions (project docs/skills)
     final_output.pop_front();

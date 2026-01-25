@@ -1738,7 +1738,7 @@ impl ChatComposer {
                 && let Some((_n, cmd)) =
                     Self::built_in_slash_commands_for_input(self.collaboration_modes_enabled)
                         .find(|(command_name, _)| *command_name == name)
-                && cmd == SlashCommand::Review
+                && matches!(cmd, SlashCommand::Review | SlashCommand::Compact)
             {
                 self.textarea.set_text_clearing_elements("");
                 return Some(InputResult::CommandWithArgs(cmd, rest.to_string()));

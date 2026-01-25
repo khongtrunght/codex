@@ -80,7 +80,11 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    codex.submit(Op::Compact).await?;
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex
@@ -275,7 +279,11 @@ async fn remote_compact_persists_replacement_history_in_rollout() -> Result<()> 
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    codex.submit(Op::Compact).await?;
+    codex
+        .submit(Op::Compact {
+            custom_instructions: None,
+        })
+        .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Shutdown).await?;

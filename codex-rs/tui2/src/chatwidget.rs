@@ -2052,7 +2052,9 @@ impl ChatWidget {
             }
             SlashCommand::Compact => {
                 self.clear_token_usage();
-                self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
+                self.app_event_tx.send(AppEvent::CodexOp(Op::Compact {
+                    custom_instructions: None,
+                }));
             }
             SlashCommand::Review => {
                 self.open_review_popup();
@@ -2218,6 +2220,12 @@ impl ChatWidget {
 
         let trimmed = args.trim();
         match cmd {
+            SlashCommand::Compact if !trimmed.is_empty() => {
+                self.clear_token_usage();
+                self.submit_op(Op::Compact {
+                    custom_instructions: Some(trimmed.to_string()),
+                });
+            }
             SlashCommand::Review if !trimmed.is_empty() => {
                 self.submit_op(Op::Review {
                     review_request: ReviewRequest {
