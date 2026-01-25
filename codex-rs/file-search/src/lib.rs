@@ -130,6 +130,57 @@ pub async fn run_main<T: Reporter>(
     Ok(())
 }
 
+/// Default maximum directory depth to traverse (prevents slow searches in large trees)
+pub const DEFAULT_MAX_DEPTH: usize = 8;
+
+/// List directory contents directly (non-recursive).
+/// Used when the user specifies a complete directory path with trailing slash.
+/// This is fast because it only reads the immediate children of the directory.
+pub fn list_directory(
+    directory: &Path,
+    limit: NonZero<usize>,
+) -> anyhow::Result<FileSearchResults> {
+    let mut matches = Vec::new();
+
+    let entries = std::fs::read_dir(directory)?;
+
+    for entry in entries {
+        if matches.len() >= limit.get() {
+            break;
+        }
+
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let file_name = entry.file_name().to_string_lossy().into_owned();
+
+        // Skip hidden files (starting with .)
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        let is_directory = file_type.is_dir();
+
+        matches.push(FileMatch {
+            score: 0, // No fuzzy matching score for direct listing
+            path: file_name,
+            indices: None,
+            is_directory,
+        });
+    }
+
+    // Sort: directories first, then alphabetically
+    matches.sort_by(|a, b| match (a.is_directory, b.is_directory) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.path.cmp(&b.path),
+    });
+
+    Ok(FileSearchResults {
+        total_match_count: matches.len(),
+        matches,
+    })
+}
+
 /// The worker threads will periodically check `cancel_flag` to see if they
 /// should stop processing files.
 #[allow(clippy::too_many_arguments)]
@@ -142,6 +193,32 @@ pub fn run(
     cancel_flag: Arc<AtomicBool>,
     compute_indices: bool,
     respect_gitignore: bool,
+) -> anyhow::Result<FileSearchResults> {
+    run_with_options(
+        pattern_text,
+        limit,
+        search_directory,
+        exclude,
+        threads,
+        cancel_flag,
+        compute_indices,
+        respect_gitignore,
+        Some(DEFAULT_MAX_DEPTH),
+    )
+}
+
+/// Like `run`, but with configurable max_depth.
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_options(
+    pattern_text: &str,
+    limit: NonZero<usize>,
+    search_directory: &Path,
+    exclude: Vec<String>,
+    threads: NonZero<usize>,
+    cancel_flag: Arc<AtomicBool>,
+    compute_indices: bool,
+    respect_gitignore: bool,
+    max_depth: Option<usize>,
 ) -> anyhow::Result<FileSearchResults> {
     let pattern = create_pattern(pattern_text);
     // Create one BestMatchesList per worker thread so that each worker can
@@ -171,7 +248,9 @@ pub fn run(
         // Follow symlinks to search their contents.
         .follow_links(true)
         // Don't require git to be present to apply to apply git-related ignore rules.
-        .require_git(false);
+        .require_git(false)
+        // Limit directory depth to prevent slow searches in large trees.
+        .max_depth(max_depth);
     if !respect_gitignore {
         walk_builder
             .git_ignore(false)
@@ -465,5 +544,32 @@ mod tests {
     #[test]
     fn file_name_from_path_falls_back_to_full_path() {
         assert_eq!(file_name_from_path(""), "");
+    }
+
+    #[test]
+    fn list_directory_returns_entries() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create some files and directories
+        fs::write(temp_dir.path().join("file1.txt"), "content").unwrap();
+        fs::write(temp_dir.path().join("file2.rs"), "content").unwrap();
+        fs::create_dir(temp_dir.path().join("subdir")).unwrap();
+        // Hidden file should be skipped
+        fs::write(temp_dir.path().join(".hidden"), "content").unwrap();
+
+        let result = list_directory(temp_dir.path(), NonZero::new(20).unwrap()).unwrap();
+
+        assert_eq!(result.matches.len(), 3);
+
+        // Directories should come first (sorted)
+        assert!(result.matches[0].is_directory);
+        assert_eq!(result.matches[0].path, "subdir");
+
+        // Then files alphabetically
+        assert!(!result.matches[1].is_directory);
+        assert!(!result.matches[2].is_directory);
     }
 }

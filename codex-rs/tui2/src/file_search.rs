@@ -267,18 +267,40 @@ impl FileSearchManager {
                 }
             };
 
-            let matches = file_search::run(
-                &parsed.pattern,
-                MAX_FILE_SEARCH_RESULTS,
-                &parsed.search_directory,
-                Vec::new(),
-                NUM_FILE_SEARCH_THREADS,
-                cancellation_token.clone(),
-                compute_indices,
-                true,
-            )
-            .map(|res| res.matches)
-            .unwrap_or_default();
+            // Hybrid approach:
+            // 1. If pattern is empty and directory exists → direct listing (fast)
+            // 2. If search_directory is outside cwd → shallow search (depth=1)
+            // 3. Otherwise → fuzzy search with default depth limit
+            let is_outside_cwd = !parsed.search_directory.starts_with(&base_dir);
+
+            let matches = if parsed.pattern.is_empty() && parsed.search_directory.is_dir() {
+                // Direct directory listing (non-recursive, fast)
+                file_search::list_directory(&parsed.search_directory, MAX_FILE_SEARCH_RESULTS)
+                    .map(|res| res.matches)
+                    .unwrap_or_default()
+            } else {
+                // For paths outside cwd, only search 1 level deep (direct children)
+                // For paths inside cwd, use default depth limit
+                let max_depth = if is_outside_cwd {
+                    Some(1)
+                } else {
+                    Some(file_search::DEFAULT_MAX_DEPTH)
+                };
+
+                file_search::run_with_options(
+                    &parsed.pattern,
+                    MAX_FILE_SEARCH_RESULTS,
+                    &parsed.search_directory,
+                    Vec::new(),
+                    NUM_FILE_SEARCH_THREADS,
+                    cancellation_token.clone(),
+                    compute_indices,
+                    true,
+                    max_depth,
+                )
+                .map(|res| res.matches)
+                .unwrap_or_default()
+            };
 
             let is_cancelled = cancellation_token.load(Ordering::Relaxed);
             if !is_cancelled {
