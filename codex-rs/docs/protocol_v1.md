@@ -69,12 +69,12 @@ For complete documentation of the `Op` and `EventMsg` variants, refer to [protoc
   - `Op::UserInput` – Legacy form of user input
   - `Op::Interrupt` – Interrupts a running turn
   - `Op::ExecApproval` – Approve or deny code execution
-  - `Op::UserInputAnswer` – Provide answers for a `request_user_input` tool call
+  - `Op::ResolveAskUserQuestion` – Provide answers for an `ask_user_question` tool call
   - `Op::ListSkills` – Request skills for one or more cwd values (optionally `force_reload`)
 - `EventMsg`
   - `EventMsg::AgentMessage` – Messages from the `Model`
   - `EventMsg::ExecApprovalRequest` – Request approval from user to execute a command
-  - `EventMsg::RequestUserInput` – Request user input for a tool call
+  - `EventMsg::AskUserQuestionRequest` – Request user input for an `ask_user_question` tool call
   - `EventMsg::TurnComplete` – A turn completed successfully
   - `EventMsg::Error` – A turn stopped with an error
   - `EventMsg::Warning` – A non-fatal warning that the client should surface to the user

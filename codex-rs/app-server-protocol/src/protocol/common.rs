@@ -510,10 +510,10 @@ server_request_definitions! {
         response: v2::FileChangeRequestApprovalResponse,
     },
 
-    /// EXPERIMENTAL - Request input from the user for a tool call.
-    ToolRequestUserInput => "item/tool/requestUserInput" {
-        params: v2::ToolRequestUserInputParams,
-        response: v2::ToolRequestUserInputResponse,
+    /// Request user to answer questions via the AskUserQuestion tool.
+    ToolAskUserQuestion => "item/tool/askUserQuestion" {
+        params: v2::ToolAskUserQuestionParams,
+        response: v2::ToolAskUserQuestionResponse,
     },
 
     /// DEPRECATED APIs below

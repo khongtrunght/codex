@@ -19,6 +19,7 @@ mod agent_websocket;
 mod apply_patch_cli;
 #[cfg(not(target_os = "windows"))]
 mod approvals;
+mod ask_user_question;
 mod auth_refresh;
 mod cli_stream;
 mod client;
@@ -52,7 +53,6 @@ mod quota_exceeded;
 mod read_file;
 mod remote_models;
 mod request_compression;
-mod request_user_input;
 mod resume;
 mod resume_warning;
 mod review;

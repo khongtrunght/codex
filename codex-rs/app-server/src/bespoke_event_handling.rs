@@ -54,10 +54,10 @@ use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadRollbackResponse;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::ThreadTokenUsageUpdatedNotification;
-use codex_app_server_protocol::ToolRequestUserInputOption;
-use codex_app_server_protocol::ToolRequestUserInputParams;
-use codex_app_server_protocol::ToolRequestUserInputQuestion;
-use codex_app_server_protocol::ToolRequestUserInputResponse;
+use codex_app_server_protocol::ToolAskUserQuestion;
+use codex_app_server_protocol::ToolAskUserQuestionOption;
+use codex_app_server_protocol::ToolAskUserQuestionParams;
+use codex_app_server_protocol::ToolAskUserQuestionResponse;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnDiffUpdatedNotification;
@@ -86,9 +86,8 @@ use codex_core::review_format::format_review_findings_block;
 use codex_core::review_prompts;
 use codex_protocol::ThreadId;
 use codex_protocol::plan_tool::UpdatePlanArgs;
+use codex_protocol::protocol::AskUserQuestionResponse as CoreAskUserQuestionResponse;
 use codex_protocol::protocol::ReviewOutputEvent;
-use codex_protocol::request_user_input::RequestUserInputAnswer as CoreRequestUserInputAnswer;
-use codex_protocol::request_user_input::RequestUserInputResponse as CoreRequestUserInputResponse;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::PathBuf;
@@ -264,54 +263,54 @@ pub(crate) async fn apply_bespoke_event_handling(
                 });
             }
         },
-        EventMsg::RequestUserInput(request) => {
+        EventMsg::AskUserQuestionRequest(request) => {
             if matches!(api_version, ApiVersion::V2) {
                 let questions = request
                     .questions
                     .into_iter()
-                    .map(|question| ToolRequestUserInputQuestion {
-                        id: question.id,
+                    .map(|question| ToolAskUserQuestion {
                         header: question.header,
                         question: question.question,
-                        options: question.options.map(|options| {
-                            options
-                                .into_iter()
-                                .map(|option| ToolRequestUserInputOption {
-                                    label: option.label,
-                                    description: option.description,
-                                })
-                                .collect()
-                        }),
+                        options: question
+                            .options
+                            .into_iter()
+                            .map(|option| ToolAskUserQuestionOption {
+                                label: option.label,
+                                description: option.description,
+                            })
+                            .collect(),
+                        multi_select: question.multi_select,
                     })
                     .collect();
-                let params = ToolRequestUserInputParams {
+                let params = ToolAskUserQuestionParams {
                     thread_id: conversation_id.to_string(),
                     turn_id: request.turn_id,
                     item_id: request.call_id,
                     questions,
                 };
                 let rx = outgoing
-                    .send_request(ServerRequestPayload::ToolRequestUserInput(params))
+                    .send_request(ServerRequestPayload::ToolAskUserQuestion(params))
                     .await;
                 tokio::spawn(async move {
-                    on_request_user_input_response(event_turn_id, rx, conversation).await;
+                    on_ask_user_question_response(event_turn_id, rx, conversation).await;
                 });
             } else {
                 error!(
-                    "request_user_input is only supported on api v2 (call_id: {})",
+                    "ask_user_question is only supported on api v2 (call_id: {})",
                     request.call_id
                 );
-                let empty = CoreRequestUserInputResponse {
+                let empty = CoreAskUserQuestionResponse {
                     answers: HashMap::new(),
+                    cancelled: true,
                 };
                 if let Err(err) = conversation
-                    .submit(Op::UserInputAnswer {
+                    .submit(Op::ResolveAskUserQuestion {
                         id: event_turn_id,
                         response: empty,
                     })
                     .await
                 {
-                    error!("failed to submit UserInputAnswer: {err}");
+                    error!("failed to submit ResolveAskUserQuestion: {err}");
                 }
             }
         }
@@ -1404,7 +1403,7 @@ async fn on_exec_approval_response(
     }
 }
 
-async fn on_request_user_input_response(
+async fn on_ask_user_question_response(
     event_turn_id: String,
     receiver: oneshot::Receiver<JsonValue>,
     conversation: Arc<CodexThread>,
@@ -1414,53 +1413,44 @@ async fn on_request_user_input_response(
         Ok(value) => value,
         Err(err) => {
             error!("request failed: {err:?}");
-            let empty = CoreRequestUserInputResponse {
+            let empty = CoreAskUserQuestionResponse {
                 answers: HashMap::new(),
+                cancelled: true,
             };
             if let Err(err) = conversation
-                .submit(Op::UserInputAnswer {
+                .submit(Op::ResolveAskUserQuestion {
                     id: event_turn_id,
                     response: empty,
                 })
                 .await
             {
-                error!("failed to submit UserInputAnswer: {err}");
+                error!("failed to submit ResolveAskUserQuestion: {err}");
             }
             return;
         }
     };
 
     let response =
-        serde_json::from_value::<ToolRequestUserInputResponse>(value).unwrap_or_else(|err| {
-            error!("failed to deserialize ToolRequestUserInputResponse: {err}");
-            ToolRequestUserInputResponse {
+        serde_json::from_value::<ToolAskUserQuestionResponse>(value).unwrap_or_else(|err| {
+            error!("failed to deserialize ToolAskUserQuestionResponse: {err}");
+            ToolAskUserQuestionResponse {
                 answers: HashMap::new(),
+                cancelled: true,
             }
         });
-    let response = CoreRequestUserInputResponse {
-        answers: response
-            .answers
-            .into_iter()
-            .map(|(id, answer)| {
-                (
-                    id,
-                    CoreRequestUserInputAnswer {
-                        selected: answer.selected,
-                        other: answer.other,
-                    },
-                )
-            })
-            .collect(),
+    let response = CoreAskUserQuestionResponse {
+        answers: response.answers,
+        cancelled: response.cancelled,
     };
 
     if let Err(err) = conversation
-        .submit(Op::UserInputAnswer {
+        .submit(Op::ResolveAskUserQuestion {
             id: event_turn_id,
             response,
         })
         .await
     {
-        error!("failed to submit UserInputAnswer: {err}");
+        error!("failed to submit ResolveAskUserQuestion: {err}");
     }
 }
 

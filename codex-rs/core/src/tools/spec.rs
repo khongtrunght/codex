@@ -917,27 +917,33 @@ fn create_wait_tool() -> ToolSpec {
     })
 }
 
-fn create_request_user_input_tool() -> ToolSpec {
+/// Creates the AskUserQuestion tool.
+///
+/// Asks the user multiple choice questions to gather information, clarify
+/// ambiguity, understand preferences, make decisions, or offer choices.
+fn create_ask_user_question_tool() -> ToolSpec {
+    // Option schema: label + description (required)
     let mut option_props = BTreeMap::new();
     option_props.insert(
         "label".to_string(),
         JsonSchema::String {
-            description: Some("User-facing label (1-5 words).".to_string()),
+            description: Some(
+                "The display text for this option that the user will see and select. Should be concise (1-5 words) and clearly describe the choice.".to_string(),
+            ),
         },
     );
     option_props.insert(
         "description".to_string(),
         JsonSchema::String {
             description: Some(
-                "One short sentence explaining impact/tradeoff if selected.".to_string(),
+                "Explanation of what this option means or what will happen if chosen. Useful for providing context about trade-offs or implications.".to_string(),
             ),
         },
     );
 
     let options_schema = JsonSchema::Array {
         description: Some(
-            "Optional 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with \"(Recommended)\". Only include \"Other\" option if we want to include a free form option. If the question is free form in nature, please do not have any option."
-                .to_string(),
+            "The available choices for this question. Must have 2-4 options. Each option should be a distinct, mutually exclusive choice (unless multi_select is enabled). There should be no 'Other' option, that will be provided automatically.".to_string(),
         ),
         items: Box::new(JsonSchema::Object {
             properties: option_props,
@@ -946,50 +952,102 @@ fn create_request_user_input_tool() -> ToolSpec {
         }),
     };
 
+    // Question schema: question, header, options (required), multi_select (optional)
     let mut question_props = BTreeMap::new();
     question_props.insert(
-        "id".to_string(),
+        "question".to_string(),
         JsonSchema::String {
-            description: Some("Stable identifier for mapping answers (snake_case).".to_string()),
+            description: Some(
+                "The complete question to ask the user. Should be clear, specific, and end with a question mark. Example: \"Which library should we use for date formatting?\" If multi_select is true, phrase it accordingly, e.g. \"Which features do you want to enable?\"".to_string(),
+            ),
         },
     );
     question_props.insert(
         "header".to_string(),
         JsonSchema::String {
             description: Some(
-                "Short header label shown in the UI (12 or fewer chars).".to_string(),
+                "Very short label displayed as a chip/tag (max 12 chars). Examples: \"Auth method\", \"Library\", \"Approach\".".to_string(),
             ),
         },
     );
+    question_props.insert("options".to_string(), options_schema);
     question_props.insert(
-        "question".to_string(),
-        JsonSchema::String {
-            description: Some("Single-sentence prompt shown to the user.".to_string()),
+        "multi_select".to_string(),
+        JsonSchema::Boolean {
+            description: Some(
+                "Set to true to allow the user to select multiple options instead of just one. Use when choices are not mutually exclusive.".to_string(),
+            ),
         },
     );
-    question_props.insert("options".to_string(), options_schema);
 
     let questions_schema = JsonSchema::Array {
-        description: Some("Questions to show the user. Prefer 1 and do not exceed 3".to_string()),
+        description: Some("Questions to ask the user (1-4 questions).".to_string()),
         items: Box::new(JsonSchema::Object {
             properties: question_props,
             required: Some(vec![
-                "id".to_string(),
-                "header".to_string(),
                 "question".to_string(),
+                "header".to_string(),
+                "options".to_string(),
             ]),
             additional_properties: Some(false.into()),
         }),
     };
 
+    // Answers schema (optional, populated on resolution)
+    let answers_schema = JsonSchema::Object {
+        properties: BTreeMap::new(),
+        required: None,
+        additional_properties: Some(true.into()),
+    };
+
+    // Metadata schema (optional)
+    let mut metadata_props = BTreeMap::new();
+    metadata_props.insert(
+        "source".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional identifier for the source of this question (e.g., \"remember\" for /remember command). Used for analytics tracking.".to_string(),
+            ),
+        },
+    );
+    let metadata_schema = JsonSchema::Object {
+        properties: metadata_props,
+        required: None,
+        additional_properties: Some(false.into()),
+    };
+
     let mut properties = BTreeMap::new();
     properties.insert("questions".to_string(), questions_schema);
+    properties.insert(
+        "answers".to_string(),
+        JsonSchema::Object {
+            properties: {
+                let mut p = BTreeMap::new();
+                p.insert("additionalProperties".to_string(), answers_schema);
+                p
+            },
+            required: None,
+            additional_properties: Some(true.into()),
+        },
+    );
+    properties.insert("metadata".to_string(), metadata_schema);
+
+    let description = r#"Use this tool when you need to ask the user questions during execution. This allows you to:
+1. Gather user preferences or requirements
+2. Clarify ambiguous instructions
+3. Get decisions on implementation choices as you work
+4. Offer choices to the user about what direction to take.
+
+Usage notes:
+- Users will always be able to select "Other" to provide custom text input
+- Use multi_select: true to allow multiple answers to be selected for a question
+- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
+
+Plan mode note: In plan mode, use this tool to clarify requirements or choose between approaches BEFORE finalizing your plan. Do NOT use this tool to ask "Is my plan ready?" or "Should I proceed?" - use ExitPlanMode for plan approval."#;
 
     ToolSpec::Function(ResponsesApiTool {
-        name: "request_user_input".to_string(),
-        description:
-            "Request user input for one to three short questions and wait for the response."
-                .to_string(),
+        name: ASK_USER_QUESTION_TOOL_NAME.to_string(),
+        description: description.to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
@@ -1695,6 +1753,7 @@ pub(crate) fn build_specs(
     mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::AskUserQuestionHandler;
     use crate::tools::handlers::CollabHandler;
     use crate::tools::handlers::EditFileHandler;
     use crate::tools::handlers::ExitPlanModeHandler;
@@ -1705,7 +1764,6 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::MermaidHandler;
     use crate::tools::handlers::PlanHandler;
     use crate::tools::handlers::ReadFileHandler;
-    use crate::tools::handlers::RequestUserInputHandler;
     use crate::tools::handlers::ShellCommandHandler;
     use crate::tools::handlers::ShellHandler;
     use crate::tools::handlers::TestSyncHandler;
@@ -1724,7 +1782,7 @@ pub(crate) fn build_specs(
     let mcp_handler = Arc::new(McpHandler);
     let mcp_resource_handler = Arc::new(McpResourceHandler);
     let shell_command_handler = Arc::new(ShellCommandHandler);
-    let request_user_input_handler = Arc::new(RequestUserInputHandler);
+    let ask_user_question_handler = Arc::new(AskUserQuestionHandler);
 
     match &config.shell_type {
         ConfigShellToolType::Default => {
@@ -1769,8 +1827,8 @@ pub(crate) fn build_specs(
     builder.register_handler("update_plan", plan_handler);
 
     if config.collaboration_modes_tools {
-        builder.push_spec(create_request_user_input_tool());
-        builder.register_handler("request_user_input", request_user_input_handler);
+        builder.push_spec(create_ask_user_question_tool());
+        builder.register_handler(ASK_USER_QUESTION_TOOL_NAME, ask_user_question_handler);
 
         // Exit plan mode tool (no enter tool - user-triggered via UI)
         let exit_plan_mode_handler = Arc::new(ExitPlanModeHandler);
@@ -2048,7 +2106,7 @@ mod tests {
             create_list_mcp_resource_templates_tool(),
             create_read_mcp_resource_tool(),
             PLAN_TOOL.clone(),
-            create_request_user_input_tool(),
+            create_ask_user_question_tool(),
             create_exit_plan_mode_tool(),
             create_apply_patch_freeform_tool(),
             ToolSpec::WebSearch {

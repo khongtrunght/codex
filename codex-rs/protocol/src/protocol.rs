@@ -26,7 +26,6 @@ use crate::num_format::format_with_separators;
 use crate::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use crate::parse_command::ParsedCommand;
 use crate::plan_tool::UpdatePlanArgs;
-use crate::request_user_input::RequestUserInputResponse;
 use crate::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use mcp_types::CallToolResult;
@@ -49,7 +48,10 @@ pub use crate::approvals::ExecApprovalRequestEvent;
 pub use crate::approvals::ExecPolicyAmendment;
 pub use crate::approvals::ExitPlanModeApprovalRequestEvent;
 pub use crate::approvals::ExitPlanModeApprovalResponse;
-pub use crate::request_user_input::RequestUserInputEvent;
+pub use crate::ask_user_question::AskUserQuestion;
+pub use crate::ask_user_question::AskUserQuestionOption;
+pub use crate::ask_user_question::AskUserQuestionRequestEvent;
+pub use crate::ask_user_question::AskUserQuestionResponse;
 pub use crate::session_mode::ExitedPlanModeEvent;
 
 /// Open/close tags for special user-input blocks. Used across crates to avoid
@@ -212,13 +214,17 @@ pub enum Op {
         decision: ElicitationAction,
     },
 
-    /// Resolve a request_user_input tool call.
-    #[serde(rename = "user_input_answer", alias = "request_user_input_response")]
-    UserInputAnswer {
-        /// Turn id for the in-flight request.
+    /// Resolve an AskUserQuestion tool call with the user's answers.
+    #[serde(
+        rename = "resolve_ask_user_question",
+        alias = "user_input_answer",
+        alias = "request_user_input_response"
+    )]
+    ResolveAskUserQuestion {
+        /// The event ID that initiated this question request.
         id: String,
-        /// User-provided answers.
-        response: RequestUserInputResponse,
+        /// The user's response containing answers to the questions.
+        response: AskUserQuestionResponse,
     },
 
     /// Append an entry to the persistent cross-session message history.
@@ -765,7 +771,8 @@ pub enum EventMsg {
 
     ExecApprovalRequest(ExecApprovalRequestEvent),
 
-    RequestUserInput(RequestUserInputEvent),
+    /// Request user to answer questions via the AskUserQuestion tool.
+    AskUserQuestionRequest(AskUserQuestionRequestEvent),
 
     ElicitationRequest(ElicitationRequestEvent),
 

@@ -61,10 +61,9 @@ pub fn create_exec_command_sse_response(call_id: &str) -> anyhow::Result<String>
     ]))
 }
 
-pub fn create_request_user_input_sse_response(call_id: &str) -> anyhow::Result<String> {
+pub fn create_ask_user_question_sse_response(call_id: &str) -> anyhow::Result<String> {
     let tool_call_arguments = serde_json::to_string(&json!({
         "questions": [{
-            "id": "confirm_path",
             "header": "Confirm",
             "question": "Proceed with the plan?",
             "options": [{
@@ -73,13 +72,14 @@ pub fn create_request_user_input_sse_response(call_id: &str) -> anyhow::Result<S
             }, {
                 "label": "No",
                 "description": "Stop and revisit the approach."
-            }]
+            }],
+            "multi_select": false
         }]
     }))?;
 
     Ok(responses::sse(vec![
         responses::ev_response_created("resp-1"),
-        responses::ev_function_call(call_id, "request_user_input", &tool_call_arguments),
+        responses::ev_function_call(call_id, "ask_user_question", &tool_call_arguments),
         responses::ev_completed("resp-1"),
     ]))
 }

@@ -9,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::protocol::AskUserQuestionResponse;
 use codex_protocol::protocol::ExitPlanModeApprovalResponse;
-use codex_protocol::request_user_input::RequestUserInputResponse;
 use tokio::sync::oneshot;
 
 use crate::codex::TurnContext;
@@ -70,7 +70,7 @@ impl ActiveTurn {
 #[derive(Default)]
 pub(crate) struct TurnState {
     pending_approvals: HashMap<String, oneshot::Sender<ReviewDecision>>,
-    pending_user_input: HashMap<String, oneshot::Sender<RequestUserInputResponse>>,
+    pending_ask_user_question: HashMap<String, oneshot::Sender<AskUserQuestionResponse>>,
     pending_exit_plan_mode: HashMap<String, oneshot::Sender<ExitPlanModeApprovalResponse>>,
     pending_input: Vec<ResponseInputItem>,
 }
@@ -93,24 +93,24 @@ impl TurnState {
 
     pub(crate) fn clear_pending(&mut self) {
         self.pending_approvals.clear();
-        self.pending_user_input.clear();
+        self.pending_ask_user_question.clear();
         self.pending_exit_plan_mode.clear();
         self.pending_input.clear();
     }
 
-    pub(crate) fn insert_pending_user_input(
+    pub(crate) fn insert_pending_ask_user_question(
         &mut self,
         key: String,
-        tx: oneshot::Sender<RequestUserInputResponse>,
-    ) -> Option<oneshot::Sender<RequestUserInputResponse>> {
-        self.pending_user_input.insert(key, tx)
+        tx: oneshot::Sender<AskUserQuestionResponse>,
+    ) -> Option<oneshot::Sender<AskUserQuestionResponse>> {
+        self.pending_ask_user_question.insert(key, tx)
     }
 
-    pub(crate) fn remove_pending_user_input(
+    pub(crate) fn remove_pending_ask_user_question(
         &mut self,
         key: &str,
-    ) -> Option<oneshot::Sender<RequestUserInputResponse>> {
-        self.pending_user_input.remove(key)
+    ) -> Option<oneshot::Sender<AskUserQuestionResponse>> {
+        self.pending_ask_user_question.remove(key)
     }
 
     pub(crate) fn insert_pending_exit_plan_mode(

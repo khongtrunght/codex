@@ -360,7 +360,7 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::UndoStarted(_)
                     | EventMsg::UndoCompleted(_)
                     | EventMsg::ExitedReviewMode(_)
-                    | EventMsg::RequestUserInput(_)
+                    | EventMsg::AskUserQuestionRequest(_)
                     | EventMsg::ContextCompacted(_)
                     | EventMsg::ThreadRolledBack(_)
                     | EventMsg::CollabAgentSpawnBegin(_)

@@ -46,6 +46,7 @@ use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::AskUserQuestionRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
@@ -129,6 +130,7 @@ use crate::app_event::WindowsSandboxEnableMode;
 use crate::app_event::WindowsSandboxFallbackReason;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ApprovalRequest;
+use crate::bottom_pane::AskUserQuestionOverlay;
 use crate::bottom_pane::BetaFeatureItem;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
@@ -1532,6 +1534,14 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn on_ask_user_question_request(&mut self, id: String, ev: AskUserQuestionRequestEvent) {
+        self.flush_answer_stream_with_separator();
+
+        let overlay = AskUserQuestionOverlay::new(id, ev.questions, self.app_event_tx.clone());
+        self.bottom_pane.push_ask_user_question(overlay);
+        self.request_redraw();
+    }
+
     pub(crate) fn handle_exit_plan_mode_approval_now(
         &mut self,
         ev: ExitPlanModeApprovalRequestEvent,
@@ -2624,8 +2634,10 @@ impl ChatWidget {
             | EventMsg::ItemCompleted(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
-            | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::RequestUserInput(_) => {}
+            | EventMsg::ReasoningRawContentDelta(_) => {}
+            EventMsg::AskUserQuestionRequest(ev) => {
+                self.on_ask_user_question_request(id.unwrap_or_default(), ev);
+            }
             EventMsg::SubAgentSpawnBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentSpawnEnd(ev) => self.on_subagent_end(ev, from_replay),
             EventMsg::SubAgentComplete(ev) => self.on_subagent_complete(ev, from_replay),

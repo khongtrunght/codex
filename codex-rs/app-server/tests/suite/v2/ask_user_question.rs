@@ -1,8 +1,8 @@
 use anyhow::Result;
 use app_test_support::McpProcess;
+use app_test_support::create_ask_user_question_sse_response;
 use app_test_support::create_final_assistant_message_sse_response;
 use app_test_support::create_mock_responses_server_sequence;
-use app_test_support::create_request_user_input_sse_response;
 use app_test_support::to_response;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
@@ -19,10 +19,10 @@ use tokio::time::timeout;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn request_user_input_round_trip() -> Result<()> {
+async fn ask_user_question_round_trip() -> Result<()> {
     let codex_home = tempfile::TempDir::new()?;
     let responses = vec![
-        create_request_user_input_sse_response("call1")?,
+        create_ask_user_question_sse_response("call1")?,
         create_final_assistant_message_sse_response("done")?,
     ];
     let server = create_mock_responses_server_sequence(responses).await;
@@ -69,8 +69,8 @@ async fn request_user_input_round_trip() -> Result<()> {
         mcp.read_stream_until_request_message(),
     )
     .await??;
-    let ServerRequest::ToolRequestUserInput { request_id, params } = server_req else {
-        panic!("expected ToolRequestUserInput request, got: {server_req:?}");
+    let ServerRequest::ToolAskUserQuestion { request_id, params } = server_req else {
+        panic!("expected ToolAskUserQuestion request, got: {server_req:?}");
     };
 
     assert_eq!(params.thread_id, thread.id);
@@ -78,11 +78,12 @@ async fn request_user_input_round_trip() -> Result<()> {
     assert_eq!(params.item_id, "call1");
     assert_eq!(params.questions.len(), 1);
 
+    // Response uses question text as key with simple string answer
     mcp.send_response(
         request_id,
         serde_json::json!({
             "answers": {
-                "confirm_path": { "selected": ["yes"], "other": serde_json::Value::Null }
+                "Proceed with the plan?": "Yes (Recommended)"
             }
         }),
     )

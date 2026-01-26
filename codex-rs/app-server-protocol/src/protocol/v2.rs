@@ -2294,8 +2294,8 @@ pub struct FileChangeRequestApprovalResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
-/// EXPERIMENTAL. Defines a single selectable option for request_user_input.
-pub struct ToolRequestUserInputOption {
+/// Defines a single selectable option for ask_user_question.
+pub struct ToolAskUserQuestionOption {
     pub label: String,
     pub description: String,
 }
@@ -2303,40 +2303,36 @@ pub struct ToolRequestUserInputOption {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
-/// EXPERIMENTAL. Represents one request_user_input question and its optional options.
-pub struct ToolRequestUserInputQuestion {
-    pub id: String,
+/// Represents one ask_user_question question and its options.
+pub struct ToolAskUserQuestion {
     pub header: String,
     pub question: String,
-    pub options: Option<Vec<ToolRequestUserInputOption>>,
+    pub options: Vec<ToolAskUserQuestionOption>,
+    #[serde(default)]
+    pub multi_select: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
-/// EXPERIMENTAL. Params sent with a request_user_input event.
-pub struct ToolRequestUserInputParams {
+/// Params sent with an ask_user_question event.
+pub struct ToolAskUserQuestionParams {
     pub thread_id: String,
     pub turn_id: String,
     pub item_id: String,
-    pub questions: Vec<ToolRequestUserInputQuestion>,
+    pub questions: Vec<ToolAskUserQuestion>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
-/// EXPERIMENTAL. Captures a user's answer to a request_user_input question.
-pub struct ToolRequestUserInputAnswer {
-    pub selected: Vec<String>,
-    pub other: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export_to = "v2/")]
-/// EXPERIMENTAL. Response payload mapping question ids to answers.
-pub struct ToolRequestUserInputResponse {
-    pub answers: HashMap<String, ToolRequestUserInputAnswer>,
+/// Response payload mapping question text to answers.
+pub struct ToolAskUserQuestionResponse {
+    /// Map of question text to answer string (comma-separated for multi-select).
+    pub answers: HashMap<String, String>,
+    /// Whether the user cancelled the question dialog.
+    #[serde(default)]
+    pub cancelled: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
