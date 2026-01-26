@@ -5,14 +5,14 @@ set positional-arguments
 help:
     just -l
 
-# `codex`
-alias c := codex
-codex *args:
-    cargo run --bin codex -- "$@"
+# `zenith`
+alias z := zenith
+zenith *args:
+    cargo run --bin zenith -- "$@"
 
-# `codex exec`
+# `zenith exec`
 exec *args:
-    cargo run --bin codex -- exec "$@"
+    cargo run --bin zenith -- exec "$@"
 
 # Run the CLI version of the file-search crate.
 file-search *args:
@@ -21,7 +21,7 @@ file-search *args:
 # Build the CLI and run the app-server test client
 app-server-test-client *args:
     cargo build -p codex-cli
-    cargo run -p codex-app-server-test-client -- --codex-bin ./target/debug/codex "$@"
+    cargo run -p codex-app-server-test-client -- --codex-bin ./target/debug/zenith "$@"
 
 # format code
 fmt:
@@ -44,11 +44,11 @@ install:
 test:
     cargo nextest run --no-fail-fast
 
-# Build and run Codex from source using Bazel.
+# Build and run Zenith from source using Bazel.
 # Note we have to use the combination of `[no-cd]` and `--run_under="cd $PWD &&"`
 # to ensure that Bazel runs the command in the current working directory.
 [no-cd]
-bazel-codex *args:
+bazel-zenith *args:
     bazel run //codex-rs/cli:codex --run_under="cd $PWD &&" -- "$@"
 
 bazel-test:
