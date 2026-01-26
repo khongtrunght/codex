@@ -645,8 +645,29 @@ fn link() {
 }
 
 #[test]
-fn code_block_unhighlighted() {
+fn code_block_with_language_is_highlighted() {
+    // Code blocks with a language specifier get syntax highlighting
     let text = render_markdown_text("```rust\nfn main() {}\n```\n");
+    // With syntax highlighting: fn=magenta, main=blue, punctuation=dim
+    let expected = Text::from_iter([Line::from_iter([
+        "".into(),
+        "fn".magenta(),
+        " ".into(),
+        "main".blue(),
+        "(".dim(),
+        ")".dim(),
+        " ".into(),
+        "{".dim(),
+        "}".dim(),
+    ])
+    .cyan()]);
+    assert_eq!(text, expected);
+}
+
+#[test]
+fn code_block_without_language_is_not_highlighted() {
+    // Code blocks without a language specifier remain plain cyan
+    let text = render_markdown_text("```\nfn main() {}\n```\n");
     let expected = Text::from_iter([Line::from_iter(["", "fn main() {}"]).cyan()]);
     assert_eq!(text, expected);
 }
@@ -873,6 +894,62 @@ fn ordered_item_with_code_block_and_nested_bullet() {
             "   code".to_string(),
             "    - PROCESS_START (a OnceLock<Instant>) keeps the start time for the entire process.".to_string(),
         ]
+    );
+}
+
+#[test]
+fn basic_table_rendering() {
+    let md = r#"| Left | Center | Right |
+|:-----|:------:|------:|
+| a    |   b    |     c |
+
+Some text after.
+"#;
+    let text = render_markdown_text(md);
+    let lines: Vec<String> = text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.clone())
+                .collect::<String>()
+        })
+        .collect();
+
+    // Check that header row exists and data row exists
+    assert!(
+        lines.iter().any(|l| l.contains("Left")),
+        "Should contain header 'Left': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Center")),
+        "Should contain header 'Center': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Right")),
+        "Should contain header 'Right': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains(" a ")),
+        "Should contain data 'a': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Some text after")),
+        "Should contain text after table: {lines:?}"
+    );
+    // Check table borders exist
+    assert!(
+        lines.iter().any(|l| l.contains("┌")),
+        "Should have top border: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("├")),
+        "Should have header separator: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("└")),
+        "Should have bottom border: {lines:?}"
     );
 }
 
