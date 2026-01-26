@@ -1,5 +1,6 @@
 use codex_core::models_manager::manager::ModelsManager;
 use codex_protocol::config_types::CollaborationMode;
+use ratatui::style::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ModeKind {
@@ -7,6 +8,33 @@ enum ModeKind {
     PairProgramming,
     Execute,
     // Custom,
+}
+
+/// Get the icon for a collaboration mode.
+pub(crate) fn icon(mode: &CollaborationMode) -> &'static str {
+    match mode {
+        CollaborationMode::Plan => "\u{23F8}", // ⏸ (pause - thoughtful planning)
+        CollaborationMode::PairProgramming => "\u{21C4}", // ⇄ (bidirectional collaboration)
+        CollaborationMode::Execute => "\u{23F5}", // ⏵ (play - autonomous execution)
+    }
+}
+
+/// Get the display name for a collaboration mode.
+pub(crate) fn display_name(mode: &CollaborationMode) -> &'static str {
+    match mode {
+        CollaborationMode::Plan => "Plan",
+        CollaborationMode::PairProgramming => "Pair Programming",
+        CollaborationMode::Execute => "Execute",
+    }
+}
+
+/// Get the color for a collaboration mode.
+pub(crate) fn color(mode: &CollaborationMode) -> Color {
+    match mode {
+        CollaborationMode::Plan => Color::Cyan,
+        CollaborationMode::PairProgramming => Color::Yellow,
+        CollaborationMode::Execute => Color::Green,
+    }
 }
 
 fn mode_kind(mode: &CollaborationMode) -> ModeKind {

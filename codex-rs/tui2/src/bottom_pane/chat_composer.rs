@@ -73,6 +73,7 @@ use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::has_ctrl_or_alt;
 use crate::transcript_copy_action::TranscriptCopyFeedback;
+use codex_protocol::config_types::CollaborationMode;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -235,6 +236,8 @@ pub(crate) struct ChatComposer {
     /// When enabled, `Enter` submits immediately and `Tab` requests queuing behavior.
     steer_enabled: bool,
     collaboration_modes_enabled: bool,
+    /// Current collaboration mode to display in footer.
+    collaboration_mode: Option<CollaborationMode>,
 }
 
 #[derive(Clone, Debug)]
@@ -300,6 +303,7 @@ impl ChatComposer {
             dismissed_skill_popup_token: None,
             steer_enabled: false,
             collaboration_modes_enabled: false,
+            collaboration_mode: None,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -322,6 +326,10 @@ impl ChatComposer {
 
     pub fn set_collaboration_modes_enabled(&mut self, enabled: bool) {
         self.collaboration_modes_enabled = enabled;
+    }
+
+    pub fn set_collaboration_mode(&mut self, mode: Option<CollaborationMode>) {
+        self.collaboration_mode = mode;
     }
 
     fn layout_areas(&self, area: Rect) -> [Rect; 3] {
@@ -477,6 +485,7 @@ impl ChatComposer {
         self.footer_hint_override = items;
     }
 
+    #[cfg(test)]
     pub(crate) fn show_footer_flash(&mut self, line: Line<'static>, duration: Duration) {
         let expires_at = Instant::now()
             .checked_add(duration)
@@ -2087,6 +2096,7 @@ impl ChatComposer {
             quit_shortcut_key: self.quit_shortcut_key,
             steer_enabled: self.steer_enabled,
             collaboration_modes_enabled: self.collaboration_modes_enabled,
+            collaboration_mode: self.collaboration_mode,
             context_window_percent: self.context_window_percent,
             context_window_used_tokens: self.context_window_used_tokens,
             transcript_scrolled: self.transcript_scrolled,

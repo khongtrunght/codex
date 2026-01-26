@@ -129,7 +129,9 @@ pub enum AltScreenMode {
 }
 
 /// Collaboration mode for a Codex session.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default, JsonSchema, TS)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default, JsonSchema, TS,
+)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum CollaborationMode {
     Plan,

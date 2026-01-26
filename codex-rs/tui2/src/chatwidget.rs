@@ -1743,9 +1743,15 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_steer_enabled(widget.config.features.enabled(Feature::Steer));
-        widget.bottom_pane.set_collaboration_modes_enabled(
-            widget.config.features.enabled(Feature::CollaborationModes),
-        );
+        let collab_enabled = widget.config.features.enabled(Feature::CollaborationModes);
+        widget
+            .bottom_pane
+            .set_collaboration_modes_enabled(collab_enabled);
+        if collab_enabled {
+            widget
+                .bottom_pane
+                .set_collaboration_mode(Some(widget.stored_collaboration_mode));
+        }
 
         widget
     }
@@ -1846,9 +1852,15 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_steer_enabled(widget.config.features.enabled(Feature::Steer));
-        widget.bottom_pane.set_collaboration_modes_enabled(
-            widget.config.features.enabled(Feature::CollaborationModes),
-        );
+        let collab_enabled = widget.config.features.enabled(Feature::CollaborationModes);
+        widget
+            .bottom_pane
+            .set_collaboration_modes_enabled(collab_enabled);
+        if collab_enabled {
+            widget
+                .bottom_pane
+                .set_collaboration_mode(Some(widget.stored_collaboration_mode));
+        }
 
         widget
     }
@@ -4120,6 +4132,12 @@ impl ChatWidget {
         if feature == Feature::CollaborationModes {
             self.bottom_pane.set_collaboration_modes_enabled(enabled);
             self.stored_collaboration_mode = CollaborationMode::default();
+            if enabled {
+                self.bottom_pane
+                    .set_collaboration_mode(Some(self.stored_collaboration_mode));
+            } else {
+                self.bottom_pane.set_collaboration_mode(None);
+            }
         }
     }
 
@@ -4219,18 +4237,8 @@ impl ChatWidget {
         }
 
         self.stored_collaboration_mode = mode;
-
-        let label = self.collaboration_mode_label();
-        if let Some(label) = label {
-            let flash = Line::from(vec![
-                label.bold(),
-                " (".dim(),
-                key_hint::shift(KeyCode::Tab).into(),
-                " to change mode)".dim(),
-            ]);
-            const FLASH_DURATION: Duration = Duration::from_secs(2);
-            self.bottom_pane.flash_footer_hint(flash, FLASH_DURATION);
-        }
+        // Update the footer to show the collaboration mode persistently
+        self.bottom_pane.set_collaboration_mode(Some(mode));
         self.request_redraw();
     }
 
