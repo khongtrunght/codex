@@ -9,12 +9,12 @@ narrow:
     changes.
 
 
-  > A blockquote that also
-  > reflows across widths.
+    A blockquote that also
+    reflows across widths.
 
 wide:
 • - This is a long list item that should reflow when the viewport
     width changes.
 
 
-  > A blockquote that also reflows across widths.
+    A blockquote that also reflows across widths.

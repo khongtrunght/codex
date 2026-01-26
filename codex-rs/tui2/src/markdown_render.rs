@@ -106,33 +106,37 @@ impl Default for MarkdownStyles {
         use ratatui::style::Stylize;
 
         Self {
+            // Headings: bold with underline for h1, just bold for others
             h1: Style::new().bold().underlined(),
             h2: Style::new().bold(),
-            h3: Style::new().bold().italic(),
-            h4: Style::new().italic(),
-            h5: Style::new().italic(),
-            h6: Style::new().italic(),
+            h3: Style::new().bold(),
+            h4: Style::new().bold(),
+            h5: Style::new().bold(),
+            h6: Style::new().bold(),
             code: Style::new().cyan(),
             emphasis: Style::new().italic(),
             strong: Style::new().bold(),
-            strikethrough: Style::new().crossed_out(),
+            strikethrough: Style::new().crossed_out().dim(),
             ordered_list_marker: Style::new().light_blue(),
             unordered_list_marker: Style::new(),
             link: Style::new().cyan().underlined(),
-            blockquote: Style::new().green(),
+            // Blockquotes: dim italic like Claude Code
+            blockquote: Style::new().dim().italic(),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 struct IndentContext {
-    /// Prefix spans to apply for this nesting level (e.g., blockquote `> `, list indentation).
+    /// Prefix spans to apply for this nesting level (e.g., blockquote indentation, list indentation).
     prefix: Vec<Span<'static>>,
     /// Optional list marker spans (e.g., `- ` or `1. `) that apply only to the first visual line of
     /// a list item.
     marker: Option<Vec<Span<'static>>>,
     /// True if this context represents a list indentation level.
     is_list: bool,
+    /// True if this context represents a blockquote.
+    is_blockquote: bool,
 }
 
 impl IndentContext {
@@ -141,6 +145,16 @@ impl IndentContext {
             prefix,
             marker,
             is_list,
+            is_blockquote: false,
+        }
+    }
+
+    fn blockquote(prefix: Vec<Span<'static>>) -> Self {
+        Self {
+            prefix,
+            marker: None,
+            is_list: false,
+            is_blockquote: true,
         }
     }
 }
@@ -387,8 +401,8 @@ where
             HeadingLevel::H5 => self.styles.h5,
             HeadingLevel::H6 => self.styles.h6,
         };
-        let content = format!("{} ", "#".repeat(level as usize));
-        self.push_line(Line::from(vec![Span::styled(content, heading_style)]));
+        // Don't show ## prefix - just styled text like Claude Code
+        self.push_line(Line::default());
         self.push_inline_style(heading_style);
         self.needs_newline = false;
     }
@@ -403,8 +417,10 @@ where
             self.push_blank_line();
             self.needs_newline = false;
         }
+        // Don't show > prefix - just indentation like Claude Code
+        // The green styling is applied via line_style in flush_current_line
         self.indent_stack
-            .push(IndentContext::new(vec![Span::from("> ")], None, false));
+            .push(IndentContext::blockquote(vec![Span::from("  ")]));
     }
 
     fn end_blockquote(&mut self) {
@@ -607,7 +623,12 @@ where
         }
 
         // Calculate column widths based on content
-        let col_count = self.table_rows.iter().map(std::vec::Vec::len).max().unwrap_or(0);
+        let col_count = self
+            .table_rows
+            .iter()
+            .map(std::vec::Vec::len)
+            .max()
+            .unwrap_or(0);
         let col_widths: Vec<usize> = (0..col_count)
             .map(|i| {
                 self.table_rows
@@ -623,10 +644,12 @@ where
         // Render table with box drawing characters
         self.render_table_border(&col_widths, TableBorder::Top);
 
-        for (row_idx, row) in std::mem::take(&mut self.table_rows).into_iter().enumerate() {
+        let rows = std::mem::take(&mut self.table_rows);
+        let row_count = rows.len();
+        for (row_idx, row) in rows.into_iter().enumerate() {
             self.render_table_row(&row, &col_widths);
-            if row_idx == 0 {
-                // Header separator
+            // Add separator after every row except the last
+            if row_idx < row_count - 1 {
                 self.render_table_border(&col_widths, TableBorder::HeaderSep);
             }
         }
@@ -789,10 +812,7 @@ where
 
     fn push_line(&mut self, line: Line<'static>) {
         self.flush_current_line();
-        let blockquote_active = self
-            .indent_stack
-            .iter()
-            .any(|ctx| ctx.prefix.iter().any(|s| s.content.contains('>')));
+        let blockquote_active = self.indent_stack.iter().any(|ctx| ctx.is_blockquote);
         let mut style = if blockquote_active {
             self.styles.blockquote
         } else {
@@ -976,12 +996,13 @@ mod tests {
         let markdown = "> block quote with content that should wrap nicely";
         let rendered = render_markdown_text_with_width(markdown, Some(22));
         let lines = lines_to_strings(&rendered);
+        // Blockquotes use "  " indent instead of "> "
         assert_eq!(
             lines,
             vec![
-                "> block quote with".to_string(),
-                "> content that should".to_string(),
-                "> wrap nicely".to_string(),
+                "  block quote with".to_string(),
+                "  content that should".to_string(),
+                "  wrap nicely".to_string(),
             ]
         );
     }
@@ -991,12 +1012,13 @@ mod tests {
         let markdown = "- list item\n  > block quote inside list that wraps";
         let rendered = render_markdown_text_with_width(markdown, Some(24));
         let lines = lines_to_strings(&rendered);
+        // Blockquotes use "  " indent instead of "> "
         assert_eq!(
             lines,
             vec![
                 "- list item".to_string(),
-                "  > block quote inside".to_string(),
-                "  > list that wraps".to_string(),
+                "    block quote inside".to_string(),
+                "    list that wraps".to_string(),
             ]
         );
     }
@@ -1006,12 +1028,13 @@ mod tests {
         let markdown = "1. item with quote\n   > quoted text that should wrap";
         let rendered = render_markdown_text_with_width(markdown, Some(24));
         let lines = lines_to_strings(&rendered);
+        // Blockquotes use "  " indent instead of "> "
         assert_eq!(
             lines,
             vec![
                 "1. item with quote".to_string(),
-                "   > quoted text that".to_string(),
-                "   > should wrap".to_string(),
+                "     quoted text that".to_string(),
+                "     should wrap".to_string(),
             ]
         );
     }

@@ -57,6 +57,10 @@ impl MarkdownStreamCollector {
     /// Render the full buffer and return only the newly completed logical lines
     /// since the last commit. When the buffer does not end with a newline, the
     /// final rendered line is considered incomplete and is not emitted.
+    ///
+    /// Table rows are buffered until the table is complete to avoid rendering
+    /// partial tables incorrectly (tables aren't recognized until the separator
+    /// row is seen).
     pub fn commit_complete_lines(&mut self) -> Vec<MarkdownLogicalLine> {
         let source = self.buffer.clone();
         let last_newline_idx = source.rfind('\n');
@@ -65,6 +69,14 @@ impl MarkdownStreamCollector {
         } else {
             return Vec::new();
         };
+
+        // Don't commit if trailing lines look like potential table rows.
+        // Tables aren't recognized until the separator row `|---|---|` is seen,
+        // so we need to buffer potential table content until we're sure.
+        if ends_with_potential_table(&source) {
+            return Vec::new();
+        }
+
         let rendered = crate::markdown_render::render_markdown_logical_lines(&source);
         let mut complete_line_count = rendered.len();
         if complete_line_count > 0 && is_blank_logical_line(&rendered[complete_line_count - 1]) {
@@ -113,6 +125,50 @@ impl MarkdownStreamCollector {
         self.clear();
         out
     }
+}
+
+/// Check if the source ends with lines that could be part of an incomplete table.
+///
+/// Tables in markdown require a separator row (`|---|---|`) to be recognized.
+/// Until we see either:
+/// - A blank line (ends the potential table)
+/// - A line that doesn't start with `|` (not a table row)
+/// - The separator line itself (table is confirmed)
+///
+/// We should buffer the content to avoid rendering table rows as plain text.
+fn ends_with_potential_table(source: &str) -> bool {
+    let lines: Vec<&str> = source.lines().collect();
+    if lines.is_empty() {
+        return false;
+    }
+
+    // Find the last non-empty line
+    let last_line = lines.iter().rev().find(|l| !l.trim().is_empty());
+    let Some(last_line) = last_line else {
+        return false;
+    };
+
+    // If the last line doesn't start with |, it's not a potential table
+    if !last_line.trim_start().starts_with('|') {
+        return false;
+    }
+
+    // Check if this looks like a table separator (|---|---| pattern)
+    // If we have a separator, the table structure is confirmed
+    let is_separator = last_line
+        .trim()
+        .chars()
+        .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace());
+
+    if is_separator && last_line.contains('-') {
+        // We have a separator, so the table is at least partially confirmed.
+        // But we should still buffer until we see a non-table line or finalize.
+        // Check if there's more content after the separator.
+        return true;
+    }
+
+    // Last line looks like a table row but no separator yet - buffer it
+    true
 }
 
 fn is_blank_logical_line(line: &MarkdownLogicalLine) -> bool {
@@ -174,20 +230,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn e2e_stream_blockquote_simple_is_green() {
+    async fn e2e_stream_blockquote_simple_is_styled() {
+        use ratatui::style::Modifier;
         let out = super::simulate_stream_markdown_for_tests(&["> Hello\n"], true);
         assert_eq!(out.len(), 1);
         let l = &out[0];
-        assert_eq!(
-            l.line_style.fg,
-            Some(Color::Green),
-            "expected blockquote line fg green, got {:?}",
-            l.line_style.fg
+        // Blockquotes now use dim+italic instead of green
+        assert!(
+            l.line_style
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC),
+            "expected blockquote line to have dim+italic modifiers, got {:?}",
+            l.line_style
         );
     }
 
     #[tokio::test]
-    async fn e2e_stream_blockquote_nested_is_green() {
+    async fn e2e_stream_blockquote_nested_is_styled() {
+        use ratatui::style::Modifier;
         let out = super::simulate_stream_markdown_for_tests(&["> Level 1\n>> Level 2\n"], true);
         // Filter out any blank lines that may be inserted at paragraph starts.
         let non_blank: Vec<_> = out
@@ -195,21 +255,44 @@ mod tests {
             .filter(|l| {
                 let t = logical_line_text(l);
                 let t = t.trim();
-                // Ignore quote-only blank lines like ">" inserted at paragraph boundaries.
-                !(t.is_empty() || t == ">")
+                // Ignore quote-only blank lines inserted at paragraph boundaries.
+                !t.is_empty()
             })
             .collect();
         assert_eq!(non_blank.len(), 2);
-        assert_eq!(non_blank[0].line_style.fg, Some(Color::Green));
-        assert_eq!(non_blank[1].line_style.fg, Some(Color::Green));
+        // Blockquotes now use dim+italic instead of green
+        assert!(
+            non_blank[0]
+                .line_style
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC)
+        );
+        assert!(
+            non_blank[1]
+                .line_style
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC)
+        );
     }
 
     #[tokio::test]
-    async fn e2e_stream_blockquote_with_list_items_is_green() {
+    async fn e2e_stream_blockquote_with_list_items_is_styled() {
+        use ratatui::style::Modifier;
         let out = super::simulate_stream_markdown_for_tests(&["> - item 1\n> - item 2\n"], true);
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].line_style.fg, Some(Color::Green));
-        assert_eq!(out[1].line_style.fg, Some(Color::Green));
+        // Blockquotes now use dim+italic instead of green
+        assert!(
+            out[0]
+                .line_style
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC)
+        );
+        assert!(
+            out[1]
+                .line_style
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC)
+        );
     }
 
     #[tokio::test]
@@ -242,11 +325,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn e2e_stream_blockquote_wrap_preserves_green_style() {
+    async fn e2e_stream_blockquote_wrap_preserves_style() {
+        use ratatui::style::Modifier;
         let long = "> This is a very long quoted line that should wrap across multiple columns to verify style preservation.";
         let out = super::simulate_stream_markdown_for_tests(&[long, "\n"], true);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].line_style.fg, Some(Color::Green));
+        // Blockquotes now use dim+italic instead of green
+        assert!(
+            out[0]
+                .line_style
+                .add_modifier
+                .contains(Modifier::DIM | Modifier::ITALIC)
+        );
     }
 
     #[tokio::test]
@@ -268,13 +358,14 @@ mod tests {
         c.push_delta("## Heading\n");
         let out2 = c.commit_complete_lines();
         let s2: Vec<String> = out2.iter().map(logical_line_text).collect();
+        // Headings no longer show ## prefix
         assert_eq!(
             s2,
-            vec!["", "## Heading"],
+            vec!["", "Heading"],
             "expected a blank separator then the heading line"
         );
         assert_eq!(logical_line_text(&out1[0]), "Hello.");
-        assert_eq!(logical_line_text(&out2[1]), "## Heading");
+        assert_eq!(logical_line_text(&out2[1]), "Heading");
     }
 
     #[tokio::test]
@@ -301,9 +392,10 @@ mod tests {
         c.push_delta("\n");
         let out2 = c.commit_complete_lines();
         let s2: Vec<String> = out2.iter().map(logical_line_text).collect();
+        // Headings no longer show ## prefix
         assert_eq!(
             s2,
-            vec!["", "## Adding Bird subcommand"],
+            vec!["", "Adding Bird subcommand"],
             "expected the heading line only on the final commit"
         );
 
@@ -417,9 +509,9 @@ mod tests {
             texts.iter().all(|s| !s.contains("```")),
             "no fence markers expected: {texts:?}"
         );
-        // Expect the heading and no fence markers. A blank separator may or may not be rendered at start.
+        // Expect the heading and no fence markers. Headings no longer show ## prefix.
         assert!(
-            texts.iter().any(|s| s == "## Heading"),
+            texts.iter().any(|s| s == "Heading"),
             "expected heading line: {texts:?}"
         );
     }
@@ -433,7 +525,8 @@ mod tests {
             Some(i) => i,
             None => panic!("para present"),
         };
-        let head_idx = match texts.iter().position(|s| s == "## Title") {
+        // Headings no longer show ## prefix
+        let head_idx = match texts.iter().position(|s| s == "Title") {
             Some(i) => i,
             None => panic!("heading present"),
         };

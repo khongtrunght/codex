@@ -11,15 +11,15 @@ narrow:
     used to bake soft wraps
     into hard line breaks.
   
-  > A blockquote line that
-  > is also long enough to
-  > wrap and should reflow
-  > cleanly.
+    A blockquote line that
+    is also long enough to
+    wrap and should reflow
+    cleanly.
 
 wide:
 • - This is a long list item that should reflow when the viewport width changes.
     The old streaming implementation used to bake soft wraps into hard line
     breaks.
   
-  > A blockquote line that is also long enough to wrap and should reflow
-  > cleanly.
+    A blockquote line that is also long enough to wrap and should reflow
+    cleanly.
