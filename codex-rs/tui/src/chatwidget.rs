@@ -3266,6 +3266,7 @@ impl ChatWidget {
             .into_iter()
             .map(|preset| {
                 let name = match preset {
+                    CollaborationMode::None => "None",
                     CollaborationMode::Plan => "Plan",
                     CollaborationMode::PairProgramming => "Pair Programming",
                     CollaborationMode::Execute => "Execute",
@@ -4265,13 +4266,14 @@ impl ChatWidget {
             return None;
         }
         match &self.stored_collaboration_mode {
+            CollaborationMode::None => None,
             CollaborationMode::Plan => Some("Plan"),
             CollaborationMode::PairProgramming => Some("Pair Programming"),
             CollaborationMode::Execute => Some("Execute"),
         }
     }
 
-    /// Cycle to the next collaboration mode variant (Plan -> PairProgramming -> Execute -> Plan).
+    /// Cycle to the next collaboration mode variant (None -> Plan -> PairProgramming -> Execute -> None).
     fn cycle_collaboration_mode(&mut self) {
         if !self.collaboration_modes_enabled() {
             return;

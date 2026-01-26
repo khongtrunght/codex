@@ -112,6 +112,7 @@ fn generate_approval_message(
     file_path: &str,
 ) -> String {
     let mode_name = match target_mode {
+        CollaborationMode::None => "default",
         CollaborationMode::PairProgramming => "pair programming",
         CollaborationMode::Execute => "execute",
         CollaborationMode::Plan => "plan",

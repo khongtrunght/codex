@@ -334,6 +334,7 @@ impl DeveloperInstructions {
     /// behavior and interaction style. Returns `None` if the mode has no instructions.
     pub fn from_collaboration_mode(mode: &CollaborationMode) -> Option<DeveloperInstructions> {
         let instructions = match mode {
+            CollaborationMode::None => return None,
             CollaborationMode::Plan => COLLABORATION_MODE_PLAN,
             CollaborationMode::PairProgramming => COLLABORATION_MODE_PAIR_PROGRAMMING,
             CollaborationMode::Execute => COLLABORATION_MODE_EXECUTE,

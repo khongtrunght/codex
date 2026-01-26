@@ -166,11 +166,12 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         }
         FooterMode::ShortcutSummary => {
             let mut line = Line::from("");
-            // Show collaboration mode indicator if enabled
+            // Show collaboration mode indicator if enabled (None mode shows nothing)
             if let Some(ref mode) = props.collaboration_mode {
-                let indicator = collaboration_mode_indicator(mode);
-                line.extend(indicator.spans);
-                line.push_span(" · ".dim());
+                if let Some(indicator) = collaboration_mode_indicator(mode) {
+                    line.extend(indicator.spans);
+                    line.push_span(" · ".dim());
+                }
             }
             let context = context_window_line(
                 props.context_window_percent,
@@ -222,11 +223,12 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         FooterMode::EscHint => vec![esc_hint_line(props.esc_backtrack_hint)],
         FooterMode::ContextOnly => {
             let mut line = Line::from("");
-            // Show collaboration mode indicator if enabled
+            // Show collaboration mode indicator if enabled (None mode shows nothing)
             if let Some(ref mode) = props.collaboration_mode {
-                let indicator = collaboration_mode_indicator(mode);
-                line.extend(indicator.spans);
-                line.push_span(" · ".dim());
+                if let Some(indicator) = collaboration_mode_indicator(mode) {
+                    line.extend(indicator.spans);
+                    line.push_span(" · ".dim());
+                }
             }
             let context = context_window_line(
                 props.context_window_percent,
@@ -370,16 +372,20 @@ fn build_columns(entries: Vec<Line<'static>>) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn collaboration_mode_indicator(mode: &CollaborationMode) -> Line<'static> {
+fn collaboration_mode_indicator(mode: &CollaborationMode) -> Option<Line<'static>> {
+    // None mode shows no indicator
+    if matches!(mode, CollaborationMode::None) {
+        return None;
+    }
     let icon = collaboration_modes::icon(mode);
     let name = collaboration_modes::display_name(mode);
     let color = collaboration_modes::color(mode);
-    Line::from(vec![
+    Some(Line::from(vec![
         Span::styled(format!("{icon} {name}"), Style::default().fg(color)),
         " (".dim(),
         key_hint::shift(KeyCode::Tab).into(),
         " to change)".dim(),
-    ])
+    ]))
 }
 
 fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>) -> Line<'static> {

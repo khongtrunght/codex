@@ -134,8 +134,9 @@ pub enum AltScreenMode {
 )]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum CollaborationMode {
-    Plan,
     #[default]
+    None,
+    Plan,
     PairProgramming,
     Execute,
 }

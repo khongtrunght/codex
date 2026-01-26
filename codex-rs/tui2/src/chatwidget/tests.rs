@@ -1703,17 +1703,24 @@ async fn collab_mode_shift_tab_cycles_only_when_enabled_and_idle() {
     assert_eq!(chat.stored_collaboration_mode, initial);
 
     chat.set_feature_enabled(Feature::CollaborationModes, true);
-
-    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    // Default is now None
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::Execute
+        CollaborationMode::None
     ));
 
+    // Cycle: None -> Plan
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
         CollaborationMode::Plan
+    ));
+
+    // Cycle: Plan -> PairProgramming
+    chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+    assert!(matches!(
+        chat.stored_collaboration_mode,
+        CollaborationMode::PairProgramming
     ));
 
     chat.on_task_started();
@@ -1735,11 +1742,14 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
         "expected collaboration picker: {popup}"
     );
 
+    // Move down to select Plan (first is None, second is Plan)
+    chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     let selected_mode = match rx.try_recv() {
         Ok(AppEvent::UpdateCollaborationMode(mode)) => mode,
         other => panic!("expected UpdateCollaborationMode event, got {other:?}"),
     };
+    assert!(matches!(selected_mode, CollaborationMode::Plan));
     chat.set_collaboration_mode(selected_mode);
 
     chat.bottom_pane
@@ -1747,11 +1757,11 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming),
+            collaboration_mode: Some(CollaborationMode::Plan),
             ..
         } => {}
         other => {
-            panic!("expected Op::UserTurn with pair programming collab mode, got {other:?}")
+            panic!("expected Op::UserTurn with Plan collab mode, got {other:?}")
         }
     }
 
@@ -1760,17 +1770,17 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming),
+            collaboration_mode: Some(CollaborationMode::Plan),
             ..
         } => {}
         other => {
-            panic!("expected Op::UserTurn with pair programming collab mode, got {other:?}")
+            panic!("expected Op::UserTurn with Plan collab mode, got {other:?}")
         }
     }
 }
 
 #[tokio::test]
-async fn collab_mode_defaults_to_pair_programming_when_enabled() {
+async fn collab_mode_defaults_to_none_when_enabled() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
     chat.conversation_id = Some(ThreadId::new());
     chat.set_feature_enabled(Feature::CollaborationModes, true);
@@ -1780,22 +1790,22 @@ async fn collab_mode_defaults_to_pair_programming_when_enabled() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::PairProgramming),
+            collaboration_mode: Some(CollaborationMode::None),
             ..
         } => {}
         other => {
-            panic!("expected Op::UserTurn with pair programming collab mode, got {other:?}")
+            panic!("expected Op::UserTurn with None collab mode, got {other:?}")
         }
     }
 }
 
 #[tokio::test]
-async fn collab_mode_enabling_sets_pair_programming_default() {
+async fn collab_mode_enabling_sets_none_default() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
     chat.set_feature_enabled(Feature::CollaborationModes, true);
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::PairProgramming
+        CollaborationMode::None
     ));
 }
 

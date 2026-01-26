@@ -3229,6 +3229,7 @@ impl ChatWidget {
             .into_iter()
             .map(|preset| {
                 let name = match preset {
+                    CollaborationMode::None => "None",
                     CollaborationMode::Plan => "Plan",
                     CollaborationMode::PairProgramming => "Pair Programming",
                     CollaborationMode::Execute => "Execute",
@@ -4154,6 +4155,7 @@ impl ChatWidget {
             self.bottom_pane.set_collaboration_modes_enabled(enabled);
             self.stored_collaboration_mode = CollaborationMode::default();
             if enabled {
+                // Footer handles None mode by showing nothing
                 self.bottom_pane
                     .set_collaboration_mode(Some(self.stored_collaboration_mode));
             } else {
@@ -4228,6 +4230,7 @@ impl ChatWidget {
             return None;
         }
         match &self.stored_collaboration_mode {
+            CollaborationMode::None => None,
             CollaborationMode::Plan => Some("Plan"),
             CollaborationMode::PairProgramming => Some("Pair Programming"),
             CollaborationMode::Execute => Some("Execute"),
@@ -4259,6 +4262,7 @@ impl ChatWidget {
 
         self.stored_collaboration_mode = mode;
         // Update the footer to show the collaboration mode persistently
+        // (None mode is handled by footer - shows nothing)
         self.bottom_pane.set_collaboration_mode(Some(mode));
         self.request_redraw();
     }

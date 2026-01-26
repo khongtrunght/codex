@@ -3,6 +3,7 @@ use codex_protocol::config_types::CollaborationMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ModeKind {
+    None,
     Plan,
     PairProgramming,
     Execute,
@@ -10,6 +11,7 @@ enum ModeKind {
 
 fn mode_kind(mode: &CollaborationMode) -> ModeKind {
     match mode {
+        CollaborationMode::None => ModeKind::None,
         CollaborationMode::Plan => ModeKind::Plan,
         CollaborationMode::PairProgramming => ModeKind::PairProgramming,
         CollaborationMode::Execute => ModeKind::Execute,

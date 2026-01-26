@@ -4,6 +4,7 @@ use ratatui::style::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ModeKind {
+    None,
     Plan,
     PairProgramming,
     Execute,
@@ -13,6 +14,7 @@ enum ModeKind {
 /// Get the icon for a collaboration mode.
 pub(crate) fn icon(mode: &CollaborationMode) -> &'static str {
     match mode {
+        CollaborationMode::None => "",         // No icon for None mode
         CollaborationMode::Plan => "\u{23F8}", // ⏸ (pause - thoughtful planning)
         CollaborationMode::PairProgramming => "\u{21C4}", // ⇄ (bidirectional collaboration)
         CollaborationMode::Execute => "\u{23F5}", // ⏵ (play - autonomous execution)
@@ -22,6 +24,7 @@ pub(crate) fn icon(mode: &CollaborationMode) -> &'static str {
 /// Get the display name for a collaboration mode.
 pub(crate) fn display_name(mode: &CollaborationMode) -> &'static str {
     match mode {
+        CollaborationMode::None => "None",
         CollaborationMode::Plan => "Plan",
         CollaborationMode::PairProgramming => "Pair Programming",
         CollaborationMode::Execute => "Execute",
@@ -31,6 +34,7 @@ pub(crate) fn display_name(mode: &CollaborationMode) -> &'static str {
 /// Get the color for a collaboration mode.
 pub(crate) fn color(mode: &CollaborationMode) -> Color {
     match mode {
+        CollaborationMode::None => Color::Reset, // Default terminal color
         CollaborationMode::Plan => Color::Cyan,
         CollaborationMode::PairProgramming => Color::Yellow,
         CollaborationMode::Execute => Color::Green,
@@ -39,6 +43,7 @@ pub(crate) fn color(mode: &CollaborationMode) -> Color {
 
 fn mode_kind(mode: &CollaborationMode) -> ModeKind {
     match mode {
+        CollaborationMode::None => ModeKind::None,
         CollaborationMode::Plan => ModeKind::Plan,
         CollaborationMode::PairProgramming => ModeKind::PairProgramming,
         CollaborationMode::Execute => ModeKind::Execute,
