@@ -660,8 +660,6 @@ impl ChatWidget {
             &model_for_header,
             event,
             self.show_welcome_banner,
-            self.collaboration_modes_enabled(),
-            self.stored_collaboration_mode.clone(),
         );
         self.apply_session_info_cell(session_info_cell);
 
@@ -1677,11 +1675,7 @@ impl ChatWidget {
         let stored_collaboration_mode = CollaborationMode::default();
         let stored_model = model_for_header.clone();
         let stored_reasoning_effort = None;
-        let active_cell = Some(Self::placeholder_session_header_cell(
-            &config,
-            config.features.enabled(Feature::CollaborationModes),
-            stored_collaboration_mode.clone(),
-        ));
+        let active_cell = Some(Self::placeholder_session_header_cell(&config));
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -4241,11 +4235,7 @@ impl ChatWidget {
     }
 
     /// Build a placeholder header cell while the session is configuring.
-    fn placeholder_session_header_cell(
-        config: &Config,
-        is_collaboration: bool,
-        collaboration_mode: CollaborationMode,
-    ) -> Box<dyn HistoryCell> {
+    fn placeholder_session_header_cell(config: &Config) -> Box<dyn HistoryCell> {
         let placeholder_style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
         Box::new(history_cell::SessionHeaderHistoryCell::new_with_style(
             DEFAULT_MODEL_DISPLAY_NAME.to_string(),
@@ -4253,8 +4243,6 @@ impl ChatWidget {
             None,
             config.cwd.clone(),
             CODEX_CLI_VERSION,
-            is_collaboration,
-            collaboration_mode,
         ))
     }
 

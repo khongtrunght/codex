@@ -2844,8 +2844,6 @@ mod tests {
                 app.chat_widget.current_model(),
                 event,
                 is_first,
-                false,
-                codex_protocol::config_types::CollaborationMode::Execute,
             )) as Arc<dyn HistoryCell>
         };
 
