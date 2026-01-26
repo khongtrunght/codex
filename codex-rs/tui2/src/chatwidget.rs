@@ -1200,6 +1200,14 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn on_attachment_loaded(&mut self, event: codex_core::protocol::AttachmentEvent) {
+        self.add_to_history(history_cell::new_attachment_cell(
+            event.data,
+            &self.config.cwd,
+        ));
+        self.request_redraw();
+    }
+
     fn on_patch_apply_end(&mut self, event: codex_core::protocol::PatchApplyEndEvent) {
         let ev2 = event.clone();
         self.defer_or_handle(
@@ -2396,7 +2404,7 @@ impl ChatWidget {
             final_output_json_schema: None,
             collaboration_mode: self
                 .collaboration_modes_enabled()
-                .then(|| self.stored_collaboration_mode.clone()),
+                .then_some(self.stored_collaboration_mode),
         };
 
         if !self.agent_turn_running {
@@ -2625,6 +2633,7 @@ impl ChatWidget {
                 // Update stored collaboration mode when exiting plan mode
                 self.set_collaboration_mode(ev.target_mode);
             }
+            EventMsg::AttachmentLoaded(ev) => self.on_attachment_loaded(ev),
         }
     }
 
@@ -3215,7 +3224,7 @@ impl ChatWidget {
                 let is_current =
                     collaboration_modes::same_variant(&self.stored_collaboration_mode, &preset);
                 let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::UpdateCollaborationMode(preset.clone()));
+                    tx.send(AppEvent::UpdateCollaborationMode(preset));
                 })];
                 SelectionItem {
                     name: name.to_string(),

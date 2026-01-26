@@ -41,6 +41,7 @@ use codex_protocol::items::UserMessageItem;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::AttachmentEvent;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::ItemCompletedEvent;
@@ -494,7 +495,7 @@ impl SessionConfiguration {
         if let Some(effort) = updates.reasoning_effort {
             next_configuration.model_reasoning_effort = effort;
         }
-        if let Some(collaboration_mode) = updates.collaboration_mode.clone() {
+        if let Some(collaboration_mode) = updates.collaboration_mode {
             next_configuration.collaboration_mode = collaboration_mode;
         }
         if let Some(summary) = updates.reasoning_summary {
@@ -1532,7 +1533,7 @@ impl Session {
         // Update session's collaboration mode
         let _ = self
             .update_settings(SessionSettingsUpdate {
-                collaboration_mode: Some(target_mode.clone()),
+                collaboration_mode: Some(target_mode),
                 ..Default::default()
             })
             .await;
@@ -1669,7 +1670,7 @@ impl Session {
 
     pub(crate) async fn collaboration_mode(&self) -> CollaborationMode {
         let state = self.state.lock().await;
-        state.session_configuration.collaboration_mode.clone()
+        state.session_configuration.collaboration_mode
     }
 
     /// Collect attachments from all collectors.
@@ -2375,9 +2376,8 @@ mod handlers {
             .lock()
             .await
             .session_configuration
-            .collaboration_mode
-            .clone();
-        let next_collaboration_mode = updates.collaboration_mode.clone();
+            .collaboration_mode;
+        let next_collaboration_mode = updates.collaboration_mode;
 
         if let Err(err) = sess.update_settings(updates).await {
             sess.send_event_raw(Event {
@@ -2454,9 +2454,8 @@ mod handlers {
             .lock()
             .await
             .session_configuration
-            .collaboration_mode
-            .clone();
-        let next_collaboration_mode = updates.collaboration_mode.clone();
+            .collaboration_mode;
+        let next_collaboration_mode = updates.collaboration_mode;
         let Ok(current_context) = sess.new_turn_with_sub_id(sub_id, updates).await else {
             // new_turn_with_sub_id already emits the error event.
             return;
@@ -3049,12 +3048,19 @@ pub(crate) async fn run_turn(
     sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
         .await;
 
-    // Record file mention attachments after user prompt
+    // Record file mention attachments after user prompt and emit events for UI display
     if !file_mention_attachments.is_empty() {
-        let attachment_items: Vec<ResponseItem> = file_mention_attachments
-            .into_iter()
-            .map(|data| ResponseItem::Attachment { data })
-            .collect();
+        let mut attachment_items: Vec<ResponseItem> =
+            Vec::with_capacity(file_mention_attachments.len());
+        for data in file_mention_attachments {
+            // Emit attachment event for TUI display
+            sess.send_event(
+                &turn_context,
+                EventMsg::AttachmentLoaded(AttachmentEvent { data: data.clone() }),
+            )
+            .await;
+            attachment_items.push(ResponseItem::Attachment { data });
+        }
         sess.record_conversation_items(&turn_context, &attachment_items)
             .await;
     }

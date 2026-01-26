@@ -107,7 +107,8 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::CollabCloseBegin(_)
         | EventMsg::CollabCloseEnd(_)
         | EventMsg::ExitPlanModeApprovalRequest(_)
-        | EventMsg::ExitedPlanMode(_) => false,
+        | EventMsg::ExitedPlanMode(_)
+        | EventMsg::AttachmentLoaded(_) => false,
     }
 }
 

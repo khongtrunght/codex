@@ -1915,7 +1915,7 @@ async fn collab_mode_shift_tab_cycles_only_when_enabled_and_idle() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(None).await;
     chat.set_feature_enabled(Feature::CollaborationModes, false);
 
-    let initial = chat.stored_collaboration_mode.clone();
+    let initial = chat.stored_collaboration_mode;
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert_eq!(chat.stored_collaboration_mode, initial);
 
@@ -1934,7 +1934,7 @@ async fn collab_mode_shift_tab_cycles_only_when_enabled_and_idle() {
     ));
 
     chat.on_task_started();
-    let before = chat.stored_collaboration_mode.clone();
+    let before = chat.stored_collaboration_mode;
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert_eq!(chat.stored_collaboration_mode, before);
 }

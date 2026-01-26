@@ -92,12 +92,7 @@ impl ToolHandler for ExitPlanModeHandler {
 
         // Complete exit from plan mode
         session
-            .complete_exit_plan_mode(
-                &turn,
-                target_mode.clone(),
-                path_str.clone(),
-                plan_content.clone(),
-            )
+            .complete_exit_plan_mode(&turn, target_mode, path_str.clone(), plan_content.clone())
             .await;
 
         // Build response with plan data

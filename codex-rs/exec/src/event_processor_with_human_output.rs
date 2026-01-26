@@ -621,7 +621,8 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             | EventMsg::SubAgentSpawnEnd(_)
             | EventMsg::SubAgentComplete(_)
             | EventMsg::ExitPlanModeApprovalRequest(_)
-            | EventMsg::ExitedPlanMode(_) => {}
+            | EventMsg::ExitedPlanMode(_)
+            | EventMsg::AttachmentLoaded(_) => {}
         }
         CodexStatus::Running
     }

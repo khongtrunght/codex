@@ -2536,7 +2536,7 @@ impl ChatWidget {
             final_output_json_schema: None,
             collaboration_mode: self
                 .collaboration_modes_enabled()
-                .then(|| self.stored_collaboration_mode.clone()),
+                .then_some(self.stored_collaboration_mode),
         };
 
         self.codex_op_tx.send(op).unwrap_or_else(|e| {
@@ -2723,7 +2723,8 @@ impl ChatWidget {
             | EventMsg::SubAgentSpawnEnd(_)
             | EventMsg::SubAgentComplete(_)
             | EventMsg::ExitPlanModeApprovalRequest(_)
-            | EventMsg::ExitedPlanMode(_) => {}
+            | EventMsg::ExitedPlanMode(_)
+            | EventMsg::AttachmentLoaded(_) => {}
         }
     }
 
@@ -3272,7 +3273,7 @@ impl ChatWidget {
                 let is_current =
                     collaboration_modes::same_variant(&self.stored_collaboration_mode, &preset);
                 let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                    tx.send(AppEvent::UpdateCollaborationMode(preset.clone()));
+                    tx.send(AppEvent::UpdateCollaborationMode(preset));
                 })];
                 SelectionItem {
                     name: name.to_string(),

@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use crate::ThreadId;
 use crate::approvals::ElicitationRequestEvent;
+use crate::attachment::AttachmentData;
 use crate::config_types::CollaborationMode;
 use crate::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use crate::custom_prompts::CustomPrompt;
@@ -707,6 +708,10 @@ pub enum EventMsg {
     /// User/system input message (what was sent to the model)
     UserMessage(UserMessageEvent),
 
+    /// Attachment loaded notification for UI display.
+    /// Emitted when attachments (file mentions, plan mode, etc.) are collected.
+    AttachmentLoaded(AttachmentEvent),
+
     /// Agent text output delta message
     AgentMessageDelta(AgentMessageDeltaEvent),
 
@@ -1371,6 +1376,15 @@ pub struct UserMessageEvent {
     /// UI-defined spans within `message` used to render or persist special elements.
     #[serde(default)]
     pub text_elements: Vec<crate::user_input::TextElement>,
+}
+
+/// Event emitted when an attachment is loaded and ready for UI display.
+/// Attachments are contextual information (file mentions, plan mode, etc.)
+/// that should be displayed in the conversation history.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct AttachmentEvent {
+    /// The attachment data containing type-specific information.
+    pub data: AttachmentData,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
