@@ -167,12 +167,11 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         FooterMode::ShortcutSummary => {
             let mut line = Line::from("");
             // Show collaboration mode indicator if enabled (None mode shows nothing)
-            if let Some(ref mode) = props.collaboration_mode {
-                if let Some(indicator) = collaboration_mode_indicator(mode) {
+            if let Some(ref mode) = props.collaboration_mode
+                && let Some(indicator) = collaboration_mode_indicator(mode) {
                     line.extend(indicator.spans);
                     line.push_span(" · ".dim());
                 }
-            }
             let context = context_window_line(
                 props.context_window_percent,
                 props.context_window_used_tokens,
@@ -224,12 +223,11 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         FooterMode::ContextOnly => {
             let mut line = Line::from("");
             // Show collaboration mode indicator if enabled (None mode shows nothing)
-            if let Some(ref mode) = props.collaboration_mode {
-                if let Some(indicator) = collaboration_mode_indicator(mode) {
+            if let Some(ref mode) = props.collaboration_mode
+                && let Some(indicator) = collaboration_mode_indicator(mode) {
                     line.extend(indicator.spans);
                     line.push_span(" · ".dim());
                 }
-            }
             let context = context_window_line(
                 props.context_window_percent,
                 props.context_window_used_tokens,
