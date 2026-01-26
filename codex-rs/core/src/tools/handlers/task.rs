@@ -133,6 +133,9 @@ impl ToolHandler for TaskHandler {
             .apply_to_config(&mut config, &mut tools_config)
             .map_err(FunctionCallError::RespondToModel)?;
 
+        // Set the model on config so the spawned agent uses the correct model
+        config.model = Some(model);
+
         // Spawn the agent
         let result = session
             .services
