@@ -1894,23 +1894,31 @@ impl MermaidHistoryCell {
         Self { code, citations }
     }
 
-    /// Generates a mermaid.live URL for the diagram.
+    /// Generates a mermaid.live URL for the diagram using pako compression.
     fn generate_mermaid_live_url(&self) -> String {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
         // Create the JSON payload that mermaid.live expects
+        // Note: "mermaid" must be an empty object {}, not a string "{}"
         let payload = serde_json::json!({
             "code": self.code,
-            "mermaid": "{}",
-            "autoSync": true,
-            "updateDiagram": true
+            "mermaid": {}
         });
 
         // Serialize to JSON string
         let json_str = payload.to_string();
 
-        // Base64 encode with URL-safe alphabet
-        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json_str.as_bytes());
+        // Compress using zlib (pako-compatible)
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+        encoder.write_all(json_str.as_bytes()).unwrap();
+        let compressed = encoder.finish().unwrap();
 
-        format!("https://mermaid.live/edit#base64:{encoded}")
+        // Base64 encode with URL-safe alphabet
+        let encoded = base64::engine::general_purpose::URL_SAFE.encode(&compressed);
+
+        format!("https://mermaid.live/edit#pako:{encoded}")
     }
 }
 
@@ -1919,14 +1927,16 @@ impl HistoryCell for MermaidHistoryCell {
         let line_count = self.code.lines().count();
         let url = self.generate_mermaid_live_url();
 
-        vec![Line::from(vec![
-            "✓ ".green(),
-            "Mermaid".bold(),
-            " diagram ".into(),
-            format!("({line_count} lines) ").dim(),
-            "View".cyan().underlined(),
-            format!(" {url}").dim(),
-        ])]
+        vec![
+            Line::from(vec![
+                "✓ ".green(),
+                "Mermaid".bold(),
+                " diagram ".into(),
+                format!("({line_count} lines)").dim(),
+            ]),
+            // Full URL on separate line - most terminals auto-detect and make it clickable
+            Line::from(vec!["  ".into(), url.dim()]),
+        ]
     }
 }
 

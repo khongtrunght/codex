@@ -52,7 +52,10 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         // SubAgent events are persisted for resume support
         | EventMsg::SubAgentSpawnBegin(_)
         | EventMsg::SubAgentSpawnEnd(_)
-        | EventMsg::SubAgentComplete(_) => true,
+        | EventMsg::SubAgentComplete(_)
+        // Visual content events are persisted so they appear on resume
+        | EventMsg::ViewImageToolCall(_)
+        | EventMsg::MermaidToolCall(_) => true,
         EventMsg::Error(_)
         | EventMsg::Warning(_)
         | EventMsg::TurnStarted(_)
@@ -89,8 +92,6 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::ListSkillsResponse(_)
         | EventMsg::PlanUpdate(_)
         | EventMsg::ShutdownComplete
-        | EventMsg::ViewImageToolCall(_)
-        | EventMsg::MermaidToolCall(_)
         | EventMsg::DeprecationNotice(_)
         | EventMsg::ItemStarted(_)
         | EventMsg::ItemCompleted(_)
