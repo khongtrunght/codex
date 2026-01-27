@@ -120,35 +120,6 @@ where
 // Plan Mode Prompts (external templates)
 // =============================================================================
 
-/// Template for enhanced multi-agent plan mode instructions (main session).
-#[derive(Template)]
-#[template(path = "plan_mode/enhanced.md")]
-pub struct PlanModeEnhancedPrompt<T>
-where
-    T: ToolNames,
-{
-    pub tools: T,
-    pub plan_file_info: String,
-    pub plan_agent_count: usize,
-    pub explore_agent_count: usize,
-    pub multi_agent_mode: bool,
-}
-
-/// Template for plan mode reentry instructions.
-#[derive(Template)]
-#[template(path = "plan_mode/reentry.md")]
-pub struct PlanModeReentryPrompt<T>
-where
-    T: ToolNames,
-{
-    pub tools: T,
-    pub plan_file_path: String,
-}
-
-// =============================================================================
-// Tool Handler Messages (inline templates)
-// =============================================================================
-
 /// Message shown when entering plan mode successfully.
 #[derive(Template)]
 #[template(

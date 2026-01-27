@@ -1,3 +1,4 @@
+use askama::Template;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -11,7 +12,6 @@ use crate::protocol::SYSTEM_REMINDER_CLOSE_TAG;
 use crate::protocol::SYSTEM_REMINDER_OPEN_TAG;
 
 // Collaboration mode templates
-const COLLABORATION_MODE_PLAN: &str = include_str!("prompts/collaboration_mode/plan.md");
 const COLLABORATION_MODE_PAIR_PROGRAMMING: &str =
     include_str!("prompts/collaboration_mode/pair_programming.md");
 const COLLABORATION_MODE_EXECUTE: &str = include_str!("prompts/collaboration_mode/execute.md");
@@ -70,13 +70,51 @@ impl From<AttachmentData> for ResponseItem {
             AttachmentData::PlanModeExit {
                 plan_file_path,
                 next_mode,
-            } => generate_exit_items(&plan_file_path, &next_mode),
+            } => generate_exit_items(&plan_file_path, next_mode),
             AttachmentData::CompactFileRestore { files } => {
                 generate_compact_file_restore_items(&files)
             }
             AttachmentData::FileMentions { contents } => generate_file_mention_items(&contents),
         }
     }
+}
+
+/// Number of parallel Plan agents to use for multi-perspective planning.
+const PLAN_AGENT_COUNT: usize = 3;
+
+/// Number of parallel Explore agents to use for codebase research.
+const EXPLORE_AGENT_COUNT: usize = 3;
+
+fn plan_agent_count_from_env_or_defaults() -> usize {
+    std::env::var("CODEX_PLAN_V2_AGENT_COUNT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| (1..=10).contains(&v))
+        .unwrap_or(PLAN_AGENT_COUNT)
+}
+
+fn explore_agent_count_from_env_or_default() -> usize {
+    std::env::var("CLAUDE_CODE_PLAN_V2_EXPLORE_AGENT_COUNT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| (1..=10).contains(&v))
+        .unwrap_or(EXPLORE_AGENT_COUNT)
+}
+
+#[derive(Template)]
+#[template(path = "plan_mode/enhanced.md")]
+pub struct PlanModeEnhancedPrompt {
+    pub plan_file_info: String,
+    pub plan_agent_count: usize,
+    pub explore_agent_count: usize,
+    pub multi_agent_mode: bool,
+}
+
+/// Template for plan mode reentry instructions.
+#[derive(Template)]
+#[template(path = "plan_mode/reentry.md")]
+pub struct PlanModeReentryPrompt {
+    pub plan_file_path: String,
 }
 
 fn generate_plan_mode_items(plan_file_path: &str, plan_exists: bool) -> ResponseItem {
@@ -88,25 +126,36 @@ fn generate_plan_mode_items(plan_file_path: &str, plan_exists: bool) -> Response
         format!("No plan file exists yet. You should create your plan at {plan_file_path}.")
     };
 
-    let contents = format!(
-        "{SYSTEM_REMINDER_OPEN_TAG}\nPlan mode is active.\n\n## Plan File Info:\n{plan_file_info}\n\n{COLLABORATION_MODE_PLAN}\n{SYSTEM_REMINDER_CLOSE_TAG}"
-    );
+    let num_planing_agent = plan_agent_count_from_env_or_defaults();
+
+    let contents = PlanModeEnhancedPrompt {
+        plan_file_info,
+        plan_agent_count: num_planing_agent,
+        explore_agent_count: explore_agent_count_from_env_or_default(),
+        multi_agent_mode: num_planing_agent > 1,
+    }
+    .to_string();
+
+    let contents = format!("{SYSTEM_REMINDER_OPEN_TAG}\n{contents}\n{SYSTEM_REMINDER_CLOSE_TAG}");
 
     wrap_in_developer_message(&contents)
 }
 
 /// Generate items for plan mode reentry.
 fn generate_reentry_items(plan_file_path: &str) -> ResponseItem {
-    let contents = format!(
-        "{SYSTEM_REMINDER_OPEN_TAG}\n## Re-entering Plan Mode\n\nYou are returning to plan mode. The plan file is at {plan_file_path}. Update it as needed.\n{SYSTEM_REMINDER_CLOSE_TAG}"
-    );
+    let contents = PlanModeReentryPrompt {
+        plan_file_path: plan_file_path.to_string(),
+    }
+    .to_string();
+
+    let contents = format!("{SYSTEM_REMINDER_OPEN_TAG}\n{contents}\n{SYSTEM_REMINDER_CLOSE_TAG}");
     wrap_in_developer_message(&contents)
 }
 
 /// Generate items for plan mode exit.
 fn generate_exit_items(
     plan_file_path: &Option<String>,
-    next_mode: &Option<CollaborationMode>,
+    next_mode: Option<CollaborationMode>,
 ) -> ResponseItem {
     let plan_file_info = match plan_file_path {
         Some(path) => {
