@@ -111,6 +111,8 @@ pub enum Feature {
     TaskTool,
     /// Enable the Mermaid diagram tool.
     MermaidTool,
+    /// Use GeneralMainPrompt for base instructions uniformly across all models.
+    UniformBaseInstructions,
 }
 
 impl Feature {
@@ -478,6 +480,16 @@ pub const FEATURES: &[FeatureSpec] = &[
             name: "Mermaid diagrams",
             menu_description: "Generate Mermaid diagrams to visualize architecture and flows.",
             announcement: "NEW! Visualize architecture with Mermaid diagrams. Enable in /experimental!",
+        },
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::UniformBaseInstructions,
+        key: "uniform_base_instructions",
+        stage: Stage::Experimental {
+            name: "Uniform base instructions",
+            menu_description: "Use GeneralMainPrompt for base instructions across all models.",
+            announcement: "NEW! Uniform base instructions for consistent agent behavior.",
         },
         default_enabled: false,
     },

@@ -22,14 +22,6 @@ impl<T: ToolNames + ?Sized> ToolNames for &T {
         (**self).is_apply_patch()
     }
 
-    fn glob_tool(&self) -> &'static str {
-        (**self).glob_tool()
-    }
-
-    fn grep_tool(&self) -> &'static str {
-        (**self).grep_tool()
-    }
-
     fn read_tool(&self) -> &'static str {
         (**self).read_tool()
     }
@@ -46,10 +38,10 @@ impl<T: ToolNames + ?Sized> ToolNames for &T {
         (**self).ask_user_question_tool()
     }
 
-    fn enter_plan_mode_tool(&self) -> &'static str {
-        (**self).enter_plan_mode_tool()
-    }
-
+    // fn enter_plan_mode_tool(&self) -> &'static str {
+    //     (**self).enter_plan_mode_tool()
+    // }
+    //
     fn exit_plan_mode_tool(&self) -> &'static str {
         (**self).exit_plan_mode_tool()
     }
@@ -70,14 +62,22 @@ pub trait ToolNames {
     fn write_tool_name(&self) -> &'static str;
     fn is_apply_patch(&self) -> bool;
 
-    fn glob_tool(&self) -> &'static str;
-    fn grep_tool(&self) -> &'static str;
-    fn read_tool(&self) -> &'static str;
-    fn task_tool(&self) -> &'static str;
-    fn todo_write_tool(&self) -> &'static str;
-    fn ask_user_question_tool(&self) -> &'static str;
-    fn enter_plan_mode_tool(&self) -> &'static str;
-    fn exit_plan_mode_tool(&self) -> &'static str;
+    fn read_tool(&self) -> &'static str {
+        crate::tools::spec::READ_FILE_TOOL_NAME
+    }
+    fn task_tool(&self) -> &'static str {
+        crate::tools::spec::TASK_TOOL_NAME
+    }
+    fn todo_write_tool(&self) -> &'static str {
+        crate::tools::spec::TODO_WRITE_TOOL_NAME
+    }
+    fn ask_user_question_tool(&self) -> &'static str {
+        crate::tools::spec::ASK_USER_QUESTION_TOOL_NAME
+    }
+    // fn enter_plan_mode_tool(&self) -> &'static str;
+    fn exit_plan_mode_tool(&self) -> &'static str {
+        crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME
+    }
 }
 
 /// Template for the general main prompt.
@@ -252,38 +252,6 @@ mod tests {
                 Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction)
             )
         }
-
-        fn glob_tool(&self) -> &'static str {
-            crate::tools::spec::GLOB_TOOL_NAME
-        }
-
-        fn grep_tool(&self) -> &'static str {
-            crate::tools::spec::GREP_FILES_TOOL_NAME
-        }
-
-        fn read_tool(&self) -> &'static str {
-            crate::tools::spec::READ_FILE_TOOL_NAME
-        }
-
-        fn task_tool(&self) -> &'static str {
-            crate::tools::spec::TASK_TOOL_NAME
-        }
-
-        fn todo_write_tool(&self) -> &'static str {
-            crate::tools::spec::TODO_WRITE_TOOL_NAME
-        }
-
-        fn ask_user_question_tool(&self) -> &'static str {
-            crate::tools::spec::ASK_USER_QUESTION_TOOL_NAME
-        }
-
-        fn enter_plan_mode_tool(&self) -> &'static str {
-            crate::tools::spec::ENTER_PLAN_MODE_TOOL_NAME
-        }
-
-        fn exit_plan_mode_tool(&self) -> &'static str {
-            crate::tools::spec::EXIT_PLAN_MODE_TOOL_NAME
-        }
     }
 
     #[test]
@@ -352,11 +320,9 @@ mod tests {
         let rendered = template.render().unwrap();
 
         // Fixed tool names should be rendered from constants
-        assert!(rendered.contains("todo_write"));
+        assert!(rendered.contains("update_plan")); // todo_write_tool renders to "update_plan"
         assert!(rendered.contains("ask_user_question"));
         assert!(rendered.contains("task"));
         assert!(rendered.contains("read_file"));
-        assert!(rendered.contains("glob"));
-        assert!(rendered.contains("grep_files"));
     }
 }

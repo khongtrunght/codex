@@ -11,10 +11,22 @@ use crate::model_provider_info::ModelProviderInfo;
 use crate::models_manager::collaboration_mode_presets::builtin_collaboration_mode_presets;
 use crate::models_manager::model_info;
 use crate::models_manager::model_presets::builtin_model_presets;
+use crate::prompt_template::GeneralMainPrompt;
+use crate::prompt_template::ToolNames;
+use crate::tools::spec::APPLY_PATCH_TOOL_NAME;
+use crate::tools::spec::BASH_TOOL_NAME;
+use crate::tools::spec::EDIT_FILE_TOOL_NAME;
+use crate::tools::spec::EXEC_COMMAND_TOOL_NAME;
+use crate::tools::spec::SHELL_COMMAND_TOOL_NAME;
+use crate::tools::spec::SHELL_TOOL_NAME;
+use crate::tools::spec::WRITE_FILE_TOOL_NAME;
+use askama::Template;
 use codex_api::ModelsClient;
 use codex_api::ReqwestTransport;
 use codex_app_server_protocol::AuthMode;
 use codex_protocol::config_types::CollaborationMode;
+use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::EditToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelsResponse;
@@ -33,6 +45,63 @@ const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 const OPENAI_DEFAULT_API_MODEL: &str = "gpt-5.2-codex";
 const OPENAI_DEFAULT_CHATGPT_MODEL: &str = "gpt-5.2-codex";
 const CODEX_AUTO_BALANCED_MODEL: &str = "codex-auto-balanced";
+
+/// Simple struct implementing ToolNames for rendering GeneralMainPrompt.
+struct SimpleToolConfig {
+    edit_tool: Option<EditToolType>,
+    shell_type: ConfigShellToolType,
+}
+
+impl ToolNames for SimpleToolConfig {
+    fn shell_tool_name(&self) -> &'static str {
+        match self.shell_type {
+            ConfigShellToolType::Bash => BASH_TOOL_NAME,
+            ConfigShellToolType::Local | ConfigShellToolType::Default => SHELL_TOOL_NAME,
+            ConfigShellToolType::ShellCommand => SHELL_COMMAND_TOOL_NAME,
+            ConfigShellToolType::UnifiedExec => EXEC_COMMAND_TOOL_NAME,
+            ConfigShellToolType::Disabled => SHELL_TOOL_NAME,
+        }
+    }
+
+    fn edit_tool_name(&self) -> &'static str {
+        match self.edit_tool {
+            Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction) => {
+                APPLY_PATCH_TOOL_NAME
+            }
+            Some(EditToolType::FileEdit) | None => EDIT_FILE_TOOL_NAME,
+        }
+    }
+
+    fn write_tool_name(&self) -> &'static str {
+        match self.edit_tool {
+            Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction) => {
+                APPLY_PATCH_TOOL_NAME
+            }
+            Some(EditToolType::FileEdit) | None => WRITE_FILE_TOOL_NAME,
+        }
+    }
+
+    fn is_apply_patch(&self) -> bool {
+        matches!(
+            self.edit_tool,
+            Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction)
+        )
+    }
+}
+
+/// Render the GeneralMainPrompt template with the given tool configuration.
+fn render_general_prompt(
+    edit_tool: Option<EditToolType>,
+    shell_type: ConfigShellToolType,
+) -> String {
+    let tools = SimpleToolConfig {
+        edit_tool,
+        shell_type,
+    };
+    GeneralMainPrompt { tools }
+        .render()
+        .unwrap_or_else(|_| "Failed to render GeneralMainPrompt template".to_string())
+}
 
 /// Strategy for refreshing available models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,11 +219,18 @@ impl ModelsManager {
             .await
             .into_iter()
             .find(|m| m.slug == model);
-        let model = if let Some(remote) = remote {
+        let mut model = if let Some(remote) = remote {
             remote
         } else {
             model_info::find_model_info_for_slug(model)
         };
+
+        // Replace base_instructions with GeneralMainPrompt when feature enabled
+        if config.features.enabled(Feature::UniformBaseInstructions) {
+            model.base_instructions =
+                render_general_prompt(model.effective_edit_tool_type(), model.shell_type);
+        }
+
         model_info::with_config_overrides(model, config)
     }
 

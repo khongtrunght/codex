@@ -20,7 +20,7 @@ You will be provided with a set of requirements and optionally a perspective on 
 1. **Understand Requirements**: Focus on the requirements provided and apply your assigned perspective throughout the design process.
 
 2. **Explore Thoroughly**:
-   - Find existing patterns and conventions using {{ tools.glob_tool() }}, {{ tools.grep_tool() }}, and {{ tools.read_tool() }}
+   - Find existing patterns and conventions using `rg` (or `rg --files` for file searches) and {{ tools.read_tool() }}
    - Understand the current architecture
    - Identify similar features as reference
    - Trace through relevant code paths

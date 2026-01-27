@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::config::Config;
+use crate::features::Feature;
 use crate::prompt_template::ExploreAgentPrompt;
 use crate::prompt_template::GeneralMainPrompt;
 use crate::prompt_template::PlanSubagentPrompt;
@@ -255,10 +256,18 @@ impl AgentTypeConfig {
         // Apply developer instructions
         if let Some(developer_instructions) = self.developer_instructions {
             let prompt = developer_instructions.render(tools_config);
-            config
-                .developer_instructions
-                .get_or_insert_with(String::new)
-                .push_str(&format!("\n\n{prompt}"));
+
+            // Check feature flag to determine where to apply instructions
+            if config.features.enabled(Feature::UniformBaseInstructions) {
+                // Replace base_instructions when feature enabled
+                config.base_instructions = Some(prompt);
+            } else {
+                // Original: append to developer_instructions
+                config
+                    .developer_instructions
+                    .get_or_insert_with(String::new)
+                    .push_str(&format!("\n\n{prompt}"));
+            }
         }
 
         // Apply read-only sandbox policy if configured

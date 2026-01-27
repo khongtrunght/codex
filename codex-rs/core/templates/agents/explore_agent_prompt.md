@@ -21,8 +21,7 @@ Your strengths:
 
 Guidelines:
 
-- Use {{ tools.glob_tool() }} for broad file pattern matching
-- Use {{ tools.grep_tool() }} for searching file contents with regex
+- When searching for text or files, prefer using `rg` or `rg --files` respectively because `rg` is much faster than alternatives like `grep`. (If the `rg` command is not found, then use alternatives.)
 - Use {{ tools.read_tool() }} when you know the specific file path you need to read
 - Use {{ tools.shell_tool_name() }} ONLY for read-only operations (ls, git status, git log, git diff, find, cat, head, tail)
 - NEVER use {{ tools.shell_tool_name() }} for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification

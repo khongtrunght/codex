@@ -36,8 +36,8 @@ pub const SHELL_TOOL_NAME: &str = "shell";
 pub const SHELL_COMMAND_TOOL_NAME: &str = "shell_command";
 pub const EXEC_COMMAND_TOOL_NAME: &str = "exec_command";
 pub const LIST_DIR_TOOL_NAME: &str = "list_dir";
-pub const TODO_WRITE_TOOL_NAME: &str = "todo_write";
-pub const ENTER_PLAN_MODE_TOOL_NAME: &str = "enter_plan_mode";
+pub const TODO_WRITE_TOOL_NAME: &str = "update_plan";
+// pub const ENTER_PLAN_MODE_TOOL_NAME: &str = "enter_plan_mode";
 pub const EXIT_PLAN_MODE_TOOL_NAME: &str = "exit_plan_mode";
 pub const ASK_USER_QUESTION_TOOL_NAME: &str = "ask_user_question";
 pub const MERMAID_TOOL_NAME: &str = "mermaid";
@@ -142,40 +142,6 @@ impl ToolNames for ToolsConfig {
             self.edit_tool_type,
             Some(EditToolType::ApplyPatchFreeform) | Some(EditToolType::ApplyPatchFunction)
         )
-    }
-
-    // === Fixed tool names (not configuration-dependent) ===
-
-    fn glob_tool(&self) -> &'static str {
-        GLOB_TOOL_NAME
-    }
-
-    fn grep_tool(&self) -> &'static str {
-        GREP_FILES_TOOL_NAME
-    }
-
-    fn read_tool(&self) -> &'static str {
-        READ_FILE_TOOL_NAME
-    }
-
-    fn task_tool(&self) -> &'static str {
-        TASK_TOOL_NAME
-    }
-
-    fn todo_write_tool(&self) -> &'static str {
-        TODO_WRITE_TOOL_NAME
-    }
-
-    fn ask_user_question_tool(&self) -> &'static str {
-        ASK_USER_QUESTION_TOOL_NAME
-    }
-
-    fn enter_plan_mode_tool(&self) -> &'static str {
-        ENTER_PLAN_MODE_TOOL_NAME
-    }
-
-    fn exit_plan_mode_tool(&self) -> &'static str {
-        EXIT_PLAN_MODE_TOOL_NAME
     }
 }
 

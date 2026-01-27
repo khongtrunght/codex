@@ -100,7 +100,7 @@ The user will primarily request you perform software engineering tasks. This inc
 <example>
 
 user: Where are errors from the client handled?
-assistant: [Uses the {{ tools.task_tool() }} tool with subagent_type=explore to find the files that handle client errors instead of using {{ tools.glob_tool() }} or {{ tools.grep_tool() }} directly]
+assistant: [Uses the {{ tools.task_tool() }} tool with subagent_type=explore to find the files that handle client errors instead of using `rg` directly]
 </example>
 <example>
 user: What is the codebase structure?
