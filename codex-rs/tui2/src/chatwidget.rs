@@ -793,6 +793,7 @@ impl ChatWidget {
     fn on_task_complete(&mut self, last_agent_message: Option<String>) {
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
+        self.flush_interrupt_queue();
         // Mark task stopped and request redraw now that all content is in history.
         self.agent_turn_running = false;
         self.update_task_running_state();
@@ -1464,7 +1465,11 @@ impl ChatWidget {
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if !event.success {
+            // Flush any active streaming state before adding the failure cell.
+            // This ensures the failure cell is rendered in the correct order.
+            self.flush_answer_stream_with_separator();
             self.add_to_history(history_cell::new_patch_apply_failure(event.stderr));
+            self.request_redraw();
         }
         // Mark that actual work was done (patch applied)
         self.had_work_activity = true;
