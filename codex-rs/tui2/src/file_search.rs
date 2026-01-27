@@ -47,6 +47,9 @@ struct ParsedQuery {
     search_directory: PathBuf,
     /// Remaining pattern for fuzzy matching
     pattern: String,
+    /// Directory prefix from the query, prepended to results so paths are relative to cwd.
+    /// e.g., for query "src/foo", this is "src/"
+    display_prefix: String,
 }
 
 /// Parse an @ mention query to extract directory prefix and pattern
@@ -59,6 +62,7 @@ fn parse_file_query(query: &str, base_dir: &Path) -> Result<ParsedQuery, String>
         return Ok(ParsedQuery {
             search_directory: PathBuf::from(dir_prefix),
             pattern: pattern.to_string(),
+            display_prefix: dir_prefix.to_string(),
         });
     }
 
@@ -66,9 +70,12 @@ fn parse_file_query(query: &str, base_dir: &Path) -> Result<ParsedQuery, String>
     if trimmed.starts_with('~') {
         let expanded = expand_tilde(trimmed)?;
         let (dir_prefix, pattern) = split_path_pattern(&expanded);
+        // For display, use the original ~ prefix from the query
+        let (original_prefix, _) = split_path_pattern(trimmed);
         return Ok(ParsedQuery {
             search_directory: PathBuf::from(dir_prefix),
             pattern: pattern.to_string(),
+            display_prefix: original_prefix.to_string(),
         });
     }
 
@@ -82,6 +89,7 @@ fn parse_file_query(query: &str, base_dir: &Path) -> Result<ParsedQuery, String>
         return Ok(ParsedQuery {
             search_directory: resolved,
             pattern: pattern.to_string(),
+            display_prefix: dir_prefix.to_string(),
         });
     }
 
@@ -96,6 +104,7 @@ fn parse_file_query(query: &str, base_dir: &Path) -> Result<ParsedQuery, String>
     Ok(ParsedQuery {
         search_directory: search_dir,
         pattern: pattern.to_string(),
+        display_prefix: dir_prefix.to_string(),
     })
 }
 
@@ -263,6 +272,7 @@ impl FileSearchManager {
                     ParsedQuery {
                         search_directory: base_dir.clone(),
                         pattern: query.clone(),
+                        display_prefix: String::new(),
                     }
                 }
             };
@@ -273,7 +283,7 @@ impl FileSearchManager {
             // 3. Otherwise → fuzzy search with default depth limit
             let is_outside_cwd = !parsed.search_directory.starts_with(&base_dir);
 
-            let matches = if parsed.pattern.is_empty() && parsed.search_directory.is_dir() {
+            let raw_matches = if parsed.pattern.is_empty() && parsed.search_directory.is_dir() {
                 // Direct directory listing (non-recursive, fast)
                 file_search::list_directory(&parsed.search_directory, MAX_FILE_SEARCH_RESULTS)
                     .map(|res| res.matches)
@@ -302,6 +312,15 @@ impl FileSearchManager {
                 .unwrap_or_default()
             };
 
+            // Prepend display_prefix so paths are relative to cwd, not search_directory.
+            let matches: Vec<_> = raw_matches
+                .into_iter()
+                .map(|m| file_search::FileMatch {
+                    path: format!("{}{}", parsed.display_prefix, m.path),
+                    ..m
+                })
+                .collect();
+
             let is_cancelled = cancellation_token.load(Ordering::Relaxed);
             if !is_cancelled {
                 tx.send(AppEvent::FileSearchResult { query, matches });
@@ -320,5 +339,84 @@ impl FileSearchManager {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::path::Path;
+
+    #[test]
+    fn parse_file_query_relative_path_sets_display_prefix() {
+        let base_dir = Path::new("/home/user/project");
+
+        // Query "src/" should have display_prefix "src/"
+        let parsed = parse_file_query("src/", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "src/");
+        assert_eq!(parsed.pattern, "");
+        assert_eq!(parsed.search_directory, base_dir.join("src/"));
+
+        // Query "src/utils/" should have display_prefix "src/utils/"
+        let parsed = parse_file_query("src/utils/", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "src/utils/");
+        assert_eq!(parsed.pattern, "");
+
+        // Query "src/foo" should have display_prefix "src/" and pattern "foo"
+        let parsed = parse_file_query("src/foo", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "src/");
+        assert_eq!(parsed.pattern, "foo");
+    }
+
+    #[test]
+    fn parse_file_query_no_prefix_has_empty_display_prefix() {
+        let base_dir = Path::new("/home/user/project");
+
+        // Query "foo" should have empty display_prefix
+        let parsed = parse_file_query("foo", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "");
+        assert_eq!(parsed.pattern, "foo");
+        assert_eq!(parsed.search_directory, base_dir);
+    }
+
+    #[test]
+    fn parse_file_query_absolute_path_sets_display_prefix() {
+        let base_dir = Path::new("/home/user/project");
+
+        // Query "/etc/" should have display_prefix "/etc/"
+        let parsed = parse_file_query("/etc/", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "/etc/");
+        assert_eq!(parsed.pattern, "");
+        assert_eq!(parsed.search_directory, Path::new("/etc/"));
+
+        // Query "/etc/conf" should have display_prefix "/etc/" and pattern "conf"
+        let parsed = parse_file_query("/etc/conf", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "/etc/");
+        assert_eq!(parsed.pattern, "conf");
+    }
+
+    #[test]
+    fn parse_file_query_home_path_preserves_tilde_in_display_prefix() {
+        let base_dir = Path::new("/home/user/project");
+
+        // Query "~/" should have display_prefix "~/" (not expanded)
+        let parsed = parse_file_query("~/", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "~/");
+        assert_eq!(parsed.pattern, "");
+
+        // Query "~/Documents/foo" should have display_prefix "~/Documents/"
+        let parsed = parse_file_query("~/Documents/foo", base_dir).unwrap();
+        assert_eq!(parsed.display_prefix, "~/Documents/");
+        assert_eq!(parsed.pattern, "foo");
+    }
+
+    #[test]
+    fn split_path_pattern_extracts_directory_and_pattern() {
+        assert_eq!(split_path_pattern("src/utils/file"), ("src/utils/", "file"));
+        assert_eq!(split_path_pattern("src/"), ("src/", ""));
+        assert_eq!(split_path_pattern("file"), ("", "file"));
+        assert_eq!(split_path_pattern("/etc/passwd"), ("/etc/", "passwd"));
+        assert_eq!(split_path_pattern(""), ("", ""));
     }
 }
