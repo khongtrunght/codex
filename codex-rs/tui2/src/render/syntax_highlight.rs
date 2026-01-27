@@ -15,99 +15,151 @@ use tree_sitter_highlight::HighlightEvent;
 use tree_sitter_highlight::Highlighter;
 
 /// Unified highlight categories that work across all languages.
-/// These map to common tree-sitter highlight capture names.
+/// These map to tree-sitter highlight capture names (expanded from color-diff).
 #[derive(Copy, Clone, Debug)]
 enum SyntaxCategory {
-    Comment,
-    Keyword,
-    Function,
-    String,
-    Number,
-    Type,
-    Operator,
-    Variable,
-    Constant,
-    Property,
-    Punctuation,
     Attribute,
-    Escape,
-    Label,
-    Namespace,
-    Parameter,
+    Comment,
+    Constant,
+    ConstantBuiltin,
     Constructor,
     Embedded,
+    Escape,
+    Function,
+    FunctionBuiltin,
+    FunctionMacro,
+    Keyword,
+    Label,
+    Namespace,
+    Number,
+    Operator,
+    Property,
+    Punctuation,
+    PunctuationBracket,
+    PunctuationDelimiter,
+    PunctuationSpecial,
+    String,
+    StringEscape,
+    StringSpecial,
     Tag,
-    Module,
+    Type,
+    TypeBuiltin,
+    Variable,
+    VariableBuiltin,
+    VariableParameter,
 }
 
 impl SyntaxCategory {
     /// All categories in order - must match HIGHLIGHT_NAMES order.
-    const ALL: [Self; 20] = [
+    const ALL: [Self; 29] = [
         Self::Attribute,
         Self::Comment,
         Self::Constant,
+        Self::ConstantBuiltin,
         Self::Constructor,
         Self::Embedded,
         Self::Escape,
         Self::Function,
+        Self::FunctionBuiltin,
+        Self::FunctionMacro,
         Self::Keyword,
         Self::Label,
-        Self::Module,
         Self::Namespace,
         Self::Number,
         Self::Operator,
-        Self::Parameter,
         Self::Property,
         Self::Punctuation,
+        Self::PunctuationBracket,
+        Self::PunctuationDelimiter,
+        Self::PunctuationSpecial,
         Self::String,
+        Self::StringEscape,
+        Self::StringSpecial,
         Self::Tag,
         Self::Type,
+        Self::TypeBuiltin,
         Self::Variable,
+        Self::VariableBuiltin,
+        Self::VariableParameter,
     ];
 
     fn style(self) -> Style {
+        // Tokyo Night official color palette
+        let red = Color::Rgb(247, 118, 142); // #f7768e
+        let orange = Color::Rgb(255, 158, 100); // #ff9e64
+        let yellow = Color::Rgb(224, 175, 104); // #e0af68
+        let green = Color::Rgb(158, 206, 106); // #9ece6a
+        let teal_green = Color::Rgb(115, 218, 202); // #73daca
+        let light_teal = Color::Rgb(180, 249, 248); // #b4f9f8
+        let teal = Color::Rgb(42, 195, 222); // #2ac3de
+        let cyan = Color::Rgb(125, 207, 255); // #7dcfff
+        let blue = Color::Rgb(122, 162, 247); // #7aa2f7
+        let purple = Color::Rgb(187, 154, 247); // #bb9af7
+        let foreground = Color::Rgb(192, 202, 245); // #c0caf5
+        let comment = Color::Rgb(86, 95, 137); // #565f89
+
         match self {
-            Self::Comment => Style::default().dim().italic(),
-            Self::Keyword => Style::default().fg(Color::Magenta),
-            Self::Function | Self::Constructor => Style::default().fg(Color::Blue),
-            Self::String | Self::Escape => Style::default().fg(Color::Green),
-            Self::Number => Style::default().fg(Color::Cyan),
-            Self::Type | Self::Tag => Style::default().fg(Color::Yellow),
-            Self::Operator | Self::Punctuation => Style::default().dim(),
-            Self::Variable | Self::Parameter => Style::default(),
-            Self::Constant => Style::default().fg(Color::Cyan).bold(),
-            Self::Property => Style::default().fg(Color::Cyan),
-            Self::Attribute => Style::default().fg(Color::Yellow).italic(),
-            Self::Label => Style::default().fg(Color::Magenta),
-            Self::Namespace | Self::Module => Style::default().fg(Color::Yellow),
+            Self::Comment => Style::default().fg(comment).italic().dim(),
+            Self::Keyword => Style::default().fg(purple).bold(),
+            Self::Function | Self::FunctionMacro => Style::default().fg(blue),
+            Self::FunctionBuiltin => Style::default().fg(teal),
+            Self::Constructor => Style::default().fg(cyan),
+            Self::String => Style::default().fg(green),
+            Self::StringEscape | Self::StringSpecial => Style::default().fg(light_teal),
+            Self::Escape => Style::default().fg(light_teal),
+            Self::Number => Style::default().fg(orange),
+            Self::Constant | Self::ConstantBuiltin => Style::default().fg(orange).bold(),
+            Self::Type | Self::TypeBuiltin => Style::default().fg(cyan),
+            Self::Tag => Style::default().fg(red),
+            Self::Operator => Style::default().fg(purple).dim(),
+            Self::Punctuation
+            | Self::PunctuationBracket
+            | Self::PunctuationDelimiter
+            | Self::PunctuationSpecial => Style::default().fg(foreground).dim(),
+            Self::Variable => Style::default().fg(foreground),
+            Self::VariableBuiltin => Style::default().fg(red),
+            Self::VariableParameter => Style::default().fg(yellow),
+            Self::Property => Style::default().fg(teal_green),
+            Self::Attribute => Style::default().fg(orange),
+            Self::Label => Style::default().fg(teal_green),
+            Self::Namespace => Style::default().fg(cyan),
             Self::Embedded => Style::default(),
         }
     }
 }
 
 /// Highlight names that tree-sitter queries produce.
-/// Order must match SyntaxCategory::ALL.
+/// Order must match SyntaxCategory::ALL (expanded from color-diff).
 const HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
     "comment",
     "constant",
+    "constant.builtin",
     "constructor",
     "embedded",
     "escape",
     "function",
+    "function.builtin",
+    "function.macro",
     "keyword",
     "label",
-    "module",
     "namespace",
     "number",
     "operator",
-    "parameter",
     "property",
     "punctuation",
+    "punctuation.bracket",
+    "punctuation.delimiter",
+    "punctuation.special",
     "string",
+    "string.escape",
+    "string.special",
     "tag",
     "type",
+    "type.builtin",
     "variable",
+    "variable.builtin",
+    "variable.parameter",
 ];
 
 fn category_for(highlight: Highlight) -> SyntaxCategory {
@@ -473,13 +525,13 @@ mod tests {
     fn rust_highlights_keywords() {
         let code = "fn main() {}";
         let lines = highlight_code_to_lines(code, "rust");
-        // Find the 'fn' span and verify it has magenta color (keyword)
+        // Find the 'fn' span and verify it has the Tokyo Night keyword color.
         let fn_span = lines[0].spans.iter().find(|s| s.content.as_ref() == "fn");
         assert!(fn_span.is_some(), "should find 'fn' span");
         let style = fn_span.map(|s| s.style);
         assert!(
-            style.is_some_and(|s| s.fg == Some(Color::Magenta)),
-            "fn should be magenta (keyword)"
+            style.is_some_and(|s| s.fg == Some(Color::Rgb(187, 154, 247))),
+            "fn should use the keyword color"
         );
     }
 
@@ -487,13 +539,13 @@ mod tests {
     fn python_highlights_strings() {
         let code = "x = \"hello\"";
         let lines = highlight_code_to_lines(code, "python");
-        // String should be green
+        // Strings should use the Tokyo Night string color.
         let string_span = lines[0].spans.iter().find(|s| s.content.contains("hello"));
         assert!(string_span.is_some(), "should find string span");
         let style = string_span.map(|s| s.style);
         assert!(
-            style.is_some_and(|s| s.fg == Some(Color::Green)),
-            "string should be green"
+            style.is_some_and(|s| s.fg == Some(Color::Rgb(158, 206, 106))),
+            "string should use the string color"
         );
     }
 }

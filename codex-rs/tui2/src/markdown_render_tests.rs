@@ -654,17 +654,17 @@ fn link() {
 fn code_block_with_language_is_highlighted() {
     // Code blocks with a language specifier get syntax highlighting
     let text = render_markdown_text("```rust\nfn main() {}\n```\n");
-    // With syntax highlighting: fn=magenta, main=blue, punctuation=dim
+    // With syntax highlighting: fn=keyword, main=function, punctuation=dim
     let expected = Text::from_iter([Line::from_iter([
         "".into(),
-        "fn".magenta(),
+        "fn".fg(Color::Rgb(187, 154, 247)).bold(),
         " ".into(),
-        "main".blue(),
-        "(".dim(),
-        ")".dim(),
+        "main".fg(Color::Rgb(122, 162, 247)),
+        "(".fg(Color::Rgb(192, 202, 245)).dim(),
+        ")".fg(Color::Rgb(192, 202, 245)).dim(),
         " ".into(),
-        "{".dim(),
-        "}".dim(),
+        "{".fg(Color::Rgb(192, 202, 245)).dim(),
+        "}".fg(Color::Rgb(192, 202, 245)).dim(),
     ])
     .cyan()]);
     assert_eq!(text, expected);
