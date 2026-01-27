@@ -930,6 +930,8 @@ impl ChatWidget {
     fn finalize_turn(&mut self) {
         // Ensure any spinner is replaced by a red ✗ and flushed into history.
         self.finalize_active_cell_as_failed();
+        // Finalize any active subagents (move to history with interrupted status).
+        self.finalize_interrupted_subagents();
         // Reset running state and clear streaming buffers.
         self.agent_turn_running = false;
         self.update_task_running_state();
@@ -2472,7 +2474,8 @@ impl ChatWidget {
     }
 
     /// Move any remaining active subagents to history with interrupted status.
-    /// Called after replay to handle sessions that were interrupted mid-execution.
+    /// Called after replay or during turn finalization to handle subagents that
+    /// did not receive a SubAgentComplete event.
     fn finalize_interrupted_subagents(&mut self) {
         if self.subagents.is_empty() {
             return;
