@@ -166,6 +166,8 @@ use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+use crate::verbosity::DisplayVerbosity;
+use crate::verbosity::RenderContext;
 mod interrupts;
 use self::interrupts::InterruptManager;
 mod agent;
@@ -485,6 +487,7 @@ pub(crate) struct ChatWidget {
     // show an empty divider. It is reset when the separator is emitted.
     had_work_activity: bool,
 
+    verbosity: DisplayVerbosity,
     last_rendered_width: std::cell::Cell<Option<usize>>,
     // Feedback sink for /feedback
     feedback: codex_feedback::CodexFeedback,
@@ -515,6 +518,7 @@ pub(crate) struct ActiveCellTranscriptKey {
     /// are unchanged, which is how shimmer/spinner visuals can animate in the overlay without any
     /// underlying data change.
     pub(crate) animation_tick: Option<u64>,
+    pub(crate) verbosity: DisplayVerbosity,
 }
 
 pub(crate) struct UserMessage {
@@ -1874,6 +1878,7 @@ impl ChatWidget {
             pre_review_token_info: None,
             needs_final_message_separator: false,
             had_work_activity: false,
+            verbosity: DisplayVerbosity::default(),
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
@@ -1978,6 +1983,7 @@ impl ChatWidget {
             pre_review_token_info: None,
             needs_final_message_separator: false,
             had_work_activity: false,
+            verbosity: DisplayVerbosity::default(),
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
@@ -2018,6 +2024,15 @@ impl ChatWidget {
                 self.bottom_pane.clear_quit_shortcut_hint();
                 self.quit_shortcut_expires_at = None;
                 self.quit_shortcut_key = None;
+            }
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers,
+                kind: KeyEventKind::Press,
+                ..
+            } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'o') => {
+                self.toggle_verbosity();
+                return;
             }
             KeyEvent {
                 code: KeyCode::Char(c),
@@ -2445,7 +2460,9 @@ impl ChatWidget {
                 .as_ref()
                 .is_some_and(|c| c.as_any().is::<history_cell::SessionHeaderHistoryCell>());
 
-        if !keep_placeholder_header_active && !cell.display_lines(u16::MAX).is_empty() {
+        if !keep_placeholder_header_active
+            && !cell.display_lines(RenderContext::new(u16::MAX)).is_empty()
+        {
             // Only break exec grouping if the cell renders visible lines.
             self.flush_active_cell();
             self.needs_final_message_separator = true;
@@ -2813,6 +2830,18 @@ impl ChatWidget {
 
     fn request_redraw(&mut self) {
         self.frame_requester.schedule_frame();
+    }
+
+    pub(crate) fn verbosity(&self) -> DisplayVerbosity {
+        self.verbosity
+    }
+
+    pub(crate) fn toggle_verbosity(&mut self) {
+        self.verbosity = self.verbosity.toggle();
+        self.bump_active_cell_revision();
+        self.request_redraw();
+        self.app_event_tx
+            .send(AppEvent::ToggleVerbosity(self.verbosity));
     }
 
     fn bump_active_cell_revision(&mut self) {
@@ -4740,6 +4769,7 @@ impl ChatWidget {
             revision: self.active_cell_revision,
             is_stream_continuation: cell.is_stream_continuation(),
             animation_tick: cell.transcript_animation_tick(),
+            verbosity: self.verbosity,
         })
     }
 
@@ -4751,7 +4781,8 @@ impl ChatWidget {
     /// mismatches between the main viewport and the transcript overlay.
     pub(crate) fn active_cell_transcript_lines(&self, width: u16) -> Option<Vec<Line<'static>>> {
         let cell = self.active_cell.as_ref()?;
-        let lines = cell.transcript_lines(width);
+        let ctx = RenderContext::with_verbosity(width, self.verbosity);
+        let lines = cell.transcript_lines(ctx);
         (!lines.is_empty()).then_some(lines)
     }
 

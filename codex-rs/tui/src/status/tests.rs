@@ -1,6 +1,7 @@
 use super::new_status_output;
 use super::rate_limit_snapshot_display;
 use crate::history_cell::HistoryCell;
+use crate::verbosity::RenderContext;
 use chrono::Duration as ChronoDuration;
 use chrono::TimeZone;
 use chrono::Utc;
@@ -155,7 +156,7 @@ async fn status_snapshot_includes_reasoning_details() {
         None,
         reasoning_effort_override,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -208,7 +209,7 @@ async fn status_snapshot_includes_forked_from() {
         None,
         None,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -267,7 +268,7 @@ async fn status_snapshot_includes_monthly_limit() {
         None,
         None,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -314,7 +315,7 @@ async fn status_snapshot_shows_unlimited_credits() {
         None,
         None,
     );
-    let rendered = render_lines(&composite.display_lines(120));
+    let rendered = render_lines(&composite.display_lines(RenderContext::new(120)));
     assert!(
         rendered
             .iter()
@@ -360,7 +361,7 @@ async fn status_snapshot_shows_positive_credits() {
         None,
         None,
     );
-    let rendered = render_lines(&composite.display_lines(120));
+    let rendered = render_lines(&composite.display_lines(RenderContext::new(120)));
     assert!(
         rendered
             .iter()
@@ -406,7 +407,7 @@ async fn status_snapshot_hides_zero_credits() {
         None,
         None,
     );
-    let rendered = render_lines(&composite.display_lines(120));
+    let rendered = render_lines(&composite.display_lines(RenderContext::new(120)));
     assert!(
         rendered.iter().all(|line| !line.contains("Credits:")),
         "expected no Credits line, got {rendered:?}"
@@ -450,7 +451,7 @@ async fn status_snapshot_hides_when_has_no_credits_flag() {
         None,
         None,
     );
-    let rendered = render_lines(&composite.display_lines(120));
+    let rendered = render_lines(&composite.display_lines(RenderContext::new(120)));
     assert!(
         rendered.iter().all(|line| !line.contains("Credits:")),
         "expected no Credits line when has_credits is false, got {rendered:?}"
@@ -494,7 +495,7 @@ async fn status_card_token_usage_excludes_cached_tokens() {
         None,
         None,
     );
-    let rendered = render_lines(&composite.display_lines(120));
+    let rendered = render_lines(&composite.display_lines(RenderContext::new(120)));
 
     assert!(
         rendered.iter().all(|line| !line.contains("cached")),
@@ -553,7 +554,7 @@ async fn status_snapshot_truncates_in_narrow_terminal() {
         None,
         reasoning_effort_override,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(70));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(70)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -601,7 +602,7 @@ async fn status_snapshot_shows_missing_limits_message() {
         None,
         None,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -667,7 +668,7 @@ async fn status_snapshot_includes_credits_and_limits() {
         None,
         None,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -721,7 +722,7 @@ async fn status_snapshot_shows_empty_limits_message() {
         None,
         None,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -784,7 +785,7 @@ async fn status_snapshot_shows_stale_limits_message() {
         None,
         None,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -851,7 +852,7 @@ async fn status_snapshot_cached_limits_hide_credits_without_flag() {
         None,
         None,
     );
-    let mut rendered_lines = render_lines(&composite.display_lines(80));
+    let mut rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     if cfg!(windows) {
         for line in &mut rendered_lines {
             *line = line.replace('\\', "/");
@@ -908,7 +909,7 @@ async fn status_context_window_uses_last_usage() {
         None,
         None,
     );
-    let rendered_lines = render_lines(&composite.display_lines(80));
+    let rendered_lines = render_lines(&composite.display_lines(RenderContext::new(80)));
     let context_line = rendered_lines
         .into_iter()
         .find(|line| line.contains("Context window"))

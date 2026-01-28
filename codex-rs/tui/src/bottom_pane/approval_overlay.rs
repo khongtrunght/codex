@@ -684,7 +684,7 @@ mod tests {
             "git add tui/src/render/mod.rs tui/src/render/renderable.rs".into(),
         ];
         let cell = history_cell::new_approval_decision_cell(command, ReviewDecision::Approved);
-        let lines = cell.display_lines(28);
+        let lines = cell.display_lines(crate::verbosity::RenderContext::new(28));
         let rendered: Vec<String> = lines
             .iter()
             .map(|line| {

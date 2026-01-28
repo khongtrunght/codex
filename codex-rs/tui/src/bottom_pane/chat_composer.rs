@@ -5347,7 +5347,7 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             if let AppEvent::InsertHistoryCell(cell) = event {
                 let message = cell
-                    .display_lines(80)
+                    .display_lines(crate::verbosity::RenderContext::new(80))
                     .into_iter()
                     .map(|line| line.to_string())
                     .collect::<Vec<_>>()
@@ -5395,7 +5395,7 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             if let AppEvent::InsertHistoryCell(cell) = event {
                 let message = cell
-                    .display_lines(80)
+                    .display_lines(crate::verbosity::RenderContext::new(80))
                     .into_iter()
                     .map(|line| line.to_string())
                     .collect::<Vec<_>>()

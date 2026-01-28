@@ -177,7 +177,7 @@ mod tests {
         for d in deltas.iter() {
             ctrl.push(d);
             while let (Some(cell), idle) = ctrl.on_commit_tick() {
-                lines.extend(cell.transcript_lines(u16::MAX));
+                lines.extend(cell.transcript_lines(crate::verbosity::RenderContext::new(u16::MAX)));
                 if idle {
                     break;
                 }
@@ -185,7 +185,7 @@ mod tests {
         }
         // Finalize and flush remaining lines now.
         if let Some(cell) = ctrl.finalize() {
-            lines.extend(cell.transcript_lines(u16::MAX));
+            lines.extend(cell.transcript_lines(crate::verbosity::RenderContext::new(u16::MAX)));
         }
 
         let streamed: Vec<_> = lines_to_plain_strings(&lines)

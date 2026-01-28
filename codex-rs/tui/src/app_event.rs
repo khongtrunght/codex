@@ -19,6 +19,7 @@ use codex_protocol::openai_models::ModelPreset;
 
 use crate::bottom_pane::ApprovalRequest;
 use crate::history_cell::HistoryCell;
+use crate::verbosity::DisplayVerbosity;
 
 use codex_core::features::Feature;
 use codex_core::protocol::AskForApproval;
@@ -96,6 +97,9 @@ pub(crate) enum AppEvent {
     StartCommitAnimation,
     StopCommitAnimation,
     CommitTick,
+
+    /// Update the transcript verbosity (Ctrl+O).
+    ToggleVerbosity(DisplayVerbosity),
 
     /// Update the current reasoning effort in the running app and widget.
     UpdateReasoningEffort(Option<ReasoningEffort>),

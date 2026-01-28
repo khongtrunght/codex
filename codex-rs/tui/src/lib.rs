@@ -90,6 +90,7 @@ mod ui_consts;
 pub mod update_action;
 mod update_prompt;
 mod updates;
+mod verbosity;
 mod version;
 
 mod wrapping;

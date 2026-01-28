@@ -852,7 +852,11 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
                 self.transcript_cells.push(cell.clone());
-                let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
+                let mut display =
+                    cell.display_lines(crate::verbosity::RenderContext::with_verbosity(
+                        tui.terminal.last_known_screen_size.width,
+                        self.chat_widget.verbosity(),
+                    ));
                 if !display.is_empty() {
                     // Only insert a separating blank line for new cells that are not
                     // part of an ongoing stream. Streaming continuations should not
@@ -892,6 +896,18 @@ impl App {
             }
             AppEvent::CommitTick => {
                 self.chat_widget.on_commit_tick();
+            }
+            AppEvent::ToggleVerbosity(verbosity) => {
+                if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+                    t.set_verbosity(verbosity);
+                    tui.frame_requester().schedule_frame();
+                } else {
+                    tui.clear_terminal_and_scrollback()?;
+                    self.deferred_history_lines.clear();
+                    self.render_transcript_once(tui);
+                    self.has_emitted_history_lines = !self.transcript_cells.is_empty();
+                    tui.frame_requester().schedule_frame();
+                }
             }
             AppEvent::CodexEvent(event) => {
                 if !self.external_approval_routes.is_empty() {
@@ -1626,7 +1642,10 @@ impl App {
             } => {
                 // Enter alternate screen and set viewport to full size.
                 let _ = tui.enter_alt_screen();
-                self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
+                self.overlay = Some(Overlay::new_transcript(
+                    self.transcript_cells.clone(),
+                    self.chat_widget.verbosity(),
+                ));
                 tui.frame_requester().schedule_frame();
             }
             KeyEvent {
