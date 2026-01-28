@@ -119,6 +119,7 @@ use crate::slash_command::SlashCommand;
 use crate::slash_command::built_in_slash_commands;
 use crate::style::user_message_style;
 use codex_common::fuzzy_match::fuzzy_match;
+use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
 use codex_protocol::models::local_image_label_text;
@@ -229,6 +230,7 @@ pub(crate) struct ChatComposer {
     /// When enabled, `Enter` submits immediately and `Tab` requests queuing behavior.
     steer_enabled: bool,
     collaboration_modes_enabled: bool,
+    collaboration_mode: Option<CollaborationMode>,
 }
 
 #[derive(Clone, Debug)]
@@ -289,6 +291,7 @@ impl ChatComposer {
             dismissed_skill_popup_token: None,
             steer_enabled: false,
             collaboration_modes_enabled: false,
+            collaboration_mode: None,
         };
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
@@ -311,6 +314,10 @@ impl ChatComposer {
 
     pub fn set_collaboration_modes_enabled(&mut self, enabled: bool) {
         self.collaboration_modes_enabled = enabled;
+    }
+
+    pub fn set_collaboration_mode(&mut self, mode: Option<CollaborationMode>) {
+        self.collaboration_mode = mode;
     }
 
     fn layout_areas(&self, area: Rect) -> [Rect; 3] {
@@ -2145,6 +2152,7 @@ impl ChatComposer {
             quit_shortcut_key: self.quit_shortcut_key,
             steer_enabled: self.steer_enabled,
             collaboration_modes_enabled: self.collaboration_modes_enabled,
+            collaboration_mode: self.collaboration_mode,
             context_window_percent: self.context_window_percent,
             context_window_used_tokens: self.context_window_used_tokens,
         }

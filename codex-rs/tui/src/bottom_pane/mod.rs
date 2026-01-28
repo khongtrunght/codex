@@ -28,6 +28,7 @@ use bottom_pane_view::BottomPaneView;
 use codex_core::features::Features;
 use codex_core::skills::model::SkillMetadata;
 use codex_file_search::FileMatch;
+use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::user_input::TextElement;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -198,6 +199,11 @@ impl BottomPane {
 
     pub fn set_collaboration_modes_enabled(&mut self, enabled: bool) {
         self.composer.set_collaboration_modes_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub fn set_collaboration_mode(&mut self, mode: Option<CollaborationMode>) {
+        self.composer.set_collaboration_mode(mode);
         self.request_redraw();
     }
 

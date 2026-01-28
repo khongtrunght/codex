@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use codex_common::approval_presets::ApprovalPreset;
 use codex_core::protocol::Event;
+use codex_core::protocol::EventMsg;
 use codex_core::protocol::RateLimitSnapshot;
 use codex_file_search::FileMatch;
 use codex_protocol::ThreadId;
@@ -47,6 +48,33 @@ pub(crate) enum AppEvent {
     ExternalApprovalRequest {
         thread_id: ThreadId,
         event: Event,
+    },
+
+    /// Forwarded event from a subagent thread.
+    SubAgentEvent {
+        thread_id: ThreadId,
+        event: Event,
+    },
+
+    /// Subscribe to a subagent thread and forward its events.
+    SubscribeSubAgentThread(ThreadId),
+
+    /// Load a subagent's rollout history on resume.
+    LoadSubAgentHistory {
+        call_id: String,
+        thread_id: ThreadId,
+    },
+
+    /// Result of loading subagent rollout history.
+    SubAgentHistoryLoaded {
+        call_id: String,
+        events: Vec<EventMsg>,
+    },
+
+    /// Submit an Op to a specific subagent thread.
+    SubAgentOp {
+        thread_id: ThreadId,
+        op: codex_core::protocol::Op,
     },
 
     /// Start a new session.

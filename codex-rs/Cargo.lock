@@ -1864,7 +1864,14 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "tree-sitter-bash",
+ "tree-sitter-go",
  "tree-sitter-highlight",
+ "tree-sitter-javascript",
+ "tree-sitter-json",
+ "tree-sitter-markdown-fork",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
  "unicode-segmentation",
  "unicode-width 0.2.1",
  "url",
@@ -7610,6 +7617,16 @@ name = "tree-sitter-language"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
+
+[[package]]
+name = "tree-sitter-markdown-fork"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d5ad4a0fbf1d16abe5391387dab9e25977ba0c86661627a2e8680386c8a1c27"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
 
 [[package]]
 name = "tree-sitter-python"

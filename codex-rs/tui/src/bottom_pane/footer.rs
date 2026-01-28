@@ -10,14 +10,17 @@
 //! otherwise idle.
 #[cfg(target_os = "linux")]
 use crate::clipboard_paste::is_probably_wsl;
+use crate::collaboration_modes;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::render::line_utils::prefix_lines;
 use crate::status::format_tokens_compact;
 use crate::ui_consts::FOOTER_INDENT_COLS;
+use codex_protocol::config_types::CollaborationMode;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -38,6 +41,8 @@ pub(crate) struct FooterProps {
     pub(crate) is_task_running: bool,
     pub(crate) steer_enabled: bool,
     pub(crate) collaboration_modes_enabled: bool,
+    /// Current collaboration mode to display persistently in footer.
+    pub(crate) collaboration_mode: Option<CollaborationMode>,
     /// Which key the user must press again to quit.
     ///
     /// This is rendered when `mode` is `FooterMode::QuitShortcutReminder`.
@@ -139,10 +144,18 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
             vec![quit_shortcut_reminder_line(props.quit_shortcut_key)]
         }
         FooterMode::ShortcutSummary => {
-            let mut line = context_window_line(
+            let mut line = Line::from("");
+            if let Some(mode) = props.collaboration_mode
+                && let Some(indicator) = collaboration_mode_indicator(mode)
+            {
+                line.extend(indicator.spans);
+                line.push_span(" · ".dim());
+            }
+            let context = context_window_line(
                 props.context_window_percent,
                 props.context_window_used_tokens,
             );
+            line.extend(context.spans);
             line.push_span(" · ".dim());
             line.extend(vec![
                 key_hint::plain(KeyCode::Char('?')).into(),
@@ -166,10 +179,18 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         }
         FooterMode::EscHint => vec![esc_hint_line(props.esc_backtrack_hint)],
         FooterMode::ContextOnly => {
-            let mut line = context_window_line(
+            let mut line = Line::from("");
+            if let Some(mode) = props.collaboration_mode
+                && let Some(indicator) = collaboration_mode_indicator(mode)
+            {
+                line.extend(indicator.spans);
+                line.push_span(" · ".dim());
+            }
+            let context = context_window_line(
                 props.context_window_percent,
                 props.context_window_used_tokens,
             );
+            line.extend(context.spans);
             if props.is_task_running && props.steer_enabled {
                 line.push_span(" · ".dim());
                 line.push_span(key_hint::plain(KeyCode::Tab));
@@ -320,6 +341,21 @@ fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>) -> Line<'
     }
 
     Line::from(vec![Span::from("100% context left").dim()])
+}
+
+fn collaboration_mode_indicator(mode: CollaborationMode) -> Option<Line<'static>> {
+    if matches!(mode, CollaborationMode::None) {
+        return None;
+    }
+    let icon = collaboration_modes::icon(mode);
+    let name = collaboration_modes::display_name(mode);
+    let color = collaboration_modes::color(mode);
+    Some(Line::from(vec![
+        Span::styled(format!("{icon} {name}"), Style::default().fg(color)),
+        " (".dim(),
+        key_hint::shift(KeyCode::Tab).into(),
+        " to change)".dim(),
+    ]))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -559,6 +595,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -574,6 +611,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -589,6 +627,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: true,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -604,6 +643,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -619,6 +659,7 @@ mod tests {
                 is_task_running: true,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -634,6 +675,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -649,6 +691,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -664,6 +707,7 @@ mod tests {
                 is_task_running: true,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: Some(72),
                 context_window_used_tokens: None,
@@ -679,6 +723,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: Some(123_456),
@@ -694,6 +739,7 @@ mod tests {
                 is_task_running: true,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -709,6 +755,7 @@ mod tests {
                 is_task_running: true,
                 steer_enabled: true,
                 collaboration_modes_enabled: false,
+                collaboration_mode: None,
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: None,
                 context_window_used_tokens: None,

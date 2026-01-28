@@ -10,6 +10,7 @@
 //! bumps the active-cell revision tracked by `ChatWidget`, so the cache key changes whenever the
 //! rendered transcript output can change.
 
+pub(crate) use crate::compact_boundary_cell::CompactBoundaryCell;
 use crate::diff_render::create_diff_summary;
 use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
@@ -21,6 +22,7 @@ use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::live_wrap::take_prefix_by_width;
 use crate::markdown::append_markdown;
+use crate::markdown_render::MarkdownLogicalLine;
 use crate::render::line_utils::line_to_static;
 use crate::render::line_utils::prefix_lines;
 use crate::render::line_utils::push_owned_lines;
@@ -347,14 +349,42 @@ impl HistoryCell for ReasoningSummaryCell {
 
 #[derive(Debug)]
 pub(crate) struct AgentMessageCell {
-    lines: Vec<Line<'static>>,
+    logical_lines: Vec<MarkdownLogicalLine>,
     is_first_line: bool,
 }
 
 impl AgentMessageCell {
     pub(crate) fn new(lines: Vec<Line<'static>>, is_first_line: bool) -> Self {
         Self {
-            lines,
+            logical_lines: lines
+                .into_iter()
+                .map(|line| {
+                    let is_preformatted = line.style.fg == Some(ratatui::style::Color::Cyan);
+                    let line_style = line.style;
+                    let content = Line {
+                        style: Style::default(),
+                        alignment: line.alignment,
+                        spans: line.spans,
+                    };
+                    MarkdownLogicalLine {
+                        content,
+                        initial_indent: Line::default(),
+                        subsequent_indent: Line::default(),
+                        line_style,
+                        is_preformatted,
+                    }
+                })
+                .collect(),
+            is_first_line,
+        }
+    }
+
+    pub(crate) fn new_logical(
+        logical_lines: Vec<MarkdownLogicalLine>,
+        is_first_line: bool,
+    ) -> Self {
+        Self {
+            logical_lines,
             is_first_line,
         }
     }
@@ -362,16 +392,55 @@ impl AgentMessageCell {
 
 impl HistoryCell for AgentMessageCell {
     fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        word_wrap_lines(
-            &self.lines,
-            RtOptions::new(ctx.width as usize)
-                .initial_indent(if self.is_first_line {
-                    "• ".dim().into()
-                } else {
-                    "  ".into()
-                })
-                .subsequent_indent("  ".into()),
-        )
+        let width = ctx.width;
+        if width == 0 {
+            return Vec::new();
+        }
+
+        let mut out_lines: Vec<Line<'static>> = Vec::new();
+        let mut at_cell_start = true;
+        for logical in &self.logical_lines {
+            let gutter_first_visual_line: Line<'static> = if at_cell_start && self.is_first_line {
+                "• ".dim().into()
+            } else {
+                "  ".into()
+            };
+            let gutter_continuation: Line<'static> = "  ".into();
+
+            let compose_indent =
+                |gutter: &Line<'static>, md_indent: &Line<'static>| -> Line<'static> {
+                    let mut spans = gutter.spans.clone();
+                    spans.extend(md_indent.spans.iter().cloned());
+                    Line::from(spans)
+                };
+
+            if logical.is_preformatted {
+                let mut spans = gutter_first_visual_line.spans.clone();
+                spans.extend(logical.initial_indent.spans.iter().cloned());
+                spans.extend(logical.content.spans.iter().cloned());
+                out_lines.push(Line::from(spans).style(logical.line_style));
+                at_cell_start = false;
+                continue;
+            }
+
+            let opts = RtOptions::new(width as usize)
+                .initial_indent(compose_indent(
+                    &gutter_first_visual_line,
+                    &logical.initial_indent,
+                ))
+                .subsequent_indent(compose_indent(
+                    &gutter_continuation,
+                    &logical.subsequent_indent,
+                ));
+
+            let wrapped = word_wrap_line(&logical.content, opts);
+            for visual in wrapped {
+                out_lines.push(line_to_static(&visual).style(logical.line_style));
+                at_cell_start = false;
+            }
+        }
+
+        out_lines
     }
 
     fn is_stream_continuation(&self) -> bool {

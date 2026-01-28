@@ -29,12 +29,14 @@ use crate::tui::TuiEvent;
 use crate::update_action::UpdateAction;
 use codex_ansi_escape::ansi_escape_line;
 use codex_core::AuthManager;
+use codex_core::RolloutRecorder;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_core::config::edit::ConfigEdit;
 use codex_core::config::edit::ConfigEditsBuilder;
 #[cfg(target_os = "windows")]
 use codex_core::features::Feature;
+use codex_core::find_thread_path_by_id_str;
 use codex_core::models_manager::manager::RefreshStrategy;
 use codex_core::models_manager::model_presets::HIDE_GPT_5_1_CODEX_MAX_MIGRATION_PROMPT_CONFIG;
 use codex_core::models_manager::model_presets::HIDE_GPT5_1_MIGRATION_PROMPT_CONFIG;
@@ -935,6 +937,21 @@ impl App {
             AppEvent::ExternalApprovalRequest { thread_id, event } => {
                 self.handle_external_approval_request(thread_id, event);
             }
+            AppEvent::SubAgentEvent { thread_id, event } => {
+                self.chat_widget.handle_subagent_event(thread_id, event);
+            }
+            AppEvent::SubscribeSubAgentThread(thread_id) => {
+                self.subscribe_to_subagent_thread(thread_id);
+            }
+            AppEvent::LoadSubAgentHistory { call_id, thread_id } => {
+                self.load_subagent_history(call_id, thread_id);
+            }
+            AppEvent::SubAgentHistoryLoaded { call_id, events } => {
+                self.chat_widget.populate_subagent_history(call_id, events);
+            }
+            AppEvent::SubAgentOp { thread_id, op } => {
+                self.submit_op_to_subagent(thread_id, op);
+            }
             AppEvent::Exit(mode) => match mode {
                 ExitMode::ShutdownFirst => self.chat_widget.submit_op(Op::Shutdown),
                 ExitMode::Immediate => {
@@ -945,6 +962,13 @@ impl App {
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }
             AppEvent::CodexOp(op) => match op {
+                Op::Interrupt => {
+                    let subagent_thread_ids = self.chat_widget.running_subagent_thread_ids();
+                    for thread_id in subagent_thread_ids {
+                        self.submit_op_to_subagent(thread_id, Op::Interrupt);
+                    }
+                    self.chat_widget.submit_op(op);
+                }
                 // Catch potential approvals coming from an external thread and treat them
                 // directly. This support both command and patch approval. In such case
                 // the approval get transferred to the corresponding thread and the external
@@ -1573,6 +1597,83 @@ impl App {
 
     pub(crate) fn token_usage(&self) -> codex_core::protocol::TokenUsage {
         self.chat_widget.token_usage()
+    }
+
+    /// Subscribe to a subagent thread and forward its events to the ChatWidget.
+    fn subscribe_to_subagent_thread(&self, thread_id: ThreadId) {
+        let server = Arc::clone(&self.server);
+        let app_event_tx = self.app_event_tx.clone();
+
+        tokio::spawn(async move {
+            match server.get_thread(thread_id).await {
+                Ok(thread) => {
+                    while let Ok(event) = thread.next_event().await {
+                        if matches!(
+                            event.msg,
+                            EventMsg::ExecApprovalRequest(_)
+                                | EventMsg::ApplyPatchApprovalRequest(_)
+                        ) {
+                            app_event_tx.send(AppEvent::ExternalApprovalRequest {
+                                thread_id,
+                                event: event.clone(),
+                            });
+                        }
+                        app_event_tx.send(AppEvent::SubAgentEvent { thread_id, event });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get subagent thread {thread_id}: {e}");
+                }
+            }
+        });
+    }
+
+    /// Load a subagent's rollout history on resume and populate the cell with events.
+    fn load_subagent_history(&self, call_id: String, thread_id: ThreadId) {
+        let codex_home = self.chat_widget.config_ref().codex_home.clone();
+        let app_event_tx = self.app_event_tx.clone();
+
+        tokio::spawn(async move {
+            let thread_id_str = thread_id.to_string();
+            match find_thread_path_by_id_str(&codex_home, &thread_id_str).await {
+                Ok(Some(path)) => match RolloutRecorder::get_rollout_history(&path).await {
+                    Ok(history) => {
+                        if let Some(events) = history.get_event_msgs() {
+                            app_event_tx.send(AppEvent::SubAgentHistoryLoaded { call_id, events });
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to load subagent rollout history for {thread_id}: {e}"
+                        );
+                    }
+                },
+                Ok(None) => {
+                    tracing::debug!("No rollout file found for subagent {thread_id}");
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to find subagent rollout path for {thread_id}: {e}");
+                }
+            }
+        });
+    }
+
+    /// Submit an Op to a specific subagent thread.
+    fn submit_op_to_subagent(&self, thread_id: ThreadId, op: Op) {
+        let server = Arc::clone(&self.server);
+
+        tokio::spawn(async move {
+            match server.get_thread(thread_id).await {
+                Ok(thread) => {
+                    if let Err(e) = thread.submit(op).await {
+                        tracing::warn!("Failed to submit op to subagent {thread_id}: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get subagent thread {thread_id}: {e}");
+                }
+            }
+        });
     }
 
     fn on_update_reasoning_effort(&mut self, effort: Option<ReasoningEffortConfig>) {

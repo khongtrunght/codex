@@ -783,6 +783,8 @@ async fn make_chatwidget_manual(
         rate_limit_poller: None,
         stream_controller: None,
         running_commands: HashMap::new(),
+        subagents: HashMap::new(),
+        thread_to_call_id: HashMap::new(),
         suppressed_exec_calls: HashSet::new(),
         last_unified_wait: None,
         unified_exec_wait_streak: None,

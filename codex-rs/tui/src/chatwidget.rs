@@ -28,6 +28,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::agent_cell;
+use crate::agent_cell::SubAgentCell;
 use crate::version::CODEX_CLI_VERSION;
 use codex_app_server_protocol::AuthMode;
 use codex_backend_client::Client as BackendClient;
@@ -75,6 +77,9 @@ use codex_core::protocol::ReviewRequest;
 use codex_core::protocol::ReviewTarget;
 use codex_core::protocol::SkillsListEntry;
 use codex_core::protocol::StreamErrorEvent;
+use codex_core::protocol::SubAgentBeginEvent;
+use codex_core::protocol::SubAgentCompleteEvent;
+use codex_core::protocol::SubAgentEndEvent;
 use codex_core::protocol::TerminalInteractionEvent;
 use codex_core::protocol::TokenUsage;
 use codex_core::protocol::TokenUsageInfo;
@@ -110,6 +115,7 @@ use ratatui::style::Modifier;
 use ratatui::style::Style;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
+use ratatui::text::Text;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use tokio::sync::mpsc::UnboundedSender;
@@ -425,6 +431,10 @@ pub(crate) struct ChatWidget {
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
     running_commands: HashMap<String, RunningCommand>,
+    /// Active sub-agents (running or pending grouping), keyed by call_id.
+    subagents: HashMap<String, SubAgentCell>,
+    /// Thread ID -> call_id mapping for O(1) event routing.
+    thread_to_call_id: HashMap<ThreadId, String>,
     suppressed_exec_calls: HashSet<String>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     unified_exec_wait_streak: Option<UnifiedExecWaitStreak>,
@@ -1002,6 +1012,7 @@ impl ChatWidget {
     fn finalize_turn(&mut self) {
         // Ensure any spinner is replaced by a red ✗ and flushed into history.
         self.finalize_active_cell_as_failed();
+        self.finalize_interrupted_subagents();
         // Reset running state and clear streaming buffers.
         self.agent_turn_running = false;
         self.update_task_running_state();
@@ -1544,9 +1555,7 @@ impl ChatWidget {
                 // Reset the flag even if we don't show separator (no work was done)
                 self.needs_final_message_separator = false;
             }
-            self.stream_controller = Some(StreamController::new(
-                self.last_rendered_width.get().map(|w| w.saturating_sub(2)),
-            ));
+            self.stream_controller = Some(StreamController::new());
         }
         if let Some(controller) = self.stream_controller.as_mut()
             && controller.push(&delta)
@@ -1854,6 +1863,8 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            subagents: HashMap::new(),
+            thread_to_call_id: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             unified_exec_wait_streak: None,
@@ -1889,9 +1900,15 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_steer_enabled(widget.config.features.enabled(Feature::Steer));
-        widget.bottom_pane.set_collaboration_modes_enabled(
-            widget.config.features.enabled(Feature::CollaborationModes),
-        );
+        let collab_enabled = widget.config.features.enabled(Feature::CollaborationModes);
+        widget
+            .bottom_pane
+            .set_collaboration_modes_enabled(collab_enabled);
+        if collab_enabled {
+            widget
+                .bottom_pane
+                .set_collaboration_mode(Some(widget.stored_collaboration_mode));
+        }
 
         widget
     }
@@ -1959,6 +1976,8 @@ impl ChatWidget {
             rate_limit_poller: None,
             stream_controller: None,
             running_commands: HashMap::new(),
+            subagents: HashMap::new(),
+            thread_to_call_id: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             unified_exec_wait_streak: None,
@@ -1994,9 +2013,15 @@ impl ChatWidget {
         widget
             .bottom_pane
             .set_steer_enabled(widget.config.features.enabled(Feature::Steer));
-        widget.bottom_pane.set_collaboration_modes_enabled(
-            widget.config.features.enabled(Feature::CollaborationModes),
-        );
+        let collab_enabled = widget.config.features.enabled(Feature::CollaborationModes);
+        widget
+            .bottom_pane
+            .set_collaboration_modes_enabled(collab_enabled);
+        if collab_enabled {
+            widget
+                .bottom_pane
+                .set_collaboration_mode(Some(widget.stored_collaboration_mode));
+        }
 
         widget
     }
@@ -2595,6 +2620,28 @@ impl ChatWidget {
             // `id: None` indicates a synthetic/fake id coming from replay.
             self.dispatch_event_msg(None, msg, true);
         }
+
+        self.finalize_interrupted_subagents();
+    }
+
+    /// Move any remaining active subagents to history with interrupted status.
+    /// Called after replay or during turn finalization to handle subagents that
+    /// did not receive a SubAgentComplete event.
+    fn finalize_interrupted_subagents(&mut self) {
+        if self.subagents.is_empty() {
+            return;
+        }
+
+        for cell in self.subagents.values_mut() {
+            cell.mark_interrupted();
+        }
+
+        let cells: Vec<_> = self.subagents.drain().map(|(_, c)| c).collect();
+        if let Some(grouped) = SubAgentCell::merge(cells) {
+            self.add_to_history(grouped);
+        }
+
+        self.thread_to_call_id.clear();
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
@@ -2717,7 +2764,12 @@ impl ChatWidget {
                 self.on_entered_review_mode(review_request, from_replay)
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
-            EventMsg::ContextCompacted(_) => self.on_agent_message("Context compacted".to_owned()),
+            EventMsg::ContextCompacted(event) => {
+                self.add_to_history(history_cell::CompactBoundaryCell::new(
+                    event.restored_files,
+                    event.summary,
+                ));
+            }
             EventMsg::CollabAgentSpawnBegin(_) => {}
             EventMsg::CollabAgentSpawnEnd(ev) => self.on_collab_event(collab::spawn_end(ev)),
             EventMsg::CollabAgentInteractionBegin(_) => {}
@@ -2729,6 +2781,12 @@ impl ChatWidget {
             EventMsg::CollabCloseBegin(_) => {}
             EventMsg::CollabCloseEnd(ev) => self.on_collab_event(collab::close_end(ev)),
             EventMsg::ThreadRolledBack(_) => {}
+            EventMsg::ExitedPlanMode(ev) => {
+                self.set_collaboration_mode(ev.target_mode);
+            }
+            EventMsg::SubAgentSpawnBegin(ev) => self.on_subagent_begin(ev),
+            EventMsg::SubAgentSpawnEnd(ev) => self.on_subagent_end(ev, from_replay),
+            EventMsg::SubAgentComplete(ev) => self.on_subagent_complete(ev, from_replay),
             EventMsg::RawResponseItem(_)
             | EventMsg::ItemStarted(_)
             | EventMsg::ItemCompleted(_)
@@ -2736,11 +2794,7 @@ impl ChatWidget {
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
             | EventMsg::AskUserQuestionRequest(_)
-            | EventMsg::SubAgentSpawnBegin(_)
-            | EventMsg::SubAgentSpawnEnd(_)
-            | EventMsg::SubAgentComplete(_)
             | EventMsg::ExitPlanModeApprovalRequest(_)
-            | EventMsg::ExitedPlanMode(_)
             | EventMsg::AttachmentLoaded(_) => {}
         }
     }
@@ -2809,6 +2863,71 @@ impl ChatWidget {
 
         // User messages reset separator state so the next agent response doesn't add a stray break.
         self.needs_final_message_separator = false;
+    }
+
+    // ── Subagent event handlers ──────────────────────────────────────────────
+
+    fn on_subagent_begin(&mut self, ev: SubAgentBeginEvent) {
+        let call_id = ev.call_id.clone();
+        let cell = agent_cell::new_subagent_cell(ev, self.config.animations);
+        self.subagents.insert(call_id, cell);
+        self.request_redraw();
+    }
+
+    fn on_subagent_end(&mut self, ev: SubAgentEndEvent, from_replay: bool) {
+        if let Some(cell) = self.subagents.get_mut(&ev.call_id)
+            && let Some(thread_id) = ev.new_thread_id
+        {
+            cell.set_thread_id(thread_id);
+            self.thread_to_call_id.insert(thread_id, ev.call_id.clone());
+
+            if from_replay {
+                self.app_event_tx.send(AppEvent::LoadSubAgentHistory {
+                    call_id: ev.call_id.clone(),
+                    thread_id,
+                });
+            } else {
+                self.app_event_tx
+                    .send(AppEvent::SubscribeSubAgentThread(thread_id));
+            }
+        }
+        self.request_redraw();
+    }
+
+    fn on_subagent_complete(&mut self, ev: SubAgentCompleteEvent, from_replay: bool) {
+        if let Some(cell) = self.subagents.get_mut(&ev.call_id) {
+            cell.complete_with_status(&ev.status);
+        }
+
+        if !from_replay {
+            self.thread_to_call_id.remove(&ev.agent_thread_id);
+        }
+
+        if self.subagents.values().all(SubAgentCell::is_completed) {
+            let cells: Vec<_> = self.subagents.drain().map(|(_, c)| c).collect();
+            if let Some(grouped) = SubAgentCell::merge(cells) {
+                self.add_to_history(grouped);
+            }
+        }
+        self.request_redraw();
+    }
+
+    pub(crate) fn handle_subagent_event(&mut self, thread_id: ThreadId, event: Event) {
+        if let Some(call_id) = self.thread_to_call_id.get(&thread_id).cloned()
+            && let Some(cell) = self.subagents.get_mut(&call_id)
+        {
+            cell.add_event(event.msg);
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn populate_subagent_history(&mut self, call_id: String, events: Vec<EventMsg>) {
+        if let Some(cell) = self.subagents.get_mut(&call_id) {
+            for event in events {
+                cell.add_event(event);
+            }
+            self.request_redraw();
+        }
     }
 
     /// Exit the UI immediately without waiting for shutdown.
@@ -3301,7 +3420,7 @@ impl ChatWidget {
                     CollaborationMode::Execute => "Execute",
                 };
                 let is_current =
-                    collaboration_modes::same_variant(&self.stored_collaboration_mode, &preset);
+                    collaboration_modes::same_variant(self.stored_collaboration_mode, preset);
                 let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
                     tx.send(AppEvent::UpdateCollaborationMode(preset));
                 })];
@@ -4221,7 +4340,16 @@ impl ChatWidget {
         if feature == Feature::Steer {
             self.bottom_pane.set_steer_enabled(enabled);
         }
-        self.stored_collaboration_mode = CollaborationMode::default();
+        if feature == Feature::CollaborationModes {
+            self.bottom_pane.set_collaboration_modes_enabled(enabled);
+            self.stored_collaboration_mode = CollaborationMode::default();
+            if enabled {
+                self.bottom_pane
+                    .set_collaboration_mode(Some(self.stored_collaboration_mode));
+            } else {
+                self.bottom_pane.set_collaboration_mode(None);
+            }
+        }
     }
 
     pub(crate) fn set_full_access_warning_acknowledged(&mut self, acknowledged: bool) {
@@ -4294,11 +4422,9 @@ impl ChatWidget {
         if !self.collaboration_modes_enabled() {
             return None;
         }
-        match &self.stored_collaboration_mode {
+        match self.stored_collaboration_mode {
             CollaborationMode::None => None,
-            CollaborationMode::Plan => Some("Plan"),
-            CollaborationMode::PairProgramming => Some("Pair Programming"),
-            CollaborationMode::Execute => Some("Execute"),
+            mode => Some(collaboration_modes::display_name(mode)),
         }
     }
 
@@ -4310,7 +4436,7 @@ impl ChatWidget {
 
         if let Some(next_mode) = collaboration_modes::next_mode(
             self.models_manager.as_ref(),
-            &self.stored_collaboration_mode,
+            self.stored_collaboration_mode,
         ) {
             self.set_collaboration_mode(next_mode);
         }
@@ -4326,18 +4452,7 @@ impl ChatWidget {
         }
 
         self.stored_collaboration_mode = mode;
-
-        let label = self.collaboration_mode_label();
-        if let Some(label) = label {
-            let flash = Line::from(vec![
-                label.bold(),
-                " (".dim(),
-                key_hint::shift(KeyCode::Tab).into(),
-                " to change mode)".dim(),
-            ]);
-            const FLASH_DURATION: Duration = Duration::from_secs(2);
-            self.bottom_pane.flash_footer_hint(flash, FLASH_DURATION);
-        }
+        self.bottom_pane.set_collaboration_mode(Some(mode));
         self.request_redraw();
     }
 
@@ -4796,6 +4911,12 @@ impl ChatWidget {
         self.token_info = None;
     }
 
+    pub(crate) fn running_subagent_thread_ids(&self) -> impl Iterator<Item = ThreadId> + '_ {
+        self.subagents
+            .values()
+            .flat_map(SubAgentCell::running_thread_ids)
+    }
+
     fn as_renderable(&self) -> RenderableItem<'_> {
         let active_cell_renderable = match &self.active_cell {
             Some(cell) => RenderableItem::Borrowed(cell).inset(Insets::tlbr(1, 0, 0, 0)),
@@ -4803,11 +4924,68 @@ impl ChatWidget {
         };
         let mut flex = FlexRenderable::new();
         flex.push(1, active_cell_renderable);
+        if !self.subagents.is_empty() {
+            flex.push(
+                0,
+                RenderableItem::Owned(Box::new(RunningSubagentsRenderable::new(
+                    &self.subagents,
+                    self.verbosity,
+                )))
+                .inset(Insets::tlbr(1, 0, 0, 0)),
+            );
+        }
         flex.push(
             0,
             RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(1, 0, 0, 0)),
         );
         RenderableItem::Owned(Box::new(flex))
+    }
+}
+
+struct RunningSubagentsRenderable<'a> {
+    cells: Vec<&'a agent_cell::SubAgentCell>,
+    verbosity: crate::verbosity::DisplayVerbosity,
+}
+
+impl<'a> RunningSubagentsRenderable<'a> {
+    fn new(
+        subagents: &'a HashMap<String, agent_cell::SubAgentCell>,
+        verbosity: crate::verbosity::DisplayVerbosity,
+    ) -> Self {
+        let cells: Vec<_> = subagents.values().collect();
+        Self { cells, verbosity }
+    }
+}
+
+impl Renderable for RunningSubagentsRenderable<'_> {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        if self.cells.is_empty() || area.height == 0 {
+            return;
+        }
+        let ctx = crate::verbosity::RenderContext::with_verbosity(area.width, self.verbosity);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        for (i, cell) in self.cells.iter().enumerate() {
+            if i > 0 {
+                lines.push(Line::default());
+            }
+            lines.extend(cell.display_lines(ctx));
+        }
+        Paragraph::new(Text::from(lines)).render(area, buf);
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        if self.cells.is_empty() {
+            return 0;
+        }
+        let ctx = crate::verbosity::RenderContext::with_verbosity(width, self.verbosity);
+        let mut height: u16 = 0;
+        for (i, cell) in self.cells.iter().enumerate() {
+            if i > 0 {
+                height = height.saturating_add(1);
+            }
+            height = height.saturating_add(cell.desired_height(ctx));
+        }
+        height
     }
 }
 

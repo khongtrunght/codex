@@ -1,6 +1,42 @@
+//! Markdown rendering for `tui2`.
+//!
+//! This module has two related but intentionally distinct responsibilities:
+//!
+//! 1. **Parse Markdown into styled text** (for display).
+//! 2. **Preserve width-agnostic structure for reflow** (for streaming + resize).
+//!
+//! ## Why logical lines exist
+//!
+//! TUI2 supports viewport resize reflow and copy/paste that treats soft-wrapped prose as a single
+//! logical line. If we apply wrapping while rendering and store the resulting `Vec<Line>`, those
+//! width-derived breaks become indistinguishable from hard newlines and cannot be "unwrapped" when
+//! the viewport gets wider.
+//!
+//! To avoid baking width, streaming uses [`MarkdownLogicalLine`] output:
+//!
+//! - `content` holds the styled spans for a single *logical* line (a hard break boundary).
+//! - `initial_indent` / `subsequent_indent` encode markdown-aware indentation rules for wraps
+//!   (list markers, nested lists, blockquotes, etc.).
+//! - `line_style` captures line-level styling (e.g., blockquote green) that must apply to all
+//!   wrapped segments.
+//! - `is_preformatted` marks runs that should not be wrapped like prose (e.g., fenced code).
+//!
+//! History cells can then wrap `content` at the *current* width, applying indents appropriately and
+//! returning soft-wrap joiners for correct copy/paste.
+//!
+//! ## Outputs
+//!
+//! - [`render_markdown_text_with_width`]: emits a `Text` suitable for immediate display and may
+//!   apply wrapping if a width is provided.
+//! - [`render_markdown_logical_lines`]: emits width-agnostic logical lines (no wrapping).
+//!
+//! The underlying `Writer` can emit either (or both) depending on call site needs.
+
 use crate::render::line_utils::line_to_static;
+use crate::render::syntax_highlight::highlight_code_to_lines;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
+use pulldown_cmark::Alignment;
 use pulldown_cmark::CodeBlockKind;
 use pulldown_cmark::CowStr;
 use pulldown_cmark::Event;
@@ -10,9 +46,43 @@ use pulldown_cmark::Parser;
 use pulldown_cmark::Tag;
 use pulldown_cmark::TagEnd;
 use ratatui::style::Style;
+use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
+use unicode_width::UnicodeWidthStr;
+
+/// A single width-agnostic markdown "logical line" plus the metadata required to wrap it later.
+///
+/// A logical line is a hard-break boundary produced by markdown parsing (explicit newlines,
+/// paragraph boundaries, list item boundaries, etc.). It is not a viewport-derived wrap segment.
+///
+/// Wrapping is performed later (typically in `HistoryCell::transcript_lines_with_joiners(width)`),
+/// where a cell can:
+///
+/// - prepend a transcript gutter prefix (`• ` / `  `),
+/// - prepend markdown-specific indents (`initial_indent` / `subsequent_indent`), and
+/// - wrap `content` to the current width while producing joiners for copy/paste.
+#[derive(Clone, Debug)]
+pub(crate) struct MarkdownLogicalLine {
+    /// The raw content for this logical line (does not include markdown prefix/indent spans).
+    pub(crate) content: Line<'static>,
+    /// Prefix/indent spans to apply to the first visual line when wrapping.
+    pub(crate) initial_indent: Line<'static>,
+    /// Prefix/indent spans to apply to wrapped continuation lines.
+    pub(crate) subsequent_indent: Line<'static>,
+    /// Line-level style to apply to all wrapped segments.
+    pub(crate) line_style: Style,
+    /// True when this line is preformatted and should not be wrapped like prose.
+    pub(crate) is_preformatted: bool,
+}
+
+/// Table border position for rendering.
+enum TableBorder {
+    Top,
+    HeaderSep,
+    Bottom,
+}
 
 struct MarkdownStyles {
     h1: Style,
@@ -36,29 +106,37 @@ impl Default for MarkdownStyles {
         use ratatui::style::Stylize;
 
         Self {
+            // Headings: bold with underline for h1, just bold for others
             h1: Style::new().bold().underlined(),
             h2: Style::new().bold(),
-            h3: Style::new().bold().italic(),
-            h4: Style::new().italic(),
-            h5: Style::new().italic(),
-            h6: Style::new().italic(),
+            h3: Style::new().bold(),
+            h4: Style::new().bold(),
+            h5: Style::new().bold(),
+            h6: Style::new().bold(),
             code: Style::new().cyan(),
             emphasis: Style::new().italic(),
             strong: Style::new().bold(),
-            strikethrough: Style::new().crossed_out(),
+            strikethrough: Style::new().crossed_out().dim(),
             ordered_list_marker: Style::new().light_blue(),
             unordered_list_marker: Style::new(),
             link: Style::new().cyan().underlined(),
-            blockquote: Style::new().green(),
+            // Blockquotes: dim italic like Claude Code
+            blockquote: Style::new().dim().italic(),
         }
     }
 }
 
 #[derive(Clone, Debug)]
 struct IndentContext {
+    /// Prefix spans to apply for this nesting level (e.g., blockquote indentation, list indentation).
     prefix: Vec<Span<'static>>,
+    /// Optional list marker spans (e.g., `- ` or `1. `) that apply only to the first visual line of
+    /// a list item.
     marker: Option<Vec<Span<'static>>>,
+    /// True if this context represents a list indentation level.
     is_list: bool,
+    /// True if this context represents a blockquote.
+    is_blockquote: bool,
 }
 
 impl IndentContext {
@@ -67,6 +145,16 @@ impl IndentContext {
             prefix,
             marker,
             is_list,
+            is_blockquote: false,
+        }
+    }
+
+    fn blockquote(prefix: Vec<Span<'static>>) -> Self {
+        Self {
+            prefix,
+            marker: None,
+            is_list: false,
+            is_blockquote: true,
         }
     }
 }
@@ -75,21 +163,47 @@ pub fn render_markdown_text(input: &str) -> Text<'static> {
     render_markdown_text_with_width(input, None)
 }
 
+/// Render markdown into a ratatui `Text`, optionally wrapping to a specific width.
+///
+/// This is primarily used for non-streaming rendering where storing width-derived wrapping is
+/// acceptable or where the caller immediately consumes the output.
 pub(crate) fn render_markdown_text_with_width(input: &str, width: Option<usize>) -> Text<'static> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TABLES);
     let parser = Parser::new_ext(input, options);
-    let mut w = Writer::new(parser, width);
+    let mut w = Writer::new(parser, width, true, false);
     w.run();
     w.text
 }
 
+/// Render markdown into width-agnostic logical lines (no wrapping).
+///
+/// This is used by streaming so that the transcript can reflow on resize: wrapping is deferred to
+/// the history cell at render time.
+pub(crate) fn render_markdown_logical_lines(input: &str) -> Vec<MarkdownLogicalLine> {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TABLES);
+    let parser = Parser::new_ext(input, options);
+    let mut w = Writer::new(parser, None, false, true);
+    w.run();
+    w.logical_lines
+}
+
+/// A markdown event sink that builds either:
+/// - a wrapped `Text` (`emit_text = true`), and/or
+/// - width-agnostic [`MarkdownLogicalLine`]s (`emit_logical_lines = true`).
+///
+/// The writer tracks markdown structure (paragraphs, lists, blockquotes, code blocks) and builds up
+/// a "current logical line". `flush_current_line` commits it to the selected output(s).
 struct Writer<'a, I>
 where
     I: Iterator<Item = Event<'a>>,
 {
     iter: I,
     text: Text<'static>,
+    logical_lines: Vec<MarkdownLogicalLine>,
     styles: MarkdownStyles,
     inline_styles: Vec<Style>,
     indent_stack: Vec<IndentContext>,
@@ -99,22 +213,36 @@ where
     pending_marker_line: bool,
     in_paragraph: bool,
     in_code_block: bool,
+    code_block_lang: Option<String>,
+    code_block_content: String,
+    // Table state
+    in_table: bool,
+    table_alignments: Vec<Alignment>,
+    table_rows: Vec<Vec<String>>,
+    current_table_row: Vec<String>,
+    current_table_cell: String,
+    in_table_head: bool,
     wrap_width: Option<usize>,
     current_line_content: Option<Line<'static>>,
     current_initial_indent: Vec<Span<'static>>,
     current_subsequent_indent: Vec<Span<'static>>,
     current_line_style: Style,
     current_line_in_code_block: bool,
+
+    emit_text: bool,
+    emit_logical_lines: bool,
+    has_output_lines: bool,
 }
 
 impl<'a, I> Writer<'a, I>
 where
     I: Iterator<Item = Event<'a>>,
 {
-    fn new(iter: I, wrap_width: Option<usize>) -> Self {
+    fn new(iter: I, wrap_width: Option<usize>, emit_text: bool, emit_logical_lines: bool) -> Self {
         Self {
             iter,
             text: Text::default(),
+            logical_lines: Vec::new(),
             styles: MarkdownStyles::default(),
             inline_styles: Vec::new(),
             indent_stack: Vec::new(),
@@ -124,12 +252,23 @@ where
             pending_marker_line: false,
             in_paragraph: false,
             in_code_block: false,
+            code_block_lang: None,
+            code_block_content: String::new(),
+            in_table: false,
+            table_alignments: Vec::new(),
+            table_rows: Vec::new(),
+            current_table_row: Vec::new(),
+            current_table_cell: String::new(),
+            in_table_head: false,
             wrap_width,
             current_line_content: None,
             current_initial_indent: Vec::new(),
             current_subsequent_indent: Vec::new(),
             current_line_style: Style::default(),
             current_line_in_code_block: false,
+            emit_text,
+            emit_logical_lines,
+            has_output_lines: false,
         }
     }
 
@@ -150,7 +289,7 @@ where
             Event::HardBreak => self.hard_break(),
             Event::Rule => {
                 self.flush_current_line();
-                if !self.text.lines.is_empty() {
+                if self.has_output_lines {
                     self.push_blank_line();
                 }
                 self.push_line(Line::from("———"));
@@ -185,12 +324,15 @@ where
             Tag::Strong => self.push_inline_style(self.styles.strong),
             Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
             Tag::Link { dest_url, .. } => self.push_link(dest_url.to_string()),
+            Tag::Table(alignments) => self.start_table(alignments),
+            Tag::TableHead => {
+                self.in_table_head = true;
+                self.current_table_row.clear();
+            }
+            Tag::TableRow => self.current_table_row.clear(),
+            Tag::TableCell => self.current_table_cell.clear(),
             Tag::HtmlBlock
             | Tag::FootnoteDefinition(_)
-            | Tag::Table(_)
-            | Tag::TableHead
-            | Tag::TableRow
-            | Tag::TableCell
             | Tag::Image { .. }
             | Tag::MetadataBlock(_) => {}
         }
@@ -209,12 +351,23 @@ where
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_inline_style(),
             TagEnd::Link => self.pop_link(),
+            TagEnd::Table => self.end_table(),
+            TagEnd::TableHead => {
+                self.in_table_head = false;
+                // Commit header row (TableHead has cells but no TableRow wrapper)
+                self.table_rows
+                    .push(std::mem::take(&mut self.current_table_row));
+            }
+            TagEnd::TableRow => {
+                self.table_rows
+                    .push(std::mem::take(&mut self.current_table_row));
+            }
+            TagEnd::TableCell => {
+                self.current_table_row
+                    .push(std::mem::take(&mut self.current_table_cell));
+            }
             TagEnd::HtmlBlock
             | TagEnd::FootnoteDefinition
-            | TagEnd::Table
-            | TagEnd::TableHead
-            | TagEnd::TableRow
-            | TagEnd::TableCell
             | TagEnd::Image
             | TagEnd::MetadataBlock(_) => {}
         }
@@ -248,8 +401,8 @@ where
             HeadingLevel::H5 => self.styles.h5,
             HeadingLevel::H6 => self.styles.h6,
         };
-        let content = format!("{} ", "#".repeat(level as usize));
-        self.push_line(Line::from(vec![Span::styled(content, heading_style)]));
+        // Don't show ## prefix - just styled text like Claude Code
+        self.push_line(Line::default());
         self.push_inline_style(heading_style);
         self.needs_newline = false;
     }
@@ -264,8 +417,10 @@ where
             self.push_blank_line();
             self.needs_newline = false;
         }
+        // Don't show > prefix - just indentation like Claude Code
+        // The green styling is applied via line_style in flush_current_line
         self.indent_stack
-            .push(IndentContext::new(vec![Span::from("> ")], None, false));
+            .push(IndentContext::blockquote(vec![Span::from("  ")]));
     }
 
     fn end_blockquote(&mut self) {
@@ -274,6 +429,18 @@ where
     }
 
     fn text(&mut self, text: CowStr<'a>) {
+        // If we're in a code block with a language, accumulate for syntax highlighting
+        if self.in_code_block && self.code_block_lang.is_some() {
+            self.code_block_content.push_str(&text);
+            return;
+        }
+
+        // If we're in a table, accumulate text for the current cell
+        if self.in_table {
+            self.current_table_cell.push_str(&text);
+            return;
+        }
+
         if self.pending_marker_line {
             self.push_line(Line::default());
         }
@@ -322,6 +489,10 @@ where
     }
 
     fn html(&mut self, html: CowStr<'a>, inline: bool) {
+        // Skip HTML tags when inside a table - text content is captured separately
+        if self.in_table {
+            return;
+        }
         self.pending_marker_line = false;
         for (i, line) in html.lines().enumerate() {
             if self.needs_newline {
@@ -394,12 +565,14 @@ where
         self.needs_newline = false;
     }
 
-    fn start_codeblock(&mut self, _lang: Option<String>, indent: Option<Span<'static>>) {
+    fn start_codeblock(&mut self, lang: Option<String>, indent: Option<Span<'static>>) {
         self.flush_current_line();
-        if !self.text.lines.is_empty() {
+        if self.has_output_lines {
             self.push_blank_line();
         }
         self.in_code_block = true;
+        self.code_block_lang = lang;
+        self.code_block_content.clear();
         self.indent_stack.push(IndentContext::new(
             vec![indent.unwrap_or_default()],
             None,
@@ -409,9 +582,145 @@ where
     }
 
     fn end_codeblock(&mut self) {
+        // Apply syntax highlighting to accumulated code content
+        if let Some(lang) = self.code_block_lang.take() {
+            let code = std::mem::take(&mut self.code_block_content);
+            // Trim trailing newline that markdown parser adds
+            let code = code.trim_end_matches('\n');
+            if !code.is_empty() {
+                let highlighted_lines = highlight_code_to_lines(code, &lang);
+                for line in highlighted_lines {
+                    self.push_line(line);
+                    self.flush_current_line();
+                }
+            }
+        } else {
+            // No language specified, clear any accumulated content
+            // (it was already rendered via the text() path)
+            self.code_block_content.clear();
+        }
         self.needs_newline = true;
         self.in_code_block = false;
         self.indent_stack.pop();
+    }
+
+    fn start_table(&mut self, alignments: Vec<Alignment>) {
+        self.flush_current_line();
+        if self.has_output_lines {
+            self.push_blank_line();
+        }
+        self.in_table = true;
+        self.table_alignments = alignments;
+        self.table_rows.clear();
+        self.current_table_row.clear();
+        self.current_table_cell.clear();
+    }
+
+    fn end_table(&mut self) {
+        if self.table_rows.is_empty() {
+            self.in_table = false;
+            return;
+        }
+
+        // Calculate column widths based on content
+        let col_count = self
+            .table_rows
+            .iter()
+            .map(std::vec::Vec::len)
+            .max()
+            .unwrap_or(0);
+        let col_widths: Vec<usize> = (0..col_count)
+            .map(|i| {
+                self.table_rows
+                    .iter()
+                    .filter_map(|r| r.get(i))
+                    .map(|c| c.width())
+                    .max()
+                    .unwrap_or(0)
+                    .max(1) // Minimum width of 1
+            })
+            .collect();
+
+        // Render table with box drawing characters
+        self.render_table_border(&col_widths, TableBorder::Top);
+
+        let rows = std::mem::take(&mut self.table_rows);
+        let row_count = rows.len();
+        for (row_idx, row) in rows.into_iter().enumerate() {
+            self.render_table_row(&row, &col_widths);
+            // Add separator after every row except the last
+            if row_idx < row_count - 1 {
+                self.render_table_border(&col_widths, TableBorder::HeaderSep);
+            }
+        }
+
+        self.render_table_border(&col_widths, TableBorder::Bottom);
+
+        self.in_table = false;
+        self.table_alignments.clear();
+        self.needs_newline = true;
+    }
+
+    fn render_table_border(&mut self, col_widths: &[usize], border_type: TableBorder) {
+        let (left, mid, right, fill) = match border_type {
+            TableBorder::Top => ('┌', '┬', '┐', '─'),
+            TableBorder::HeaderSep => ('├', '┼', '┤', '─'),
+            TableBorder::Bottom => ('└', '┴', '┘', '─'),
+        };
+
+        let mut border = String::new();
+        border.push(left);
+        for (i, &width) in col_widths.iter().enumerate() {
+            if i > 0 {
+                border.push(mid);
+            }
+            // Add 2 for padding on each side
+            for _ in 0..width + 2 {
+                border.push(fill);
+            }
+        }
+        border.push(right);
+
+        self.push_line(Line::from(border).dim());
+        self.flush_current_line();
+    }
+
+    fn render_table_row(&mut self, row: &[String], col_widths: &[usize]) {
+        let mut spans: Vec<Span<'static>> = vec!["│".dim()];
+
+        for (i, width) in col_widths.iter().enumerate() {
+            let cell_content = row.get(i).map(String::as_str).unwrap_or("");
+            let cell_width = cell_content.width();
+            let padding = width.saturating_sub(cell_width);
+
+            // Get alignment for this column
+            let alignment = self
+                .table_alignments
+                .get(i)
+                .copied()
+                .unwrap_or(Alignment::None);
+
+            let (left_pad, right_pad) = match alignment {
+                Alignment::Left | Alignment::None => (0, padding),
+                Alignment::Right => (padding, 0),
+                Alignment::Center => (padding / 2, padding - padding / 2),
+            };
+
+            // Add space, left padding, content, right padding, space, border
+            spans.push(" ".into());
+            if left_pad > 0 {
+                spans.push(Span::from(" ".repeat(left_pad)));
+            }
+            spans.push(Span::from(cell_content.to_string()));
+            if right_pad > 0 {
+                spans.push(Span::from(" ".repeat(right_pad)));
+            }
+            spans.push(" ".into());
+            spans.push("│".dim());
+        }
+
+        self.push_line(Line::from(spans));
+        self.flush_current_line();
     }
 
     fn push_inline_style(&mut self, style: Style) {
@@ -436,43 +745,87 @@ where
         }
     }
 
+    /// Commit the current logical line to configured outputs.
+    ///
+    /// - When emitting logical lines, this records `content` plus indent metadata so callers can
+    ///   wrap later at the current viewport width.
+    /// - When emitting `Text`, wrapping may be applied immediately if `wrap_width` is set.
     fn flush_current_line(&mut self) {
-        if let Some(line) = self.current_line_content.take() {
-            let style = self.current_line_style;
+        let Some(line) = self.current_line_content.take() else {
+            return;
+        };
+
+        let initial_indent: Line<'static> =
+            Line::from(std::mem::take(&mut self.current_initial_indent));
+        let subsequent_indent: Line<'static> =
+            Line::from(std::mem::take(&mut self.current_subsequent_indent));
+        let line_style = self.current_line_style;
+        let is_preformatted = self.current_line_in_code_block;
+
+        if self.emit_logical_lines {
+            if self.emit_text {
+                self.logical_lines.push(MarkdownLogicalLine {
+                    content: line.clone(),
+                    initial_indent: initial_indent.clone(),
+                    subsequent_indent: subsequent_indent.clone(),
+                    line_style,
+                    is_preformatted,
+                });
+            } else {
+                self.logical_lines.push(MarkdownLogicalLine {
+                    content: line,
+                    initial_indent,
+                    subsequent_indent,
+                    line_style,
+                    is_preformatted,
+                });
+                self.has_output_lines = true;
+                self.current_line_in_code_block = false;
+                return;
+            }
+            self.has_output_lines = true;
+        }
+
+        if self.emit_text {
             // NB we don't wrap code in code blocks, in order to preserve whitespace for copy/paste.
-            if !self.current_line_in_code_block
-                && let Some(width) = self.wrap_width
-            {
+            if !is_preformatted && let Some(width) = self.wrap_width {
                 let opts = RtOptions::new(width)
-                    .initial_indent(self.current_initial_indent.clone().into())
-                    .subsequent_indent(self.current_subsequent_indent.clone().into());
+                    .initial_indent(initial_indent)
+                    .subsequent_indent(subsequent_indent);
                 for wrapped in word_wrap_line(&line, opts) {
-                    let owned = line_to_static(&wrapped).style(style);
+                    let owned = line_to_static(&wrapped).style(line_style);
                     self.text.lines.push(owned);
                 }
             } else {
-                let mut spans = self.current_initial_indent.clone();
+                let mut spans = initial_indent.spans;
                 let mut line = line;
                 spans.append(&mut line.spans);
-                self.text.lines.push(Line::from_iter(spans).style(style));
+                self.text
+                    .lines
+                    .push(Line::from_iter(spans).style(line_style));
             }
-            self.current_initial_indent.clear();
-            self.current_subsequent_indent.clear();
-            self.current_line_in_code_block = false;
+            self.has_output_lines = true;
         }
+
+        self.current_line_in_code_block = false;
     }
 
     fn push_line(&mut self, line: Line<'static>) {
         self.flush_current_line();
-        let blockquote_active = self
-            .indent_stack
-            .iter()
-            .any(|ctx| ctx.prefix.iter().any(|s| s.content.contains('>')));
-        let style = if blockquote_active {
+        let blockquote_active = self.indent_stack.iter().any(|ctx| ctx.is_blockquote);
+        let mut style = if blockquote_active {
             self.styles.blockquote
         } else {
             line.style
         };
+        // Code blocks are "preformatted": we want them to keep code styling even when they appear
+        // within other structures like blockquotes (which otherwise apply a line-level style).
+        //
+        // This matters for copy fidelity: downstream copy logic uses code styling as a cue to
+        // preserve indentation and to fence code runs with Markdown markers.
+        if self.in_code_block {
+            style = style.patch(self.styles.code);
+        }
         let was_pending = self.pending_marker_line;
 
         self.current_initial_indent = self.prefix_spans(was_pending);
@@ -495,13 +848,31 @@ where
     fn push_blank_line(&mut self) {
         self.flush_current_line();
         if self.indent_stack.iter().all(|ctx| ctx.is_list) {
-            self.text.lines.push(Line::default());
+            if self.emit_text {
+                self.text.lines.push(Line::default());
+                self.has_output_lines = true;
+            }
+            if self.emit_logical_lines {
+                self.logical_lines.push(MarkdownLogicalLine {
+                    content: Line::default(),
+                    initial_indent: Line::default(),
+                    subsequent_indent: Line::default(),
+                    line_style: Style::default(),
+                    is_preformatted: false,
+                });
+                self.has_output_lines = true;
+            }
         } else {
             self.push_line(Line::default());
             self.flush_current_line();
         }
     }
 
+    /// Compute the indentation spans for the current nesting stack.
+    ///
+    /// `pending_marker_line` controls whether we are about to emit a list item's marker line
+    /// (e.g., `- ` or `1. `). For marker lines, we include exactly one marker (the most recent) and
+    /// suppress earlier list-level prefixes so nested list markers align correctly.
     fn prefix_spans(&self, pending_marker_line: bool) -> Vec<Span<'static>> {
         let mut prefix: Vec<Span<'static>> = Vec::new();
         let last_marker_index = if pending_marker_line {
@@ -537,6 +908,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod markdown_render_tests {
     include!("markdown_render_tests.rs");
 }
@@ -625,12 +997,13 @@ mod tests {
         let markdown = "> block quote with content that should wrap nicely";
         let rendered = render_markdown_text_with_width(markdown, Some(22));
         let lines = lines_to_strings(&rendered);
+        // Blockquotes use "  " indent instead of "> "
         assert_eq!(
             lines,
             vec![
-                "> block quote with".to_string(),
-                "> content that should".to_string(),
-                "> wrap nicely".to_string(),
+                "  block quote with".to_string(),
+                "  content that should".to_string(),
+                "  wrap nicely".to_string(),
             ]
         );
     }
@@ -640,12 +1013,13 @@ mod tests {
         let markdown = "- list item\n  > block quote inside list that wraps";
         let rendered = render_markdown_text_with_width(markdown, Some(24));
         let lines = lines_to_strings(&rendered);
+        // Blockquotes use "  " indent instead of "> "
         assert_eq!(
             lines,
             vec![
                 "- list item".to_string(),
-                "  > block quote inside".to_string(),
-                "  > list that wraps".to_string(),
+                "    block quote inside".to_string(),
+                "    list that wraps".to_string(),
             ]
         );
     }
@@ -655,12 +1029,13 @@ mod tests {
         let markdown = "1. item with quote\n   > quoted text that should wrap";
         let rendered = render_markdown_text_with_width(markdown, Some(24));
         let lines = lines_to_strings(&rendered);
+        // Blockquotes use "  " indent instead of "> "
         assert_eq!(
             lines,
             vec![
                 "1. item with quote".to_string(),
-                "   > quoted text that".to_string(),
-                "   > should wrap".to_string(),
+                "     quoted text that".to_string(),
+                "     should wrap".to_string(),
             ]
         );
     }

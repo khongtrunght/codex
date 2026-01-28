@@ -1,4 +1,5 @@
 use pretty_assertions::assert_eq;
+use ratatui::style::Color;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -40,18 +41,19 @@ fn paragraph_multiple() {
 fn headings() {
     let md = "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n";
     let text = render_markdown_text(md);
+    // Headings no longer show ## prefix - just styled text like Claude Code
     let expected = Text::from_iter([
-        Line::from_iter(["# ".bold().underlined(), "Heading 1".bold().underlined()]),
+        Line::from("Heading 1".bold().underlined()),
         Line::default(),
-        Line::from_iter(["## ".bold(), "Heading 2".bold()]),
+        Line::from("Heading 2".bold()),
         Line::default(),
-        Line::from_iter(["### ".bold().italic(), "Heading 3".bold().italic()]),
+        Line::from("Heading 3".bold()),
         Line::default(),
-        Line::from_iter(["#### ".italic(), "Heading 4".italic()]),
+        Line::from("Heading 4".bold()),
         Line::default(),
-        Line::from_iter(["##### ".italic(), "Heading 5".italic()]),
+        Line::from("Heading 5".bold()),
         Line::default(),
-        Line::from_iter(["###### ".italic(), "Heading 6".italic()]),
+        Line::from("Heading 6".bold()),
     ]);
     assert_eq!(text, expected);
 }
@@ -59,7 +61,8 @@ fn headings() {
 #[test]
 fn blockquote_single() {
     let text = render_markdown_text("> Blockquote");
-    let expected = Text::from(Line::from_iter(["> ", "Blockquote"]).green());
+    // Blockquotes no longer show > prefix - just indented dim/italic text like Claude Code
+    let expected = Text::from(Line::from_iter(["  ", "Blockquote"]).dim().italic());
     assert_eq!(text, expected);
 }
 
@@ -80,8 +83,8 @@ fn blockquote_soft_break() {
     assert_eq!(
         lines,
         vec![
-            "> This is a blockquote".to_string(),
-            "> with a soft break".to_string()
+            "  This is a blockquote".to_string(),
+            "  with a soft break".to_string()
         ]
     );
 }
@@ -90,9 +93,9 @@ fn blockquote_soft_break() {
 fn blockquote_multiple_with_break() {
     let text = render_markdown_text("> Blockquote 1\n\n> Blockquote 2\n");
     let expected = Text::from_iter([
-        Line::from_iter(["> ", "Blockquote 1"]).green(),
+        Line::from_iter(["  ", "Blockquote 1"]).dim().italic(),
         Line::default(),
-        Line::from_iter(["> ", "Blockquote 2"]).green(),
+        Line::from_iter(["  ", "Blockquote 2"]).dim().italic(),
     ]);
     assert_eq!(text, expected);
 }
@@ -102,11 +105,11 @@ fn blockquote_three_paragraphs_short_lines() {
     let md = "> one\n>\n> two\n>\n> three\n";
     let text = render_markdown_text(md);
     let expected = Text::from_iter([
-        Line::from_iter(["> ", "one"]).green(),
-        Line::from_iter(["> "]).green(),
-        Line::from_iter(["> ", "two"]).green(),
-        Line::from_iter(["> "]).green(),
-        Line::from_iter(["> ", "three"]).green(),
+        Line::from_iter(["  ", "one"]).dim().italic(),
+        Line::from_iter(["  "]).dim().italic(),
+        Line::from_iter(["  ", "two"]).dim().italic(),
+        Line::from_iter(["  "]).dim().italic(),
+        Line::from_iter(["  ", "three"]).dim().italic(),
     ]);
     assert_eq!(text, expected);
 }
@@ -116,9 +119,9 @@ fn blockquote_nested_two_levels() {
     let md = "> Level 1\n>> Level 2\n";
     let text = render_markdown_text(md);
     let expected = Text::from_iter([
-        Line::from_iter(["> ", "Level 1"]).green(),
-        Line::from_iter(["> "]).green(),
-        Line::from_iter(["> ", "> ", "Level 2"]).green(),
+        Line::from_iter(["  ", "Level 1"]).dim().italic(),
+        Line::from_iter(["  "]).dim().italic(),
+        Line::from_iter(["  ", "  ", "Level 2"]).dim().italic(),
     ]);
     assert_eq!(text, expected);
 }
@@ -128,8 +131,8 @@ fn blockquote_with_list_items() {
     let md = "> - item 1\n> - item 2\n";
     let text = render_markdown_text(md);
     let expected = Text::from_iter([
-        Line::from_iter(["> ", "- ", "item 1"]).green(),
-        Line::from_iter(["> ", "- ", "item 2"]).green(),
+        Line::from_iter(["  ", "- ", "item 1"]).dim().italic(),
+        Line::from_iter(["  ", "- ", "item 2"]).dim().italic(),
     ]);
     assert_eq!(text, expected);
 }
@@ -140,17 +143,19 @@ fn blockquote_with_ordered_list() {
     let text = render_markdown_text(md);
     let expected = Text::from_iter([
         Line::from_iter(vec![
-            Span::from("> "),
+            Span::from("  "),
             "1. ".light_blue(),
             Span::from("first"),
         ])
-        .green(),
+        .dim()
+        .italic(),
         Line::from_iter(vec![
-            Span::from("> "),
+            Span::from("  "),
             "2. ".light_blue(),
             Span::from("second"),
         ])
-        .green(),
+        .dim()
+        .italic(),
     ]);
     assert_eq!(text, expected);
 }
@@ -160,8 +165,8 @@ fn blockquote_list_then_nested_blockquote() {
     let md = "> - parent\n>   > child\n";
     let text = render_markdown_text(md);
     let expected = Text::from_iter([
-        Line::from_iter(["> ", "- ", "parent"]).green(),
-        Line::from_iter(["> ", "  ", "> ", "child"]).green(),
+        Line::from_iter(["  ", "- ", "parent"]).dim().italic(),
+        Line::from_iter(["  ", "  ", "  ", "child"]).dim().italic(),
     ]);
     assert_eq!(text, expected);
 }
@@ -172,9 +177,9 @@ fn list_item_with_inline_blockquote_on_same_line() {
     let text = render_markdown_text(md);
     let mut lines = text.lines.iter();
     let first = lines.next().expect("one line");
-    // Expect content to include the ordered marker, a space, "> ", and the text
+    // Expect content to include the ordered marker, a space, indentation, and the text
     let s: String = first.spans.iter().map(|sp| sp.content.clone()).collect();
-    assert_eq!(s, "1. > quoted");
+    assert_eq!(s, "1.   quoted");
 }
 
 #[test]
@@ -196,7 +201,7 @@ fn blockquote_surrounded_by_blank_lines() {
         vec![
             "foo".to_string(),
             "".to_string(),
-            "> bar".to_string(),
+            "  bar".to_string(),
             "".to_string(),
             "baz".to_string(),
         ]
@@ -219,7 +224,7 @@ fn blockquote_in_ordered_list_on_next_line() {
                 .collect::<String>()
         })
         .collect();
-    assert_eq!(lines, vec!["1. > quoted".to_string()]);
+    assert_eq!(lines, vec!["1.   quoted".to_string()]);
 }
 
 #[test]
@@ -238,7 +243,7 @@ fn blockquote_in_unordered_list_on_next_line() {
                 .collect::<String>()
         })
         .collect();
-    assert_eq!(lines, vec!["- > quoted".to_string()]);
+    assert_eq!(lines, vec!["-   quoted".to_string()]);
 }
 
 #[test]
@@ -259,9 +264,9 @@ fn blockquote_two_paragraphs_inside_ordered_list_has_blank_line() {
     assert_eq!(
         lines,
         vec![
-            "1. > para 1".to_string(),
-            "   > ".to_string(),
-            "   > para 2".to_string(),
+            "1.   para 1".to_string(),
+            "     ".to_string(),
+            "     para 2".to_string(),
         ],
         "expected blockquote content to stay aligned after list marker"
     );
@@ -281,7 +286,7 @@ fn blockquote_inside_nested_list() {
                 .collect::<String>()
         })
         .collect();
-    assert_eq!(lines, vec!["1. A", "    - B", "      > inner"]);
+    assert_eq!(lines, vec!["1. A", "    - B", "        inner"]);
 }
 
 #[test]
@@ -298,7 +303,7 @@ fn list_item_text_then_blockquote() {
                 .collect::<String>()
         })
         .collect();
-    assert_eq!(lines, vec!["1. before", "   > quoted"]);
+    assert_eq!(lines, vec!["1. before", "     quoted"]);
 }
 
 #[test]
@@ -315,7 +320,7 @@ fn list_item_blockquote_then_text() {
                 .collect::<String>()
         })
         .collect();
-    assert_eq!(lines, vec!["1. > quoted", "   > after"]);
+    assert_eq!(lines, vec!["1.   quoted", "     after"]);
 }
 
 #[test]
@@ -332,7 +337,7 @@ fn list_item_text_blockquote_text() {
                 .collect::<String>()
         })
         .collect();
-    assert_eq!(lines, vec!["1. before", "   > quoted", "   > after"]);
+    assert_eq!(lines, vec!["1. before", "     quoted", "     after"]);
 }
 
 #[test]
@@ -353,9 +358,9 @@ fn blockquote_with_heading_and_paragraph() {
     assert_eq!(
         lines,
         vec![
-            "> # Heading".to_string(),
-            "> ".to_string(),
-            "> paragraph text".to_string(),
+            "  Heading".to_string(),
+            "  ".to_string(),
+            "  paragraph text".to_string(),
         ]
     );
 }
@@ -366,14 +371,11 @@ fn blockquote_heading_inherits_heading_style() {
     assert_eq!(
         text.lines,
         [
-            Line::from_iter([
-                "> ".into(),
-                "# ".bold().underlined(),
-                "test header".bold().underlined(),
-            ])
-            .green(),
-            Line::from_iter(["> "]).green(),
-            Line::from_iter(["> ", "in blockquote"]).green(),
+            Line::from_iter(["  ".into(), "test header".bold().underlined(),])
+                .dim()
+                .italic(),
+            Line::from_iter(["  "]).dim().italic(),
+            Line::from_iter(["  ", "in blockquote"]).dim().italic(),
         ]
     );
 }
@@ -382,40 +384,31 @@ fn blockquote_heading_inherits_heading_style() {
 fn blockquote_with_code_block() {
     let md = "> ```\n> code\n> ```\n";
     let text = render_markdown_text(md);
-    let lines: Vec<String> = text
-        .lines
-        .iter()
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.content.clone())
-                .collect::<String>()
-        })
-        .collect();
-    assert_eq!(lines, vec!["> code".to_string()]);
+    // Code blocks inside blockquotes inherit blockquote styling
+    assert_eq!(
+        text.lines,
+        [Line::from_iter(["  ", "", "code"]).cyan().dim().italic()]
+    );
 }
 
 #[test]
 fn blockquote_with_multiline_code_block() {
     let md = "> ```\n> first\n> second\n> ```\n";
     let text = render_markdown_text(md);
-    let lines: Vec<String> = text
-        .lines
-        .iter()
-        .map(|l| {
-            l.spans
-                .iter()
-                .map(|s| s.content.clone())
-                .collect::<String>()
-        })
-        .collect();
-    assert_eq!(lines, vec!["> first", "> second"]);
+    // Code blocks inside blockquotes inherit blockquote styling
+    assert_eq!(
+        text.lines,
+        [
+            Line::from_iter(["  ", "", "first"]).cyan().dim().italic(),
+            Line::from_iter(["  ", "", "second"]).cyan().dim().italic(),
+        ]
+    );
 }
 
 #[test]
 fn nested_blockquote_with_inline_and_fenced_code() {
     /*
-    let md = \"> Nested quote with code:\n\
+    let md = "> Nested quote with code:\n\
     > > Inner quote and `inline code`\n\
     > >\n\
     > > ```\n\
@@ -445,14 +438,20 @@ fn nested_blockquote_with_inline_and_fenced_code() {
     assert_eq!(
         lines,
         vec![
-            "> Nested quote with code:".to_string(),
-            "> ".to_string(),
-            "> > Inner quote and inline code".to_string(),
-            "> > ".to_string(),
-            "> > # fenced code inside a quote".to_string(),
-            "> > echo \"hello from a quote\"".to_string(),
+            "  Nested quote with code:".to_string(),
+            "  ".to_string(),
+            "    Inner quote and inline code".to_string(),
+            "    ".to_string(),
+            "    # fenced code inside a quote".to_string(),
+            "    echo \"hello from a quote\"".to_string(),
         ]
     );
+
+    // Fenced code inside nested blockquotes should keep code styling so copy logic can treat it as
+    // preformatted.
+    for idx in [4usize, 5usize] {
+        assert_eq!(text.lines[idx].style.fg, Some(Color::Cyan));
+    }
 }
 
 #[test]
@@ -625,7 +624,7 @@ fn emphasis() {
 fn strikethrough() {
     assert_eq!(
         render_markdown_text("~~Strikethrough~~"),
-        Text::from(Line::from("Strikethrough".crossed_out()))
+        Text::from(Line::from("Strikethrough".dim().crossed_out()))
     );
 }
 
@@ -652,9 +651,30 @@ fn link() {
 }
 
 #[test]
-fn code_block_unhighlighted() {
+fn code_block_with_language_is_highlighted() {
+    // Code blocks with a language specifier get syntax highlighting
     let text = render_markdown_text("```rust\nfn main() {}\n```\n");
-    let expected = Text::from_iter([Line::from_iter(["", "fn main() {}"])]);
+    // With syntax highlighting: fn=keyword, main=function, punctuation=dim
+    let expected = Text::from_iter([Line::from_iter([
+        "".into(),
+        "fn".fg(Color::Rgb(187, 154, 247)).bold(),
+        " ".into(),
+        "main".fg(Color::Rgb(122, 162, 247)),
+        "(".fg(Color::Rgb(192, 202, 245)).dim(),
+        ")".fg(Color::Rgb(192, 202, 245)).dim(),
+        " ".into(),
+        "{".fg(Color::Rgb(192, 202, 245)).dim(),
+        "}".fg(Color::Rgb(192, 202, 245)).dim(),
+    ])
+    .cyan()]);
+    assert_eq!(text, expected);
+}
+
+#[test]
+fn code_block_without_language_is_not_highlighted() {
+    // Code blocks without a language specifier remain plain cyan
+    let text = render_markdown_text("```\nfn main() {}\n```\n");
+    let expected = Text::from_iter([Line::from_iter(["", "fn main() {}"]).cyan()]);
     assert_eq!(text, expected);
 }
 
@@ -663,8 +683,8 @@ fn code_block_multiple_lines_root() {
     let md = "```\nfirst\nsecond\n```\n";
     let text = render_markdown_text(md);
     let expected = Text::from_iter([
-        Line::from_iter(["", "first"]),
-        Line::from_iter(["", "second"]),
+        Line::from_iter(["", "first"]).cyan(),
+        Line::from_iter(["", "second"]).cyan(),
     ]);
     assert_eq!(text, expected);
 }
@@ -674,9 +694,9 @@ fn code_block_indented() {
     let md = "    function greet() {\n      console.log(\"Hi\");\n    }\n";
     let text = render_markdown_text(md);
     let expected = Text::from_iter([
-        Line::from_iter(["    ", "function greet() {"]),
-        Line::from_iter(["    ", "  console.log(\"Hi\");"]),
-        Line::from_iter(["    ", "}"]),
+        Line::from_iter(["    ", "function greet() {"]).cyan(),
+        Line::from_iter(["    ", "  console.log(\"Hi\");"]).cyan(),
+        Line::from_iter(["    ", "}"]).cyan(),
     ]);
     assert_eq!(text, expected);
 }
@@ -880,6 +900,62 @@ fn ordered_item_with_code_block_and_nested_bullet() {
             "   code".to_string(),
             "    - PROCESS_START (a OnceLock<Instant>) keeps the start time for the entire process.".to_string(),
         ]
+    );
+}
+
+#[test]
+fn basic_table_rendering() {
+    let md = r#"| Left | Center | Right |
+|:-----|:------:|------:|
+| a    |   b    |     c |
+
+Some text after.
+"#;
+    let text = render_markdown_text(md);
+    let lines: Vec<String> = text
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.clone())
+                .collect::<String>()
+        })
+        .collect();
+
+    // Check that header row exists and data row exists
+    assert!(
+        lines.iter().any(|l| l.contains("Left")),
+        "Should contain header 'Left': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Center")),
+        "Should contain header 'Center': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Right")),
+        "Should contain header 'Right': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains(" a ")),
+        "Should contain data 'a': {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("Some text after")),
+        "Should contain text after table: {lines:?}"
+    );
+    // Check table borders exist
+    assert!(
+        lines.iter().any(|l| l.contains("┌")),
+        "Should have top border: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("├")),
+        "Should have header separator: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("└")),
+        "Should have bottom border: {lines:?}"
     );
 }
 

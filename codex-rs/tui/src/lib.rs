@@ -39,6 +39,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 mod additional_dirs;
+mod agent_cell;
 mod app;
 mod app_backtrack;
 mod app_event;
@@ -51,6 +52,7 @@ mod clipboard_paste;
 mod collab;
 mod collaboration_modes;
 mod color;
+mod compact_boundary_cell;
 pub mod custom_terminal;
 mod diff_render;
 mod exec_cell;
