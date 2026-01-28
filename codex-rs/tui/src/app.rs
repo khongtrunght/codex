@@ -558,6 +558,14 @@ impl App {
             paused_codex_events: VecDeque::new(),
         };
 
+        {
+            tui.clear_terminal_and_scrollback()?;
+            let size = tui.terminal.size()?;
+            let height = app.chat_widget.desired_height(size.width);
+            tui.terminal
+                .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, height));
+        }
+
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
         #[cfg(target_os = "windows")]
         {
@@ -904,6 +912,10 @@ impl App {
                 } else {
                     tui.clear_terminal_and_scrollback()?;
                     self.deferred_history_lines.clear();
+                    let size = tui.terminal.size()?;
+                    let height = self.chat_widget.desired_height(size.width);
+                    tui.terminal
+                        .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, height));
                     self.render_transcript_once(tui);
                     self.has_emitted_history_lines = !self.transcript_cells.is_empty();
                     tui.frame_requester().schedule_frame();
