@@ -333,6 +333,14 @@ enum RateLimitSwitchPromptState {
     Shown,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExternalEditorState {
+    #[default]
+    Closed,
+    Requested,
+    Active,
+}
+
 /// Maintains the per-session UI state and interaction state machines for the chat screen.
 ///
 /// `ChatWidget` owns the state derived from the protocol event stream (history cells, streaming
@@ -449,6 +457,7 @@ pub(crate) struct ChatWidget {
     feedback: codex_feedback::CodexFeedback,
     // Current session rollout path (if known)
     current_rollout_path: Option<PathBuf>,
+    external_editor_state: ExternalEditorState,
     /// Global display verbosity for expandable cells (Ctrl+O toggle).
     verbosity: crate::history_cell::DisplayVerbosity,
 }
@@ -1761,6 +1770,7 @@ impl ChatWidget {
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
+            external_editor_state: ExternalEditorState::Closed,
             verbosity: crate::history_cell::DisplayVerbosity::default(),
         };
 
@@ -1870,6 +1880,7 @@ impl ChatWidget {
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
+            external_editor_state: ExternalEditorState::Closed,
             verbosity: crate::history_cell::DisplayVerbosity::default(),
         };
 
@@ -2044,6 +2055,31 @@ impl ChatWidget {
         tracing::info!("attach_image path={path:?}");
         self.bottom_pane.attach_image(path);
         self.request_redraw();
+    }
+
+    pub(crate) fn composer_text_with_pending(&self) -> String {
+        self.bottom_pane.composer_text_with_pending()
+    }
+
+    pub(crate) fn apply_external_edit(&mut self, text: String) {
+        self.bottom_pane.apply_external_edit(text);
+        self.request_redraw();
+    }
+
+    pub(crate) fn external_editor_state(&self) -> ExternalEditorState {
+        self.external_editor_state
+    }
+
+    pub(crate) fn set_external_editor_state(&mut self, state: ExternalEditorState) {
+        self.external_editor_state = state;
+    }
+
+    pub(crate) fn set_footer_hint_override(&mut self, items: Option<Vec<(String, String)>>) {
+        self.bottom_pane.set_footer_hint_override(items);
+    }
+
+    pub(crate) fn can_launch_external_editor(&self) -> bool {
+        self.bottom_pane.can_launch_external_editor()
     }
 
     fn dispatch_command(&mut self, cmd: SlashCommand) {
@@ -2318,7 +2354,7 @@ impl ChatWidget {
         }
     }
 
-    fn add_to_history(&mut self, cell: impl HistoryCell + 'static) {
+    pub(crate) fn add_to_history(&mut self, cell: impl HistoryCell + 'static) {
         self.add_boxed_history(Box::new(cell));
     }
 

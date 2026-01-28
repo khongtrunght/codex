@@ -367,6 +367,20 @@ impl BottomPane {
         self.composer.local_image_paths()
     }
 
+    pub(crate) fn composer_text_with_pending(&self) -> String {
+        self.composer.current_text_with_pending()
+    }
+
+    pub(crate) fn apply_external_edit(&mut self, text: String) {
+        self.composer.apply_external_edit(text);
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_footer_hint_override(&mut self, items: Option<Vec<(String, String)>>) {
+        self.composer.set_footer_hint_override(items);
+        self.request_redraw();
+    }
+
     /// Update the status indicator header (defaults to "Working") and details below it.
     ///
     /// Passing `None` clears any existing details. No-ops if the status indicator is not active.

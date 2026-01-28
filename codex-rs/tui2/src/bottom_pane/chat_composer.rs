@@ -479,6 +479,85 @@ impl ChatComposer {
         }
     }
 
+    /// Replace the composer content with text from an external editor.
+    /// Clears pending paste placeholders and keeps only attachments whose
+    /// placeholder labels still appear in the new text. Cursor is placed at
+    /// the end after rebuilding elements.
+    pub(crate) fn apply_external_edit(&mut self, text: String) {
+        self.pending_pastes.clear();
+
+        // Count placeholder occurrences in the new text.
+        let mut placeholder_counts: HashMap<String, usize> = HashMap::new();
+        for placeholder in self.attached_images.iter().map(|img| &img.placeholder) {
+            if placeholder_counts.contains_key(placeholder) {
+                continue;
+            }
+            let count = text.match_indices(placeholder).count();
+            if count > 0 {
+                placeholder_counts.insert(placeholder.clone(), count);
+            }
+        }
+
+        // Keep attachments only while we have matching occurrences left.
+        let mut kept_images = Vec::new();
+        for img in self.attached_images.drain(..) {
+            if let Some(count) = placeholder_counts.get_mut(&img.placeholder)
+                && *count > 0
+            {
+                *count -= 1;
+                kept_images.push(img);
+            }
+        }
+        self.attached_images = kept_images;
+
+        // Rebuild textarea so placeholders become elements again.
+        self.textarea.set_text_clearing_elements("");
+        let mut remaining: HashMap<&str, usize> = HashMap::new();
+        for img in &self.attached_images {
+            *remaining.entry(img.placeholder.as_str()).or_insert(0) += 1;
+        }
+
+        let mut occurrences: Vec<(usize, &str)> = Vec::new();
+        for placeholder in remaining.keys() {
+            for (pos, _) in text.match_indices(placeholder) {
+                occurrences.push((pos, *placeholder));
+            }
+        }
+        occurrences.sort_unstable_by_key(|(pos, _)| *pos);
+
+        let mut idx = 0usize;
+        for (pos, ph) in occurrences {
+            let Some(count) = remaining.get_mut(ph) else {
+                continue;
+            };
+            if *count == 0 {
+                continue;
+            }
+            if pos > idx {
+                self.textarea.insert_str(&text[idx..pos]);
+            }
+            self.textarea.insert_element(ph);
+            *count -= 1;
+            idx = pos + ph.len();
+        }
+        if idx < text.len() {
+            self.textarea.insert_str(&text[idx..]);
+        }
+
+        self.textarea.set_cursor(self.textarea.text().len());
+        self.sync_popups();
+    }
+
+    pub(crate) fn current_text_with_pending(&self) -> String {
+        let mut text = self.textarea.text().to_string();
+        for (placeholder, actual) in &self.pending_pastes {
+            if text.contains(placeholder) {
+                text = text.replace(placeholder, actual);
+            }
+        }
+        text
+    }
+
     /// Override the footer hint items displayed beneath the composer. Passing
     /// `None` restores the default shortcut footer.
     pub(crate) fn set_footer_hint_override(&mut self, items: Option<Vec<(String, String)>>) {
