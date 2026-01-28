@@ -677,8 +677,9 @@ Available agent types and the tools they have access to:
 
 When using the {TASK_TOOL_NAME} tool, you must specify a subagent_type parameter to select which agent type to use.
 When NOT to use the {TASK_TOOL_NAME} tool:
-- If you want to read a specific file path, use the {READ_FILE_TOOL_NAME} or {GLOB_TOOL_NAME} tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
-- If you are searching for a specific class definition like "class Foo", use the {GLOB_TOOL_NAME} tool instead, to find the match more quickly
+- If you want to read a specific file path, use the {READ_FILE_TOOL_NAME} tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
+- If you want to find files matching a pattern, use `rg --files` via the shell tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use `rg` via the shell tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
 - If you are searching for code within a specific file or set of 2-3 files, use the {READ_FILE_TOOL_NAME} tool instead of the {TASK_TOOL_NAME} tool, to find the match more quickly
 - Other tasks that are not related to the agent descriptions above
 
