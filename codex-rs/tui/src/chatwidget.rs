@@ -2488,6 +2488,12 @@ impl ChatWidget {
                     prompt: trimmed.to_string(),
                 });
             }
+            SlashCommand::Compact if !trimmed.is_empty() => {
+                self.clear_token_usage();
+                self.submit_op(Op::Compact {
+                    custom_instructions: Some(trimmed.to_string()),
+                });
+            }
             _ => self.dispatch_command(cmd),
         }
     }
