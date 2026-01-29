@@ -833,6 +833,13 @@ pub(crate) fn new_review_status_line(message: String) -> PlainHistoryCell {
     }
 }
 
+/// Cyan history cell line showing the current prompt enhancement status.
+pub(crate) fn new_enhance_status_line(message: String) -> PlainHistoryCell {
+    PlainHistoryCell {
+        lines: vec![Line::from(message.cyan())],
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PatchHistoryCell {
     changes: HashMap<PathBuf, FileChange>,

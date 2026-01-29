@@ -351,6 +351,8 @@ async fn run_codex_tool_session_inner(
                     | EventMsg::MermaidToolCall(_)
                     | EventMsg::RawResponseItem(_)
                     | EventMsg::EnteredReviewMode(_)
+                    | EventMsg::EnhancePromptStarted(_)
+                    | EventMsg::EnhancePromptCompleted(_)
                     | EventMsg::ItemStarted(_)
                     | EventMsg::ItemCompleted(_)
                     | EventMsg::AgentMessageContentDelta(_)

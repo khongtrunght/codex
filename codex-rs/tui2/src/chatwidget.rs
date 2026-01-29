@@ -2656,6 +2656,7 @@ impl ChatWidget {
                 self.on_entered_review_mode(review_request)
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
+            EventMsg::EnhancePromptStarted(_) | EventMsg::EnhancePromptCompleted(_) => {}
             EventMsg::ContextCompacted(event) => {
                 self.add_to_history(history_cell::CompactBoundaryCell::new(
                     event.restored_files,

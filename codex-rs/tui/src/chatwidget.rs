@@ -53,6 +53,8 @@ use codex_core::protocol::AskUserQuestionRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
+use codex_core::protocol::EnhancePromptCompletedEvent;
+use codex_core::protocol::EnhancePromptStartedEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
@@ -2295,6 +2297,12 @@ impl ChatWidget {
             SlashCommand::Review => {
                 self.open_review_popup();
             }
+            SlashCommand::Enhance => {
+                self.add_info_message(
+                    "Use /enhance <prompt> to rewrite a prompt.".to_string(),
+                    None,
+                );
+            }
             SlashCommand::Model => {
                 self.open_model_popup();
             }
@@ -2473,6 +2481,11 @@ impl ChatWidget {
                         },
                         user_facing_hint: None,
                     },
+                });
+            }
+            SlashCommand::Enhance if !trimmed.is_empty() => {
+                self.submit_op(Op::EnhancePrompt {
+                    prompt: trimmed.to_string(),
                 });
             }
             _ => self.dispatch_command(cmd),
@@ -2800,6 +2813,8 @@ impl ChatWidget {
                 self.on_entered_review_mode(review_request, from_replay)
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
+            EventMsg::EnhancePromptStarted(ev) => self.on_enhance_prompt_started(ev, from_replay),
+            EventMsg::EnhancePromptCompleted(ev) => self.on_enhance_prompt_completed(ev),
             EventMsg::ContextCompacted(event) => {
                 self.add_to_history(history_cell::CompactBoundaryCell::new(
                     event.restored_files,
@@ -2887,6 +2902,32 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_review_status_line(
             "<< Code review finished >>".to_string(),
         ));
+        self.request_redraw();
+    }
+
+    fn on_enhance_prompt_started(&mut self, event: EnhancePromptStartedEvent, from_replay: bool) {
+        let _ = event;
+        if !from_replay && !self.bottom_pane.is_task_running() {
+            self.bottom_pane.set_task_running(true);
+        }
+        self.add_to_history(history_cell::new_enhance_status_line(
+            ">> Prompt enhancement started <<".to_string(),
+        ));
+        self.request_redraw();
+    }
+
+    fn on_enhance_prompt_completed(&mut self, event: EnhancePromptCompletedEvent) {
+        let prompt = event.prompt.trim().to_string();
+        if prompt.is_empty() {
+            self.add_to_history(history_cell::new_error_event(
+                "Prompt enhancement returned empty output.".to_string(),
+            ));
+        } else {
+            self.set_composer_text(prompt, Vec::new(), Vec::new());
+            self.add_to_history(history_cell::new_enhance_status_line(
+                "<< Prompt enhancement finished >>".to_string(),
+            ));
+        }
         self.request_redraw();
     }
 
@@ -4717,7 +4758,9 @@ impl ChatWidget {
     pub(crate) fn submit_op(&mut self, op: Op) {
         // Record outbound operation for session replay fidelity.
         crate::session_log::log_outbound_op(&op);
-        if matches!(&op, Op::Review { .. }) && !self.bottom_pane.is_task_running() {
+        if matches!(&op, Op::Review { .. } | Op::EnhancePrompt { .. })
+            && !self.bottom_pane.is_task_running()
+        {
             self.bottom_pane.set_task_running(true);
         }
         if let Err(e) = self.codex_op_tx.send(op) {

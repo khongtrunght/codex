@@ -46,6 +46,8 @@ pub(crate) fn should_persist_event_msg(ev: &EventMsg) -> bool {
         | EventMsg::ContextCompacted(_)
         | EventMsg::EnteredReviewMode(_)
         | EventMsg::ExitedReviewMode(_)
+        | EventMsg::EnhancePromptStarted(_)
+        | EventMsg::EnhancePromptCompleted(_)
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::UndoCompleted(_)
         | EventMsg::TurnAborted(_)

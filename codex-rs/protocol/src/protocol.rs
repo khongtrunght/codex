@@ -284,6 +284,9 @@ pub enum Op {
     /// Request a code review from the agent.
     Review { review_request: ReviewRequest },
 
+    /// Request a prompt enhancement from the agent.
+    EnhancePrompt { prompt: String },
+
     /// Request to shut down codex instance.
     Shutdown,
 
@@ -835,6 +838,12 @@ pub enum EventMsg {
 
     /// Exited review mode with an optional final result to apply.
     ExitedReviewMode(ExitedReviewModeEvent),
+
+    /// Prompt enhancement started.
+    EnhancePromptStarted(EnhancePromptStartedEvent),
+
+    /// Prompt enhancement completed with the enhanced prompt text.
+    EnhancePromptCompleted(EnhancePromptCompletedEvent),
 
     RawResponseItem(RawResponseItemEvent),
 
@@ -1776,6 +1785,16 @@ pub struct ReviewRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub user_facing_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct EnhancePromptStartedEvent {
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
+pub struct EnhancePromptCompletedEvent {
+    pub prompt: String,
 }
 
 /// Structured review result produced by a child review session.

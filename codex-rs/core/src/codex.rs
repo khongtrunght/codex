@@ -45,6 +45,7 @@ use codex_protocol::protocol::AskUserQuestion;
 use codex_protocol::protocol::AskUserQuestionRequestEvent;
 use codex_protocol::protocol::AskUserQuestionResponse;
 use codex_protocol::protocol::AttachmentEvent;
+use codex_protocol::protocol::EnhancePromptStartedEvent;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::HasLegacyEvent;
 use codex_protocol::protocol::ItemCompletedEvent;
@@ -154,6 +155,7 @@ use crate::skills::build_skill_injections;
 use crate::state::ActiveTurn;
 use crate::state::SessionServices;
 use crate::state::SessionState;
+use crate::tasks::EnhancePromptTask;
 use crate::tasks::GhostSnapshotTask;
 use crate::tasks::ReviewTask;
 use crate::tasks::SessionTask;
@@ -2310,6 +2312,9 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             Op::Review { review_request } => {
                 handlers::review(&sess, &config, sub.id.clone(), review_request).await;
             }
+            Op::EnhancePrompt { prompt } => {
+                handlers::enhance_prompt(&sess, &config, sub.id.clone(), prompt).await;
+            }
             _ => {} // Ignore unknown ops; enum is non_exhaustive to allow extensions.
         }
     }
@@ -2322,6 +2327,7 @@ mod handlers {
     use crate::codex::SessionSettingsUpdate;
     use crate::codex::TurnContext;
 
+    use crate::codex::spawn_enhance_prompt;
     use crate::codex::spawn_review_thread;
     use crate::config::Config;
 
@@ -2849,6 +2855,36 @@ mod handlers {
             }
         }
     }
+
+    pub async fn enhance_prompt(
+        sess: &Arc<Session>,
+        config: &Arc<Config>,
+        sub_id: String,
+        prompt: String,
+    ) {
+        let trimmed = prompt.trim();
+        if trimmed.is_empty() {
+            let event = Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: "Prompt enhancement requires non-empty input.".to_string(),
+                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                }),
+            };
+            sess.send_event_raw(event).await;
+            return;
+        }
+        let turn_context = sess.new_default_turn_with_sub_id(sub_id.clone()).await;
+        sess.refresh_mcp_servers_if_requested(&turn_context).await;
+        spawn_enhance_prompt(
+            Arc::clone(sess),
+            Arc::clone(config),
+            turn_context,
+            sub_id,
+            trimmed.to_string(),
+        )
+        .await;
+    }
 }
 
 /// Spawn a review thread using the given prompt.
@@ -2945,6 +2981,96 @@ async fn spawn_review_thread(
     };
     sess.send_event(&tc, EventMsg::EnteredReviewMode(review_request))
         .await;
+}
+
+/// Spawn a prompt enhancement thread using the given prompt.
+async fn spawn_enhance_prompt(
+    sess: Arc<Session>,
+    config: Arc<Config>,
+    parent_turn_context: Arc<TurnContext>,
+    sub_id: String,
+    prompt: String,
+) {
+    let model = config
+        .small_model
+        .clone()
+        .unwrap_or_else(|| parent_turn_context.client.get_model());
+    let model_info = sess
+        .services
+        .models_manager
+        .get_model_info(&model, &config)
+        .await;
+
+    let mut enhance_features = sess.features.clone();
+    enhance_features
+        .disable(crate::features::Feature::WebSearchRequest)
+        .disable(crate::features::Feature::WebSearchCached);
+    let enhance_web_search_mode = WebSearchMode::Disabled;
+    let agent_configs = sess.services.agent_type_manager.agent_configs();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        features: &enhance_features,
+        web_search_mode: Some(enhance_web_search_mode),
+        agent_configs: Some(&agent_configs),
+    });
+
+    let provider = parent_turn_context.client.get_provider();
+    let auth_manager = parent_turn_context.client.get_auth_manager();
+
+    let mut per_turn_config = (*config).clone();
+    per_turn_config.model = Some(model.clone());
+    per_turn_config.features = enhance_features.clone();
+    per_turn_config.web_search_mode = Some(enhance_web_search_mode);
+    per_turn_config.model_reasoning_effort = Some(ReasoningEffort::Low);
+
+    let otel_manager = parent_turn_context
+        .client
+        .get_otel_manager()
+        .with_model(model.as_str(), model_info.slug.as_str());
+
+    let per_turn_config = Arc::new(per_turn_config);
+    let client = ModelClient::new(
+        per_turn_config.clone(),
+        auth_manager,
+        model_info.clone(),
+        otel_manager,
+        provider,
+        per_turn_config.model_reasoning_effort,
+        per_turn_config.model_reasoning_summary,
+        sess.conversation_id,
+        parent_turn_context.client.get_session_source(),
+    );
+
+    let enhance_turn_context = TurnContext {
+        sub_id: sub_id.to_string(),
+        client,
+        tools_config,
+        ghost_snapshot: parent_turn_context.ghost_snapshot.clone(),
+        developer_instructions: None,
+        user_instructions: None,
+        compact_prompt: parent_turn_context.compact_prompt.clone(),
+        approval_policy: parent_turn_context.approval_policy,
+        sandbox_policy: parent_turn_context.sandbox_policy.clone(),
+        shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
+        cwd: parent_turn_context.cwd.clone(),
+        final_output_json_schema: None,
+        codex_linux_sandbox_exe: parent_turn_context.codex_linux_sandbox_exe.clone(),
+        tool_call_gate: Arc::new(ReadinessFlag::new()),
+        truncation_policy: model_info.truncation_policy.into(),
+    };
+
+    let input: Vec<UserInput> = vec![UserInput::Text {
+        text: prompt.clone(),
+        text_elements: Vec::new(),
+    }];
+    let tc = Arc::new(enhance_turn_context);
+    sess.spawn_task(tc.clone(), input, EnhancePromptTask::new())
+        .await;
+    sess.send_event(
+        &tc,
+        EventMsg::EnhancePromptStarted(EnhancePromptStartedEvent { prompt }),
+    )
+    .await;
 }
 
 fn skills_to_info(skills: &[SkillMetadata]) -> Vec<ProtocolSkillMetadata> {
