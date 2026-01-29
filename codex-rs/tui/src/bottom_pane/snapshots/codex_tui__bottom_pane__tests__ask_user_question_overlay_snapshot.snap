@@ -1,0 +1,20 @@
+---
+source: tui/src/bottom_pane/mod.rs
+expression: "render_snapshot(&pane, area)"
+---
+←  ☐ Database  ☐ Notify  ✔ Submit  →                                    
+                                                                        
+Which database should we use?                                           
+                                                                        
+› 1. Postgres                                                           
+   Managed Postgres instance                                            
+  2. SQLite                                                             
+   Local embedded database                                              
+  3. Type something                                                     
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

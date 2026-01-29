@@ -49,6 +49,7 @@ use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::AskUserQuestionRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
@@ -131,6 +132,7 @@ use crate::app_event::WindowsSandboxEnableMode;
 use crate::app_event::WindowsSandboxFallbackReason;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ApprovalRequest;
+use crate::bottom_pane::AskUserQuestionOverlay;
 use crate::bottom_pane::BetaFeatureItem;
 use crate::bottom_pane::BottomPane;
 use crate::bottom_pane::BottomPaneParams;
@@ -1227,6 +1229,14 @@ impl ChatWidget {
             |q| q.push_elicitation(ev),
             |s| s.handle_elicitation_request_now(ev2),
         );
+    }
+
+    fn on_ask_user_question_request(&mut self, id: String, ev: AskUserQuestionRequestEvent) {
+        self.flush_answer_stream_with_separator();
+
+        let overlay = AskUserQuestionOverlay::new(id, ev.questions, self.app_event_tx.clone());
+        self.bottom_pane.push_ask_user_question(overlay);
+        self.request_redraw();
     }
 
     fn on_exec_command_begin(&mut self, ev: ExecCommandBeginEvent) {
@@ -2819,8 +2829,10 @@ impl ChatWidget {
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::AskUserQuestionRequest(_)
             | EventMsg::ExitPlanModeApprovalRequest(_) => {}
+            EventMsg::AskUserQuestionRequest(ev) => {
+                self.on_ask_user_question_request(id.unwrap_or_default(), ev);
+            }
             EventMsg::AttachmentLoaded(ev) => self.on_attachment_loaded(ev),
         }
     }

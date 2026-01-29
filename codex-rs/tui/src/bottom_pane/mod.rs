@@ -40,6 +40,8 @@ use std::time::Duration;
 mod approval_overlay;
 pub(crate) use approval_overlay::ApprovalOverlay;
 pub(crate) use approval_overlay::ApprovalRequest;
+mod ask_user_question_overlay;
+pub(crate) use ask_user_question_overlay::AskUserQuestionOverlay;
 mod bottom_pane_view;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -618,6 +620,12 @@ impl BottomPane {
         self.push_view(Box::new(modal));
     }
 
+    /// Called when the agent requests user input via the AskUserQuestion tool.
+    pub fn push_ask_user_question(&mut self, overlay: AskUserQuestionOverlay) {
+        self.pause_status_timer_for_modal();
+        self.push_view(Box::new(overlay));
+    }
+
     fn on_active_view_complete(&mut self) {
         self.resume_status_timer_after_modal();
     }
@@ -741,6 +749,8 @@ impl Renderable for BottomPane {
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
+    use codex_core::protocol::AskUserQuestion;
+    use codex_core::protocol::AskUserQuestionOption;
     use codex_core::protocol::Op;
     use codex_protocol::protocol::SkillScope;
     use crossterm::event::KeyModifiers;
@@ -928,6 +938,68 @@ mod tests {
 
         let bufs = snapshot_buffer(&buf);
         assert!(bufs.contains("• Working"), "expected Working header");
+    }
+
+    #[test]
+    fn ask_user_question_overlay_snapshot() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx.clone(),
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: false,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+            animations_enabled: true,
+            skills: Some(Vec::new()),
+        });
+
+        let overlay = AskUserQuestionOverlay::new(
+            "call-1".to_string(),
+            vec![
+                AskUserQuestion {
+                    question: "Which database should we use?".to_string(),
+                    header: "Database".to_string(),
+                    options: vec![
+                        AskUserQuestionOption {
+                            label: "Postgres".to_string(),
+                            description: "Managed Postgres instance".to_string(),
+                        },
+                        AskUserQuestionOption {
+                            label: "SQLite".to_string(),
+                            description: "Local embedded database".to_string(),
+                        },
+                    ],
+                    multi_select: false,
+                },
+                AskUserQuestion {
+                    question: "Which notification channels do you want?".to_string(),
+                    header: "Notify".to_string(),
+                    options: vec![
+                        AskUserQuestionOption {
+                            label: "Email".to_string(),
+                            description: "Weekly summary emails".to_string(),
+                        },
+                        AskUserQuestionOption {
+                            label: "Slack".to_string(),
+                            description: "Post updates to Slack".to_string(),
+                        },
+                    ],
+                    multi_select: true,
+                },
+            ],
+            tx,
+        );
+        pane.push_ask_user_question(overlay);
+
+        let width = 72;
+        let height = pane.desired_height(width);
+        let area = Rect::new(0, 0, width, height);
+        assert_snapshot!(
+            "ask_user_question_overlay_snapshot",
+            render_snapshot(&pane, area)
+        );
     }
 
     #[test]
