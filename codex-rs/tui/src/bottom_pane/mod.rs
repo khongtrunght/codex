@@ -774,6 +774,7 @@ mod tests {
             command: vec!["echo".into(), "ok".into()],
             reason: None,
             proposed_execpolicy_amendment: None,
+            target_thread: None,
         }
     }
 

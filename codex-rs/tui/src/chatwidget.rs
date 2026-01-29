@@ -1193,21 +1193,31 @@ impl ChatWidget {
         self.add_to_history(history_cell::new_plan_update(update));
     }
 
-    fn on_exec_approval_request(&mut self, id: String, ev: ExecApprovalRequestEvent) {
+    fn on_exec_approval_request(
+        &mut self,
+        id: String,
+        ev: ExecApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
+    ) {
         let id2 = id.clone();
         let ev2 = ev.clone();
         self.defer_or_handle(
-            |q| q.push_exec_approval(id, ev),
-            |s| s.handle_exec_approval_now(id2, ev2),
+            |q| q.push_exec_approval(id, ev, target_thread),
+            |s| s.handle_exec_approval_now(id2, ev2, target_thread),
         );
     }
 
-    fn on_apply_patch_approval_request(&mut self, id: String, ev: ApplyPatchApprovalRequestEvent) {
+    fn on_apply_patch_approval_request(
+        &mut self,
+        id: String,
+        ev: ApplyPatchApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
+    ) {
         let id2 = id.clone();
         let ev2 = ev.clone();
         self.defer_or_handle(
-            |q| q.push_apply_patch_approval(id, ev),
-            |s| s.handle_apply_patch_approval_now(id2, ev2),
+            |q| q.push_apply_patch_approval(id, ev, target_thread),
+            |s| s.handle_apply_patch_approval_now(id2, ev2, target_thread),
         );
     }
 
@@ -1645,7 +1655,12 @@ impl ChatWidget {
         self.had_work_activity = true;
     }
 
-    pub(crate) fn handle_exec_approval_now(&mut self, id: String, ev: ExecApprovalRequestEvent) {
+    pub(crate) fn handle_exec_approval_now(
+        &mut self,
+        id: String,
+        ev: ExecApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
+    ) {
         self.flush_answer_stream_with_separator();
         let command = shlex::try_join(ev.command.iter().map(String::as_str))
             .unwrap_or_else(|_| ev.command.join(" "));
@@ -1656,6 +1671,7 @@ impl ChatWidget {
             command: ev.command,
             reason: ev.reason,
             proposed_execpolicy_amendment: ev.proposed_execpolicy_amendment,
+            target_thread,
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -1666,6 +1682,7 @@ impl ChatWidget {
         &mut self,
         id: String,
         ev: ApplyPatchApprovalRequestEvent,
+        target_thread: Option<ThreadId>,
     ) {
         self.flush_answer_stream_with_separator();
 
@@ -1674,6 +1691,7 @@ impl ChatWidget {
             reason: ev.reason,
             changes: ev.changes.clone(),
             cwd: self.config.cwd.clone(),
+            target_thread,
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -2720,10 +2738,10 @@ impl ChatWidget {
             EventMsg::PlanUpdate(update) => self.on_plan_update(update),
             EventMsg::ExecApprovalRequest(ev) => {
                 // For replayed events, synthesize an empty id (these should not occur).
-                self.on_exec_approval_request(id.unwrap_or_default(), ev)
+                self.on_exec_approval_request(id.unwrap_or_default(), ev, None)
             }
             EventMsg::ApplyPatchApprovalRequest(ev) => {
-                self.on_apply_patch_approval_request(id.unwrap_or_default(), ev)
+                self.on_apply_patch_approval_request(id.unwrap_or_default(), ev, None)
             }
             EventMsg::ElicitationRequest(ev) => {
                 self.on_elicitation_request(ev);
@@ -2920,7 +2938,21 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    /// Handle an event from a subscribed subagent thread.
     pub(crate) fn handle_subagent_event(&mut self, thread_id: ThreadId, event: Event) {
+        // Handle approval requests from subagents by routing them to the main approval UI.
+        // The target_thread is passed so the approval response gets routed back correctly.
+        match &event.msg {
+            EventMsg::ExecApprovalRequest(ev) => {
+                self.on_exec_approval_request(event.id.clone(), ev.clone(), Some(thread_id));
+            }
+            EventMsg::ApplyPatchApprovalRequest(ev) => {
+                self.on_apply_patch_approval_request(event.id.clone(), ev.clone(), Some(thread_id));
+            }
+            _ => {}
+        }
+
+        // Store the event in the cell for display purposes
         if let Some(call_id) = self.thread_to_call_id.get(&thread_id).cloned()
             && let Some(cell) = self.subagents.get_mut(&call_id)
         {
