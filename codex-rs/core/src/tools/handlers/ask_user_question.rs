@@ -144,14 +144,18 @@ impl ToolHandler for AskUserQuestionHandler {
             ));
         }
 
-        // Build output with questions and answers
-        let output = serde_json::json!({
-            "questions": input.questions,
-            "answers": response.answers,
-        });
+        let question_answers: String = response
+            .answers
+            .iter()
+            .map(|(q, a)| format!(r#""{q}"="{a}""#))
+            .collect::<Vec<String>>()
+            .join(", ");
+        let output = format!(
+            "User has answered your questions: {question_answers}. You can now continue with the user's answers in mind."
+        );
 
         Ok(ToolOutput::Function {
-            content: output.to_string(),
+            content: output,
             content_items: None,
             success: Some(true),
         })
