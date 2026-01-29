@@ -16,6 +16,13 @@ const COLLABORATION_MODE_PAIR_PROGRAMMING: &str =
     include_str!("prompts/collaboration_mode/pair_programming.md");
 const COLLABORATION_MODE_EXECUTE: &str = include_str!("prompts/collaboration_mode/execute.md");
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS, Default)]
+pub enum ReminderType {
+    #[default]
+    Full,
+    Sparse,
+}
+
 /// Data payload for attachment types.
 /// Attachments are contextual markers stored in history and expanded to messages before API calls.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
@@ -25,6 +32,7 @@ pub enum AttachmentData {
     PlanMode {
         plan_file_path: String,
         plan_exists: bool,
+        reminder_type: ReminderType,
     },
     /// Collected when re-entering plan mode after being in a different mode.
     PlanModeReentry { plan_file_path: String },
@@ -63,7 +71,8 @@ impl From<AttachmentData> for ResponseItem {
             AttachmentData::PlanMode {
                 plan_file_path,
                 plan_exists,
-            } => generate_plan_mode_items(&plan_file_path, plan_exists),
+                reminder_type,
+            } => generate_plan_mode_items(&plan_file_path, plan_exists, reminder_type),
             AttachmentData::PlanModeReentry { plan_file_path } => {
                 generate_reentry_items(&plan_file_path)
             }
@@ -117,24 +126,37 @@ pub struct PlanModeReentryPrompt {
     pub plan_file_path: String,
 }
 
-fn generate_plan_mode_items(plan_file_path: &str, plan_exists: bool) -> ResponseItem {
-    let plan_file_info = if plan_exists {
-        format!(
-            "A plan file already exists at {plan_file_path}. You can read it and make incremental edits to it."
-        )
-    } else {
-        format!("No plan file exists yet. You should create your plan at {plan_file_path}.")
+fn generate_plan_mode_items(
+    plan_file_path: &str,
+    plan_exists: bool,
+    reminder_type: ReminderType,
+) -> ResponseItem {
+    let contents = match reminder_type {
+        ReminderType::Full => {
+            let plan_file_info = if plan_exists {
+                format!(
+                    "A plan file already exists at {plan_file_path}. You can read it and make incremental edits to it."
+                )
+            } else {
+                format!("No plan file exists yet. You should create your plan at {plan_file_path}.")
+            };
+
+            let num_planing_agent = plan_agent_count_from_env_or_defaults();
+
+            PlanModeEnhancedPrompt {
+                plan_file_info,
+                plan_agent_count: num_planing_agent,
+                explore_agent_count: explore_agent_count_from_env_or_default(),
+                multi_agent_mode: num_planing_agent > 1,
+            }
+            .to_string()
+        }
+        ReminderType::Sparse => {
+            format!(
+                "Plan mode still active (see full instructions earlier in conversation). Read-only except plan file ({plan_file_path}). Follow 5-phase workflow. End turns with `ask_user_question` (for clarifications) or `exit_plan_mode` (for plan approval)."
+            )
+        }
     };
-
-    let num_planing_agent = plan_agent_count_from_env_or_defaults();
-
-    let contents = PlanModeEnhancedPrompt {
-        plan_file_info,
-        plan_agent_count: num_planing_agent,
-        explore_agent_count: explore_agent_count_from_env_or_default(),
-        multi_agent_mode: num_planing_agent > 1,
-    }
-    .to_string();
 
     let contents = format!("{SYSTEM_REMINDER_OPEN_TAG}\n{contents}\n{SYSTEM_REMINDER_CLOSE_TAG}");
 

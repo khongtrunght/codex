@@ -8,6 +8,7 @@ use std::path::Path;
 
 use codex_protocol::attachment::AttachmentData;
 use codex_protocol::attachment::MentionAttachment;
+use codex_protocol::attachment::ReminderType;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::user_input::UserInput;
@@ -50,9 +51,11 @@ pub(crate) fn collect_plan_mode<'a>(
 
         // Check throttle: skip if recent attachment exists
         let turns_since = count_turns_since_last_plan_attachment(history.raw_items());
-        if turns_since < TURNS_BETWEEN_ATTACHMENTS {
-            return vec![];
-        }
+        let reminder_type = if turns_since < TURNS_BETWEEN_ATTACHMENTS {
+            ReminderType::Sparse
+        } else {
+            ReminderType::Full
+        };
 
         // Resolve slug to path
         let plan_path = resolve_plan_file_path_with_slug(&slug);
@@ -60,6 +63,7 @@ pub(crate) fn collect_plan_mode<'a>(
         vec![AttachmentData::PlanMode {
             plan_file_path: plan_path.to_string_lossy().into_owned(),
             plan_exists: plan_path.exists(),
+            reminder_type,
         }]
     })
 }
