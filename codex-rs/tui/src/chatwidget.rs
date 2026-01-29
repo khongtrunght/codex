@@ -2820,7 +2820,9 @@ impl ChatWidget {
             }
             EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
             EventMsg::EnhancePromptStarted(ev) => self.on_enhance_prompt_started(ev, from_replay),
-            EventMsg::EnhancePromptCompleted(ev) => self.on_enhance_prompt_completed(ev),
+            EventMsg::EnhancePromptCompleted(ev) => {
+                self.on_enhance_prompt_completed(ev, from_replay);
+            }
             EventMsg::ContextCompacted(event) => {
                 self.add_to_history(history_cell::CompactBoundaryCell::new(
                     event.restored_files,
@@ -2922,14 +2924,20 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_enhance_prompt_completed(&mut self, event: EnhancePromptCompletedEvent) {
+    fn on_enhance_prompt_completed(
+        &mut self,
+        event: EnhancePromptCompletedEvent,
+        from_replay: bool,
+    ) {
         let prompt = event.prompt.trim().to_string();
         if prompt.is_empty() {
             self.add_to_history(history_cell::new_error_event(
                 "Prompt enhancement returned empty output.".to_string(),
             ));
         } else {
-            self.set_composer_text(prompt, Vec::new(), Vec::new());
+            if !from_replay {
+                self.set_composer_text(prompt, Vec::new(), Vec::new());
+            }
             self.add_to_history(history_cell::new_enhance_status_line(
                 "<< Prompt enhancement finished >>".to_string(),
             ));
