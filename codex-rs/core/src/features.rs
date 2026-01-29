@@ -105,7 +105,7 @@ pub enum Feature {
     Collab,
     /// Steer feature flag - when enabled, Enter submits immediately instead of queuing.
     Steer,
-    /// Enable collaboration modes (Plan, Pair Programming, Execute).
+    /// Enable collaboration modes (Code, Plan).
     CollaborationModes,
     /// Enable the Task tool for spawning sub-agents.
     TaskTool,

@@ -230,9 +230,6 @@ const SANDBOX_MODE_READ_ONLY: &str = include_str!("prompts/permissions/sandbox_m
 
 // Collaboration mode templates
 const COLLABORATION_MODE_PLAN: &str = include_str!("prompts/collaboration_mode/plan.md");
-const COLLABORATION_MODE_PAIR_PROGRAMMING: &str =
-    include_str!("prompts/collaboration_mode/pair_programming.md");
-const COLLABORATION_MODE_EXECUTE: &str = include_str!("prompts/collaboration_mode/execute.md");
 
 impl DeveloperInstructions {
     pub fn new<T: Into<String>>(text: T) -> Self {
@@ -334,10 +331,8 @@ impl DeveloperInstructions {
     /// behavior and interaction style. Returns `None` if the mode has no instructions.
     pub fn from_collaboration_mode(mode: &CollaborationMode) -> Option<DeveloperInstructions> {
         let instructions = match mode {
-            CollaborationMode::None => return None,
+            CollaborationMode::Code => return None,
             CollaborationMode::Plan => COLLABORATION_MODE_PLAN,
-            CollaborationMode::PairProgramming => COLLABORATION_MODE_PAIR_PROGRAMMING,
-            CollaborationMode::Execute => COLLABORATION_MODE_EXECUTE,
         };
         Some(DeveloperInstructions::new(format!(
             "{SYSTEM_REMINDER_OPEN_TAG}\n{instructions}\n{SYSTEM_REMINDER_CLOSE_TAG}"

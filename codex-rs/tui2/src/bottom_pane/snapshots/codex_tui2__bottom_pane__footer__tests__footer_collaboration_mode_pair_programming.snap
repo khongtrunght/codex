@@ -1,5 +1,0 @@
----
-source: tui2/src/bottom_pane/footer.rs
-expression: terminal.backend()
----
-"  ⇄ Pair Programming (shift + tab to change) · 80% context left · ? for shortcut"

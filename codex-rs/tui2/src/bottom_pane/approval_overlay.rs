@@ -25,7 +25,6 @@ use codex_core::protocol::FileChange;
 use codex_core::protocol::Op;
 use codex_core::protocol::ReviewDecision;
 use codex_protocol::ThreadId;
-use codex_protocol::config_types::CollaborationMode;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -376,10 +375,7 @@ impl BottomPaneView for ApprovalOverlay {
                 ApprovalVariant::ExitPlanMode { turn_id, .. } => {
                     self.handle_exit_plan_mode_decision(
                         turn_id,
-                        ExitPlanModeApprovalResponse {
-                            approved: false,
-                            target_mode: None,
-                        },
+                        ExitPlanModeApprovalResponse { approved: false },
                     );
                 }
             }
@@ -661,28 +657,17 @@ fn elicitation_options() -> Vec<ApprovalOption> {
 fn exit_plan_mode_options() -> Vec<ApprovalOption> {
     vec![
         ApprovalOption {
-            label: "Yes, start pair programming mode".to_string(),
+            label: "Yes, start executing".to_string(),
             decision: ApprovalDecision::ExitPlanMode(ExitPlanModeApprovalResponse {
                 approved: true,
-                target_mode: Some(CollaborationMode::PairProgramming),
             }),
             display_shortcut: None,
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('y'))],
         },
         ApprovalOption {
-            label: "Yes, start execute mode".to_string(),
-            decision: ApprovalDecision::ExitPlanMode(ExitPlanModeApprovalResponse {
-                approved: true,
-                target_mode: Some(CollaborationMode::Execute),
-            }),
-            display_shortcut: None,
-            additional_shortcuts: vec![key_hint::plain(KeyCode::Char('e'))],
-        },
-        ApprovalOption {
             label: "No, continue planning".to_string(),
             decision: ApprovalDecision::ExitPlanMode(ExitPlanModeApprovalResponse {
                 approved: false,
-                target_mode: None,
             }),
             display_shortcut: Some(key_hint::plain(KeyCode::Esc)),
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('n'))],
@@ -885,37 +870,24 @@ mod tests {
     }
 
     #[test]
-    fn exit_plan_mode_options_returns_correct_modes() {
+    fn exit_plan_mode_options_returns_correct_options() {
         let options = exit_plan_mode_options();
 
-        // Should have 3 options: pair programming, execute, and reject
-        assert_eq!(options.len(), 3);
+        // Should have 2 options: approve (execute) and reject
+        assert_eq!(options.len(), 2);
 
-        // First option: pair programming mode
+        // First option: approve (transitions to execute mode)
         if let ApprovalDecision::ExitPlanMode(response) = &options[0].decision {
             assert!(response.approved);
-            assert_eq!(
-                response.target_mode,
-                Some(CollaborationMode::PairProgramming)
-            );
         } else {
             panic!("expected ExitPlanMode decision for first option");
         }
 
-        // Second option: execute mode
+        // Second option: reject (continue planning)
         if let ApprovalDecision::ExitPlanMode(response) = &options[1].decision {
-            assert!(response.approved);
-            assert_eq!(response.target_mode, Some(CollaborationMode::Execute));
+            assert!(!response.approved);
         } else {
             panic!("expected ExitPlanMode decision for second option");
-        }
-
-        // Third option: reject (continue planning)
-        if let ApprovalDecision::ExitPlanMode(response) = &options[2].decision {
-            assert!(!response.approved);
-            assert!(response.target_mode.is_none());
-        } else {
-            panic!("expected ExitPlanMode decision for third option");
         }
     }
 
@@ -932,7 +904,7 @@ mod tests {
 
         let mut view = ApprovalOverlay::new(request, tx, Features::with_defaults());
 
-        // Press 'y' to approve with pair programming mode
+        // Press 'y' to approve (transitions to execute mode)
         view.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
 
         // Find the ExitPlanModeApproval op
@@ -947,9 +919,5 @@ mod tests {
         let (id, response) = found_op.expect("expected ExitPlanModeApproval op");
         assert_eq!(id, "turn-123");
         assert!(response.approved);
-        assert_eq!(
-            response.target_mode,
-            Some(CollaborationMode::PairProgramming)
-        );
     }
 }

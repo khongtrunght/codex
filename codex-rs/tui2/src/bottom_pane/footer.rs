@@ -166,7 +166,7 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         }
         FooterMode::ShortcutSummary => {
             let mut line = Line::from("");
-            // Show collaboration mode indicator if enabled (None mode shows nothing)
+            // Show collaboration mode indicator if enabled (Code mode shows nothing)
             if let Some(ref mode) = props.collaboration_mode
                 && let Some(indicator) = collaboration_mode_indicator(mode)
             {
@@ -223,7 +223,7 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
         FooterMode::EscHint => vec![esc_hint_line(props.esc_backtrack_hint)],
         FooterMode::ContextOnly => {
             let mut line = Line::from("");
-            // Show collaboration mode indicator if enabled (None mode shows nothing)
+            // Show collaboration mode indicator if enabled (Code mode shows nothing)
             if let Some(ref mode) = props.collaboration_mode
                 && let Some(indicator) = collaboration_mode_indicator(mode)
             {
@@ -376,8 +376,8 @@ fn build_columns(entries: Vec<Line<'static>>) -> Vec<Line<'static>> {
 }
 
 fn collaboration_mode_indicator(mode: &CollaborationMode) -> Option<Line<'static>> {
-    // None mode shows no indicator
-    if matches!(mode, CollaborationMode::None) {
+    // Code mode shows no indicator
+    if matches!(mode, CollaborationMode::Code) {
         return None;
     }
     let icon = collaboration_modes::icon(mode);
@@ -928,8 +928,9 @@ mod tests {
             },
         );
 
+        // Test Code mode (None)
         snapshot_footer(
-            "footer_collaboration_mode_pair_programming",
+            "footer_collaboration_mode_code",
             FooterProps {
                 mode: FooterMode::ShortcutSummary,
                 esc_backtrack_hint: false,
@@ -937,28 +938,7 @@ mod tests {
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: true,
-                collaboration_mode: Some(CollaborationMode::PairProgramming),
-                quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-                context_window_percent: Some(80),
-                context_window_used_tokens: None,
-                transcript_scrolled: false,
-                transcript_selection_active: false,
-                transcript_scroll_position: None,
-                transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
-                transcript_copy_feedback: None,
-            },
-        );
-
-        snapshot_footer(
-            "footer_collaboration_mode_execute",
-            FooterProps {
-                mode: FooterMode::ShortcutSummary,
-                esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
-                is_task_running: false,
-                steer_enabled: false,
-                collaboration_modes_enabled: true,
-                collaboration_mode: Some(CollaborationMode::Execute),
+                collaboration_mode: Some(CollaborationMode::Code),
                 quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
                 context_window_percent: Some(80),
                 context_window_used_tokens: None,

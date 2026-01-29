@@ -1525,17 +1525,17 @@ impl Session {
     }
 
     /// Complete exit from plan mode (called after user approves).
+    /// Automatically transitions to Execute mode.
     pub(crate) async fn complete_exit_plan_mode(
         &self,
         turn_context: &TurnContext,
-        target_mode: codex_protocol::config_types::CollaborationMode,
         plan_file_path: String,
         plan_content: String,
     ) {
-        // Update session's collaboration mode
+        // Update session's collaboration mode to Code
         let _ = self
             .update_settings(SessionSettingsUpdate {
-                collaboration_mode: Some(target_mode),
+                collaboration_mode: Some(codex_protocol::config_types::CollaborationMode::Code),
                 ..Default::default()
             })
             .await;
@@ -1544,7 +1544,6 @@ impl Session {
         let event = EventMsg::ExitedPlanMode(ExitedPlanModeEvent {
             plan: plan_content,
             plan_file_path,
-            target_mode,
         });
         self.send_event(turn_context, event).await;
 

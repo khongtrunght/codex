@@ -14,8 +14,7 @@ expression: contents
   2. Second step
   3. Third step
 
-› 1. Yes, start pair programming mode (y)
-  2. Yes, start execute mode (e)
-  3. No, continue planning (esc)
+› 1. Yes, start executing (y)
+  2. No, continue planning (esc)
 
   Press enter to confirm or esc to cancel

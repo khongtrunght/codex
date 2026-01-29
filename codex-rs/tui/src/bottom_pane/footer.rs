@@ -344,7 +344,7 @@ fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>) -> Line<'
 }
 
 fn collaboration_mode_indicator(mode: CollaborationMode) -> Option<Line<'static>> {
-    if matches!(mode, CollaborationMode::None) {
+    if matches!(mode, CollaborationMode::Code) {
         return None;
     }
     let icon = collaboration_modes::icon(mode);

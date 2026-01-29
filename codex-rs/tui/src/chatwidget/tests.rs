@@ -1925,24 +1925,24 @@ async fn collab_mode_shift_tab_cycles_only_when_enabled_and_idle() {
     assert_eq!(chat.stored_collaboration_mode, initial);
 
     chat.set_feature_enabled(Feature::CollaborationModes, true);
-    // Default is now None
+    // Default is now Code
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::None,
+        CollaborationMode::Code,
     ));
 
-    // Cycle: None -> Plan
+    // Cycle: Code -> Plan
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
         CollaborationMode::Plan,
     ));
 
-    // Cycle: Plan -> PairProgramming
+    // Cycle: Plan -> Code
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::PairProgramming,
+        CollaborationMode::Code,
     ));
 
     chat.on_task_started();
@@ -1964,7 +1964,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
         "expected collaboration picker: {popup}"
     );
 
-    // Move down to select Plan (first is None, second is Plan)
+    // Move down to select Plan (first is Code, second is Plan)
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     let selected_mode = match rx.try_recv() {
@@ -2012,7 +2012,7 @@ async fn collab_mode_defaults_to_none_when_enabled() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::None),
+            collaboration_mode: Some(CollaborationMode::Code),
             ..
         } => {}
         other => {
@@ -2027,7 +2027,7 @@ async fn collab_mode_enabling_sets_none_default() {
     chat.set_feature_enabled(Feature::CollaborationModes, true);
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::None,
+        CollaborationMode::Code,
     ));
 }
 

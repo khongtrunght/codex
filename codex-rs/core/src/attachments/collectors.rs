@@ -104,11 +104,7 @@ pub(crate) fn collect_plan_mode_exit<'a>(
             })
             .await;
 
-        // Include the next mode so transition instructions can be injected
-        vec![AttachmentData::PlanModeExit {
-            plan_file_path,
-            next_mode: Some(collab_mode),
-        }]
+        vec![AttachmentData::PlanModeExit { plan_file_path }]
     })
 }
 
@@ -220,6 +216,7 @@ mod tests {
 
     #[test]
     fn test_count_turns_with_plan_attachment() {
+        use codex_protocol::attachment::ReminderType;
         use codex_protocol::models::ContentItem;
 
         let items = vec![
@@ -227,6 +224,7 @@ mod tests {
                 data: AttachmentData::PlanMode {
                     plan_file_path: "/tmp/plan.md".to_string(),
                     plan_exists: true,
+                    reminder_type: ReminderType::Full,
                 },
             },
             ResponseItem::Message {
@@ -250,6 +248,7 @@ mod tests {
 
     #[test]
     fn test_count_turns_reset_after_exit() {
+        use codex_protocol::attachment::ReminderType;
         use codex_protocol::models::ContentItem;
 
         let items = vec![
@@ -257,6 +256,7 @@ mod tests {
                 data: AttachmentData::PlanMode {
                     plan_file_path: "/tmp/plan.md".to_string(),
                     plan_exists: true,
+                    reminder_type: ReminderType::Full,
                 },
             },
             ResponseItem::Message {
@@ -269,7 +269,6 @@ mod tests {
             ResponseItem::Attachment {
                 data: AttachmentData::PlanModeExit {
                     plan_file_path: Some("/tmp/plan.md".to_string()),
-                    next_mode: None,
                 },
             },
             ResponseItem::Message {

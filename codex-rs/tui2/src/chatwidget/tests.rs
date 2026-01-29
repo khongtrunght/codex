@@ -1704,24 +1704,24 @@ async fn collab_mode_shift_tab_cycles_only_when_enabled_and_idle() {
     assert_eq!(chat.stored_collaboration_mode, initial);
 
     chat.set_feature_enabled(Feature::CollaborationModes, true);
-    // Default is now None
+    // Default is now Code
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::None
+        CollaborationMode::Code
     ));
 
-    // Cycle: None -> Plan
+    // Cycle: Code -> Plan
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
         CollaborationMode::Plan
     ));
 
-    // Cycle: Plan -> PairProgramming
+    // Cycle: Plan -> Code
     chat.handle_key_event(KeyEvent::from(KeyCode::BackTab));
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::PairProgramming
+        CollaborationMode::Code
     ));
 
     chat.on_task_started();
@@ -1743,7 +1743,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
         "expected collaboration picker: {popup}"
     );
 
-    // Move down to select Plan (first is None, second is Plan)
+    // Move down to select Plan (first is Code, second is Plan)
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     let selected_mode = match rx.try_recv() {
@@ -1791,7 +1791,7 @@ async fn collab_mode_defaults_to_none_when_enabled() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            collaboration_mode: Some(CollaborationMode::None),
+            collaboration_mode: Some(CollaborationMode::Code),
             ..
         } => {}
         other => {
@@ -1806,7 +1806,7 @@ async fn collab_mode_enabling_sets_none_default() {
     chat.set_feature_enabled(Feature::CollaborationModes, true);
     assert!(matches!(
         chat.stored_collaboration_mode,
-        CollaborationMode::None
+        CollaborationMode::Code
     ));
 }
 
@@ -4037,8 +4037,7 @@ async fn approval_modal_exit_plan_mode_snapshot() {
     // Verify the modal displays plan content
     assert!(contents.contains("Exit plan mode"));
     assert!(contents.contains("My Plan"));
-    assert!(contents.contains("pair programming"));
-    assert!(contents.contains("execute mode"));
+    assert!(contents.contains("start executing"));
 
     assert_snapshot!("approval_modal_exit_plan_mode", contents);
 }
@@ -4076,8 +4075,4 @@ async fn exit_plan_mode_approval_reject() {
 
     let response = found_op.expect("expected ExitPlanModeApproval op to be emitted");
     assert!(!response.approved, "expected approval to be false");
-    assert!(
-        response.target_mode.is_none(),
-        "expected target_mode to be None when rejected"
-    );
 }

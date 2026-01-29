@@ -260,8 +260,3 @@ where
 
     Ok(())
 }
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn request_user_input_rejected_in_execute_mode() -> anyhow::Result<()> {
-    assert_request_user_input_rejected("Execute", || CollaborationMode::Execute).await
-}

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::config_types::CollaborationMode;
 use crate::parse_command::ParsedCommand;
 use crate::protocol::FileChange;
 use mcp_types::RequestId;
@@ -116,9 +115,6 @@ pub struct ExitPlanModeApprovalRequestEvent {
 #[serde(rename_all = "camelCase")]
 pub struct ExitPlanModeApprovalResponse {
     /// Whether the user approved exiting plan mode.
+    /// If approved, session automatically transitions to Execute mode.
     pub approved: bool,
-    /// The mode user wants to transition to (PairProgramming or Execute).
-    /// Only set if approved is true.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub target_mode: Option<CollaborationMode>,
 }

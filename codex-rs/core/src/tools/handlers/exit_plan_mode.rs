@@ -2,11 +2,10 @@
 //!
 //! Exits plan mode and presents the plan for user approval.
 //! The plan is read from the plan file that was written during plan mode.
-//! User will choose the target mode (PairProgramming or Execute) when approving.
+//! On approval, session automatically transitions to Execute mode.
 
 use askama::Template;
 use async_trait::async_trait;
-use codex_protocol::config_types::CollaborationMode;
 
 use crate::function_tool::FunctionCallError;
 use crate::plan_file::extract_plan_from_file_with_slug;
@@ -83,20 +82,13 @@ impl ToolHandler for ExitPlanModeHandler {
             )));
         }
 
-        // Get target mode from the response (TUI should always provide this)
-        let target_mode = response.target_mode.ok_or_else(|| {
-            FunctionCallError::RespondToModel(
-                "Exit plan mode was approved but no target mode was specified.".to_string(),
-            )
-        })?;
-
-        // Complete exit from plan mode
+        // Complete exit from plan mode (automatically transitions to Execute mode)
         session
-            .complete_exit_plan_mode(&turn, target_mode, path_str.clone(), plan_content.clone())
+            .complete_exit_plan_mode(&turn, path_str.clone(), plan_content.clone())
             .await;
 
         // Build response with plan data
-        let response_msg = generate_approval_message(&target_mode, &plan_content, &path_str);
+        let response_msg = generate_approval_message(&plan_content, &path_str);
         Ok(ToolOutput::Function {
             content: response_msg,
             content_items: None,
@@ -106,19 +98,9 @@ impl ToolHandler for ExitPlanModeHandler {
 }
 
 /// Generate the tool result message after user approval.
-fn generate_approval_message(
-    target_mode: &CollaborationMode,
-    plan_content: &str,
-    file_path: &str,
-) -> String {
-    let mode_name = match target_mode {
-        CollaborationMode::None => "default",
-        CollaborationMode::PairProgramming => "pair programming",
-        CollaborationMode::Execute => "execute",
-        CollaborationMode::Plan => "plan",
-    };
+fn generate_approval_message(plan_content: &str, file_path: &str) -> String {
     format!(
-        r#"User has approved your plan and selected {mode_name} mode. You can now start coding. Start with updating your todo list if applicable
+        r#"User has approved your plan and you are now in execute mode. You can now start coding. Start with updating your todo list if applicable
 
 Your plan has been saved to: {file_path}
 You can refer back to it if needed during implementation.

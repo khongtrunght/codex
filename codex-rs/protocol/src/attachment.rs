@@ -4,17 +4,11 @@ use serde::Deserialize;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::config_types::CollaborationMode;
 use crate::models::CompactRestoredFile;
 use crate::models::ContentItem;
 use crate::models::ResponseItem;
 use crate::protocol::SYSTEM_REMINDER_CLOSE_TAG;
 use crate::protocol::SYSTEM_REMINDER_OPEN_TAG;
-
-// Collaboration mode templates
-const COLLABORATION_MODE_PAIR_PROGRAMMING: &str =
-    include_str!("prompts/collaboration_mode/pair_programming.md");
-const COLLABORATION_MODE_EXECUTE: &str = include_str!("prompts/collaboration_mode/execute.md");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS, Default)]
 pub enum ReminderType {
@@ -38,9 +32,8 @@ pub enum AttachmentData {
     PlanModeReentry { plan_file_path: String },
     /// Collected when exiting plan mode.
     PlanModeExit {
-        plan_file_path: Option<String>,
-        /// The collaboration mode being transitioned to after exiting plan mode.
-        next_mode: Option<CollaborationMode>,
+        plan_file_path: Option<String>, // Need return None if no plan was created (even if we have
+                                        // a path that was not written to)
     },
     /// Collected after compaction to restore file context.
     CompactFileRestore { files: Vec<CompactRestoredFile> },
@@ -76,10 +69,7 @@ impl From<AttachmentData> for ResponseItem {
             AttachmentData::PlanModeReentry { plan_file_path } => {
                 generate_reentry_items(&plan_file_path)
             }
-            AttachmentData::PlanModeExit {
-                plan_file_path,
-                next_mode,
-            } => generate_exit_items(&plan_file_path, next_mode),
+            AttachmentData::PlanModeExit { plan_file_path } => generate_exit_items(&plan_file_path),
             AttachmentData::CompactFileRestore { files } => {
                 generate_compact_file_restore_items(&files)
             }
@@ -103,7 +93,7 @@ fn plan_agent_count_from_env_or_defaults() -> usize {
 }
 
 fn explore_agent_count_from_env_or_default() -> usize {
-    std::env::var("CLAUDE_CODE_PLAN_V2_EXPLORE_AGENT_COUNT")
+    std::env::var("CODEX_PLAN_V2_EXPLORE_AGENT_COUNT")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&v| (1..=10).contains(&v))
@@ -175,10 +165,7 @@ fn generate_reentry_items(plan_file_path: &str) -> ResponseItem {
 }
 
 /// Generate items for plan mode exit.
-fn generate_exit_items(
-    plan_file_path: &Option<String>,
-    next_mode: Option<CollaborationMode>,
-) -> ResponseItem {
+fn generate_exit_items(plan_file_path: &Option<String>) -> ResponseItem {
     let plan_file_info = match plan_file_path {
         Some(path) => {
             format!(" The plan file is located at {path} if you need to reference it.")
@@ -186,18 +173,8 @@ fn generate_exit_items(
         None => "No plan file was created during the planning session.".to_string(),
     };
 
-    let next_mode_instructions = match next_mode {
-        Some(CollaborationMode::PairProgramming) => {
-            format!("\n\n{COLLABORATION_MODE_PAIR_PROGRAMMING}")
-        }
-        Some(CollaborationMode::Execute) => {
-            format!("\n\n{COLLABORATION_MODE_EXECUTE}")
-        }
-        _ => String::new(),
-    };
-
     let contents = format!(
-        "{SYSTEM_REMINDER_OPEN_TAG}\n## Exited Plan Mode\n\nYou have exited plan mode. You can now make edits, run tools, and take actions.{plan_file_info}{next_mode_instructions}\n{SYSTEM_REMINDER_CLOSE_TAG}"
+        "{SYSTEM_REMINDER_OPEN_TAG}\n## Exited Plan Mode\n\nYou have exited plan mode. You can now make edits, run tools, and take actions.{plan_file_info}\n{SYSTEM_REMINDER_CLOSE_TAG}"
     );
 
     wrap_in_developer_message(&contents)
@@ -317,6 +294,7 @@ mod tests {
         let data = AttachmentData::PlanMode {
             plan_file_path: "/tmp/plan.md".to_string(),
             plan_exists: false,
+            reminder_type: ReminderType::Full,
         };
 
         if let ResponseItem::Message { content, .. } = data.into() {
@@ -337,6 +315,7 @@ mod tests {
         let data = AttachmentData::PlanMode {
             plan_file_path: "/tmp/plan.md".to_string(),
             plan_exists: true,
+            reminder_type: ReminderType::Full,
         };
 
         if let ResponseItem::Message { content, .. } = data.into() {
@@ -355,7 +334,6 @@ mod tests {
     fn test_plan_mode_exit() {
         let data = AttachmentData::PlanModeExit {
             plan_file_path: Some("/tmp/plan.md".to_string()),
-            next_mode: None,
         };
 
         if let ResponseItem::Message { content, .. } = data.into() {
@@ -371,58 +349,16 @@ mod tests {
     }
 
     #[test]
-    fn test_plan_mode_exit_to_pair_programming() {
+    fn test_plan_mode_exit_to_code_mode() {
+        // Exiting plan mode always transitions to Code mode
         let data = AttachmentData::PlanModeExit {
             plan_file_path: Some("/tmp/plan.md".to_string()),
-            next_mode: Some(CollaborationMode::PairProgramming),
         };
 
         if let ResponseItem::Message { content, .. } = data.into() {
             if let ContentItem::InputText { text } = &content[0] {
                 assert!(text.contains("Exited Plan Mode"));
                 assert!(text.contains("/tmp/plan.md"));
-                // Should contain pair programming instructions
-                assert!(text.contains("Collaboration Style: Pair Programming"));
-            } else {
-                panic!("Expected InputText");
-            }
-        } else {
-            panic!("Expected Message");
-        }
-    }
-
-    #[test]
-    fn test_plan_mode_exit_to_execute() {
-        let data = AttachmentData::PlanModeExit {
-            plan_file_path: Some("/tmp/plan.md".to_string()),
-            next_mode: Some(CollaborationMode::Execute),
-        };
-
-        if let ResponseItem::Message { content, .. } = data.into() {
-            if let ContentItem::InputText { text } = &content[0] {
-                assert!(text.contains("Exited Plan Mode"));
-                assert!(text.contains("/tmp/plan.md"));
-                // Should contain execute instructions
-                assert!(text.contains("Collaboration Style: Execute"));
-            } else {
-                panic!("Expected InputText");
-            }
-        } else {
-            panic!("Expected Message");
-        }
-    }
-
-    #[test]
-    fn test_plan_mode_exit_to_plan_mode() {
-        // Transitioning back to plan mode should not include extra instructions
-        let data = AttachmentData::PlanModeExit {
-            plan_file_path: Some("/tmp/plan.md".to_string()),
-            next_mode: Some(CollaborationMode::Plan),
-        };
-
-        if let ResponseItem::Message { content, .. } = data.into() {
-            if let ContentItem::InputText { text } = &content[0] {
-                assert!(text.contains("Exited Plan Mode"));
                 // Should NOT contain collaboration style instructions
                 assert!(!text.contains("Collaboration Style:"));
             } else {

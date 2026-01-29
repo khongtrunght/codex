@@ -159,7 +159,6 @@ impl ActiveTurn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codex_protocol::config_types::CollaborationMode;
 
     #[test]
     fn turn_state_insert_and_remove_pending_exit_plan_mode() {
@@ -219,18 +218,13 @@ mod tests {
         // Simulate removing and sending response
         let sender = state.remove_pending_exit_plan_mode("turn-1").unwrap();
 
-        let response = ExitPlanModeApprovalResponse {
-            approved: true,
-            target_mode: Some(CollaborationMode::PairProgramming),
-        };
+        let response = ExitPlanModeApprovalResponse { approved: true };
 
         sender.send(response.clone()).unwrap();
 
         // Verify response received
         let received = rx.await.unwrap();
         assert!(received.approved);
-        let mode = received.target_mode.unwrap();
-        assert!(matches!(mode, CollaborationMode::PairProgramming));
     }
 
     #[tokio::test]
@@ -242,15 +236,11 @@ mod tests {
 
         let sender = state.remove_pending_exit_plan_mode("turn-1").unwrap();
 
-        let response = ExitPlanModeApprovalResponse {
-            approved: false,
-            target_mode: None,
-        };
+        let response = ExitPlanModeApprovalResponse { approved: false };
 
         sender.send(response).unwrap();
 
         let received = rx.await.unwrap();
         assert!(!received.approved);
-        assert!(received.target_mode.is_none());
     }
 }

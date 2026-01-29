@@ -129,14 +129,15 @@ pub enum AltScreenMode {
 }
 
 /// Collaboration mode for a Codex session.
+/// Only two modes are supported: Code (None) and Plan.
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Default, JsonSchema, TS,
 )]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum CollaborationMode {
+    /// Code mode - default mode for implementation.
     #[default]
-    None,
+    Code,
+    /// Plan mode - for planning before implementation.
     Plan,
-    PairProgramming,
-    Execute,
 }

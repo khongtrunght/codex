@@ -369,7 +369,7 @@ pub(crate) struct ChatWidget {
     /// where the overlay may briefly treat new tail content as already cached.
     active_cell_revision: u64,
     config: Config,
-    /// Current collaboration mode variant (Plan, PairProgramming, Execute).
+    /// Current collaboration mode variant (Code or Plan).
     stored_collaboration_mode: CollaborationMode,
     /// Current model name for this session.
     model: String,
@@ -660,7 +660,7 @@ impl ChatWidget {
         let model_for_header = event.model.clone();
         self.session_header.set_model(&model_for_header);
         // Only update stored model and reasoning effort when collaboration modes are disabled.
-        // When enabled, we preserve the selected variant (Plan/Pair/Execute) and its
+        // When enabled, we preserve the selected variant (Code/Plan) and its
         // settings as-is; the session configured event should not override it.
         if !self.collaboration_modes_enabled() {
             self.model = model_for_header.clone();
@@ -2686,9 +2686,9 @@ impl ChatWidget {
             EventMsg::SubAgentSpawnBegin(ev) => self.on_subagent_begin(ev),
             EventMsg::SubAgentSpawnEnd(ev) => self.on_subagent_end(ev, from_replay),
             EventMsg::SubAgentComplete(ev) => self.on_subagent_complete(ev, from_replay),
-            EventMsg::ExitedPlanMode(ev) => {
-                // Update stored collaboration mode when exiting plan mode
-                self.set_collaboration_mode(ev.target_mode);
+            EventMsg::ExitedPlanMode(_) => {
+                // Plan mode always transitions to Code mode (None)
+                self.set_collaboration_mode(CollaborationMode::Code);
             }
             EventMsg::AttachmentLoaded(ev) => self.on_attachment_loaded(ev),
         }
@@ -3274,10 +3274,8 @@ impl ChatWidget {
             .into_iter()
             .map(|preset| {
                 let name = match preset {
-                    CollaborationMode::None => "None",
+                    CollaborationMode::Code => "Code",
                     CollaborationMode::Plan => "Plan",
-                    CollaborationMode::PairProgramming => "Pair Programming",
-                    CollaborationMode::Execute => "Execute",
                 };
                 let is_current =
                     collaboration_modes::same_variant(&self.stored_collaboration_mode, &preset);
@@ -4200,7 +4198,7 @@ impl ChatWidget {
             self.bottom_pane.set_collaboration_modes_enabled(enabled);
             self.stored_collaboration_mode = CollaborationMode::default();
             if enabled {
-                // Footer handles None mode by showing nothing
+                // Footer handles Code mode by showing nothing
                 self.bottom_pane
                     .set_collaboration_mode(Some(self.stored_collaboration_mode));
             } else {
@@ -4275,14 +4273,12 @@ impl ChatWidget {
             return None;
         }
         match &self.stored_collaboration_mode {
-            CollaborationMode::None => None,
+            CollaborationMode::Code => Some("Code"),
             CollaborationMode::Plan => Some("Plan"),
-            CollaborationMode::PairProgramming => Some("Pair Programming"),
-            CollaborationMode::Execute => Some("Execute"),
         }
     }
 
-    /// Cycle to the next collaboration mode variant (Plan -> PairProgramming -> Execute -> Plan).
+    /// Cycle to the next collaboration mode variant (Code <-> Plan).
     fn cycle_collaboration_mode(&mut self) {
         if !self.collaboration_modes_enabled() {
             return;
@@ -4307,7 +4303,7 @@ impl ChatWidget {
 
         self.stored_collaboration_mode = mode;
         // Update the footer to show the collaboration mode persistently
-        // (None mode is handled by footer - shows nothing)
+        // (Code mode is handled by footer - shows nothing)
         self.bottom_pane.set_collaboration_mode(Some(mode));
         self.request_redraw();
     }
