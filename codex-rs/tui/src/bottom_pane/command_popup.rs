@@ -137,9 +137,17 @@ impl CommandPopup {
             return out;
         }
 
+        let mut prefix_matches: Vec<(CommandItem, Option<Vec<usize>>, i32)> = Vec::new();
+        let mut fuzzy_matches: Vec<(CommandItem, Option<Vec<usize>>, i32)> = Vec::new();
+
         for (_, cmd) in self.builtins.iter() {
             if let Some((indices, score)) = fuzzy_match(cmd.command(), filter) {
-                out.push((CommandItem::Builtin(*cmd), Some(indices), score));
+                let item = (CommandItem::Builtin(*cmd), Some(indices), score);
+                if cmd.command().starts_with(filter) {
+                    prefix_matches.push(item);
+                } else {
+                    fuzzy_matches.push(item);
+                }
             }
         }
         // Support both search styles:
@@ -148,10 +156,16 @@ impl CommandPopup {
         for (idx, p) in self.prompts.iter().enumerate() {
             let display = format!("{PROMPTS_CMD_PREFIX}:{}", p.name);
             if let Some((indices, score)) = fuzzy_match(&display, filter) {
-                out.push((CommandItem::UserPrompt(idx), Some(indices), score));
+                let item = (CommandItem::UserPrompt(idx), Some(indices), score);
+                if display.starts_with(filter) || p.name.starts_with(filter) {
+                    prefix_matches.push(item);
+                } else {
+                    fuzzy_matches.push(item);
+                }
             }
         }
-        out
+        prefix_matches.extend(fuzzy_matches);
+        prefix_matches
     }
 
     fn filtered_items(&self) -> Vec<CommandItem> {
@@ -302,11 +316,11 @@ mod tests {
             cmds,
             vec![
                 "model",
+                "mention",
+                "mcp",
                 "experimental",
                 "resume",
-                "compact",
-                "mention",
-                "mcp"
+                "compact"
             ]
         );
     }
