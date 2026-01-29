@@ -655,6 +655,8 @@ fn code_block_with_language_is_highlighted() {
     // Code blocks with a language specifier get syntax highlighting
     let text = render_markdown_text("```rust\nfn main() {}\n```\n");
     // With syntax highlighting: fn=keyword, main=function, punctuation=dim
+    // Note: render_markdown_text still applies cyan line style, but display_lines in
+    // history_cell.rs intentionally doesn't apply it to preserve syntax highlighting colors.
     let expected = Text::from_iter([Line::from_iter([
         "".into(),
         "fn".fg(Color::Rgb(187, 154, 247)).bold(),
@@ -668,6 +670,45 @@ fn code_block_with_language_is_highlighted() {
     ])
     .cyan()]);
     assert_eq!(text, expected);
+}
+
+#[test]
+fn code_block_logical_lines_preserves_syntax_highlighting() {
+    // Verify that render_markdown_logical_lines preserves syntax highlighting in spans
+    use crate::markdown_render::render_markdown_logical_lines;
+
+    let logical_lines = render_markdown_logical_lines("```rust\nfn main() {}\n```\n");
+    assert_eq!(logical_lines.len(), 1);
+
+    let line = &logical_lines[0];
+    assert!(line.is_preformatted, "code block should be preformatted");
+
+    // line_style is cyan for code blocks. Per ratatui's precedence (Span > Line > Text),
+    // span fg should override line fg. However, in practice this doesn't work correctly
+    // in tui's rendering pipeline, so display_lines() intentionally doesn't apply
+    // line_style for preformatted content to preserve syntax highlighting colors.
+    assert_eq!(line.line_style, ratatui::style::Style::default().cyan());
+
+    // The content spans should have syntax highlighting colors
+    let spans = &line.content.spans;
+    // Find the "fn" span - it should be purple and bold (keyword style)
+    let fn_span = spans.iter().find(|s| s.content == "fn");
+    assert!(fn_span.is_some(), "should have 'fn' span");
+    let fn_style = fn_span.unwrap().style;
+    assert_eq!(fn_style.fg, Some(Color::Rgb(187, 154, 247)), "fn should be purple");
+    assert!(
+        fn_style.add_modifier.contains(ratatui::style::Modifier::BOLD),
+        "fn should be bold"
+    );
+
+    // Find the "main" span - it should be blue (function style)
+    let main_span = spans.iter().find(|s| s.content == "main");
+    assert!(main_span.is_some(), "should have 'main' span");
+    assert_eq!(
+        main_span.unwrap().style.fg,
+        Some(Color::Rgb(122, 162, 247)),
+        "main should be blue"
+    );
 }
 
 #[test]

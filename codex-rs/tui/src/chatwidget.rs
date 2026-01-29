@@ -1322,6 +1322,14 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn on_attachment_loaded(&mut self, event: codex_core::protocol::AttachmentEvent) {
+        self.add_to_history(history_cell::new_attachment_cell(
+            event.data,
+            &self.config.cwd,
+        ));
+        self.request_redraw();
+    }
+
     fn on_patch_apply_end(&mut self, event: codex_core::protocol::PatchApplyEndEvent) {
         let ev2 = event.clone();
         self.defer_or_handle(
@@ -2794,8 +2802,8 @@ impl ChatWidget {
             | EventMsg::ReasoningContentDelta(_)
             | EventMsg::ReasoningRawContentDelta(_)
             | EventMsg::AskUserQuestionRequest(_)
-            | EventMsg::ExitPlanModeApprovalRequest(_)
-            | EventMsg::AttachmentLoaded(_) => {}
+            | EventMsg::ExitPlanModeApprovalRequest(_) => {}
+            EventMsg::AttachmentLoaded(ev) => self.on_attachment_loaded(ev),
         }
     }
 

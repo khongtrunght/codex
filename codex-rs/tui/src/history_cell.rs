@@ -46,6 +46,8 @@ use codex_core::protocol::FileChange;
 use codex_core::protocol::McpAuthStatus;
 use codex_core::protocol::McpInvocation;
 use codex_core::protocol::SessionConfiguredEvent;
+use codex_protocol::attachment::AttachmentData;
+use codex_protocol::attachment::MentionAttachment;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
@@ -418,7 +420,11 @@ impl HistoryCell for AgentMessageCell {
                 let mut spans = gutter_first_visual_line.spans.clone();
                 spans.extend(logical.initial_indent.spans.iter().cloned());
                 spans.extend(logical.content.spans.iter().cloned());
-                out_lines.push(Line::from(spans).style(logical.line_style));
+                // NOTE: We intentionally don't apply `.style(logical.line_style)` here.
+                // For code blocks, line_style is cyan which would override syntax highlighting
+                // colors when rendered. Span styles (from syntax highlighting) are preserved
+                // by not setting a line-level style.
+                out_lines.push(Line::from(spans));
                 at_cell_start = false;
                 continue;
             }
@@ -1816,6 +1822,67 @@ pub(crate) fn new_view_image_tool_call(path: PathBuf, cwd: &Path) -> PlainHistor
         vec!["• ".dim(), "Viewed Image".bold()].into(),
         vec!["  └ ".dim(), display_path.dim()].into(),
     ];
+
+    PlainHistoryCell { lines }
+}
+
+/// Create a history cell for file mention attachments.
+/// Only handles `FileMentions` - other attachment types (PlanMode, CompactFileRestore, etc.)
+/// are either not displayed or handled via other events (ContextCompacted).
+pub(crate) fn new_attachment_cell(data: AttachmentData, cwd: &Path) -> PlainHistoryCell {
+    let lines = match data {
+        AttachmentData::FileMentions { contents } => {
+            let mut lines: Vec<Line<'static>> = Vec::new();
+            for mention in contents {
+                match mention {
+                    MentionAttachment::File {
+                        path,
+                        content,
+                        line_start,
+                        line_end,
+                        ..
+                    } => {
+                        let display_path = display_path_for(&PathBuf::from(&path), cwd);
+                        let line_count = content.lines().count();
+                        let range_info = match (line_start, line_end) {
+                            (Some(start), Some(end)) => {
+                                format!(" L{start}-{end} ({line_count} lines)")
+                            }
+                            (Some(start), None) => format!(" L{start} ({line_count} lines)"),
+                            _ => format!(" ({line_count} lines)"),
+                        };
+                        lines.push(
+                            vec![
+                                "  └ ".dim(),
+                                "Read ".into(),
+                                display_path.dim(),
+                                range_info.dim(),
+                            ]
+                            .into(),
+                        );
+                    }
+                    MentionAttachment::Directory { path, .. } => {
+                        let display_path = display_path_for(&PathBuf::from(&path), cwd);
+                        lines.push(
+                            vec![
+                                "  └ ".dim(),
+                                "Listed directory ".into(),
+                                format!("{display_path}/").dim(),
+                            ]
+                            .into(),
+                        );
+                    }
+                }
+            }
+            lines
+        }
+        // PlanMode, PlanModeReentry, PlanModeExit: Not displayed.
+        // CompactFileRestore: Handled via ContextCompactedEvent -> CompactBoundaryCell.
+        AttachmentData::PlanMode { .. }
+        | AttachmentData::PlanModeReentry { .. }
+        | AttachmentData::PlanModeExit { .. }
+        | AttachmentData::CompactFileRestore { .. } => Vec::new(),
+    };
 
     PlainHistoryCell { lines }
 }

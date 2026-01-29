@@ -1528,14 +1528,16 @@ impl ChatComposer {
             .unwrap_or(after_cursor.len());
         let end_idx = safe_cursor + end_rel_idx;
 
-        // If the path contains whitespace, wrap it in double quotes so the
-        // local prompt arg parser treats it as a single argument. Avoid adding
-        // quotes when the path already contains one to keep behavior simple.
+        // Keep the @ prefix so the backend can detect file mentions via regex.
+        // If the path contains whitespace, wrap it in double quotes so that:
+        // 1. The backend's quoted regex @"..." can match it
+        // 2. Local prompt arg parsers treat it as a single argument
+        // Avoid adding quotes when the path already contains one to keep behavior simple.
         let needs_quotes = path.chars().any(char::is_whitespace);
         let inserted = if needs_quotes && !path.contains('"') {
-            format!("\"{path}\"")
+            format!("@\"{path}\"")
         } else {
-            path.to_string()
+            format!("@{path}")
         };
 
         // Replace the slice `[start_idx, end_idx)` with the chosen path and a trailing space.
@@ -1546,8 +1548,16 @@ impl ChatComposer {
         new_text.push(' ');
         new_text.push_str(&text[end_idx..]);
 
-        // Path replacement is plain text; rebuild without carrying elements.
-        self.textarea.set_text_clearing_elements(&new_text);
+        // Create a TextElement to mark this as an atomic element (for cursor navigation)
+        let byte_range = ByteRange {
+            start: start_idx,
+            end: start_idx + inserted.len(),
+        };
+        let text_element = TextElement::new(byte_range, None);
+
+        // Path replacement with element marking
+        self.textarea
+            .set_text_with_elements(&new_text, &[text_element]);
         let new_cursor = start_idx.saturating_add(inserted.len()).saturating_add(1);
         self.textarea.set_cursor(new_cursor);
     }
