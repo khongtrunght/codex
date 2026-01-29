@@ -287,36 +287,14 @@ fn render_change_with_path(
         }
         FileChange::Delete { content } => {
             let line_number_width = line_number_width(content.lines().count());
-            let lang = path.and_then(detect_language_from_path);
-
-            if let Some(lang) = lang {
-                // Use syntax highlighting
-                let lines: Vec<String> = content
-                    .lines()
-                    .map(std::string::ToString::to_string)
-                    .collect();
-                let highlighted_lines = highlight_lines(&lines, Some(lang));
-
-                for (i, highlighted_line) in highlighted_lines.into_iter().enumerate() {
-                    out.extend(push_wrapped_diff_line_highlighted(
-                        i + 1,
-                        DiffLineType::Delete,
-                        highlighted_line,
-                        width,
-                        line_number_width,
-                    ));
-                }
-            } else {
-                // Fall back to plain rendering
-                for (i, raw) in content.lines().enumerate() {
-                    out.extend(push_wrapped_diff_line(
-                        i + 1,
-                        DiffLineType::Delete,
-                        raw,
-                        width,
-                        line_number_width,
-                    ));
-                }
+            for (i, raw) in content.lines().enumerate() {
+                out.extend(push_wrapped_diff_line(
+                    i + 1,
+                    DiffLineType::Delete,
+                    raw,
+                    width,
+                    line_number_width,
+                ));
             }
         }
         FileChange::Update { unified_diff, .. } => {
@@ -383,7 +361,7 @@ fn render_hunk_with_syntax(
     let (old_content, new_content) = reconstruct_hunk_content(hunk);
 
     // Highlight both versions
-    let old_highlighted = highlight_lines(&old_content, Some(lang));
+    let old_plain = highlight_lines(&old_content, None);
     let new_highlighted = highlight_lines(&new_content, Some(lang));
 
     // Iterate through hunk lines with separate indices
@@ -412,7 +390,7 @@ fn render_hunk_with_syntax(
                 new_ln += 1;
             }
             diffy::Line::Delete(_) => {
-                let highlighted_line = old_highlighted
+                let highlighted_line = old_plain
                     .get(old_idx)
                     .cloned()
                     .unwrap_or_else(|| RtLine::from(""));
@@ -601,12 +579,14 @@ fn style_context() -> Style {
 
 #[allow(clippy::disallowed_methods)]
 fn style_add() -> Style {
-    Style::default().bg(Color::Rgb(32, 56, 43)) // Tokyo Night dark green background
+    Style::default().bg(Color::Indexed(22))
 }
 
 #[allow(clippy::disallowed_methods)]
 fn style_del() -> Style {
-    Style::default().bg(Color::Rgb(56, 32, 43)) // Tokyo Night dark red background
+    Style::default()
+        .bg(Color::Indexed(52))
+        .fg(Color::Rgb(255, 255, 255))
 }
 
 /// Detect language from file path extension (for syntax highlighting).
@@ -673,22 +653,28 @@ fn highlight_lines(content: &[String], lang: Option<&str>) -> Vec<RtLine<'static
 /// Apply diff background color on top of a line, preserving existing styles.
 #[allow(clippy::disallowed_methods)]
 fn apply_diff_background(line: RtLine<'static>, diff_type: DiffLineType) -> RtLine<'static> {
-    let bg_color = match diff_type {
-        DiffLineType::Insert => Some(Color::Rgb(32, 56, 43)), // Tokyo Night dark green
-        DiffLineType::Delete => Some(Color::Rgb(56, 32, 43)), // Tokyo Night dark red
-        DiffLineType::Context => None,
+    let (bg_color, fg_color) = match diff_type {
+        DiffLineType::Insert => (Some(Color::Indexed(22)), None),
+        DiffLineType::Delete => (Some(Color::Indexed(52)), Some(Color::Rgb(255, 255, 255))),
+        DiffLineType::Context => (None, None),
     };
 
     let Some(bg_color) = bg_color else {
         return line;
     };
 
-    let base_style = line.style;
+    let mut base_style = line.style;
+    if let Some(fg_color) = fg_color {
+        base_style = base_style.fg(fg_color);
+    }
     let spans: Vec<RtSpan<'static>> = line
         .spans
         .into_iter()
         .map(|mut span| {
             span.style = span.style.bg(bg_color);
+            if let Some(fg_color) = fg_color {
+                span.style = span.style.fg(fg_color);
+            }
             span
         })
         .collect();
