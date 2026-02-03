@@ -7,7 +7,6 @@ use ratatui::style::Stylize;
 use unicode_width::UnicodeWidthStr;
 
 /// Cell displaying a compaction boundary with restored files.
-/// Matches Claude Code's display:
 /// ```text
 /// ═══════════════ Conversation compacted · ctrl+o for history ═══════════════
 /// L  Referenced file thoughts/shared/plans/2026-01-12-auto-compact-...md

@@ -41,7 +41,6 @@ fn paragraph_multiple() {
 fn headings() {
     let md = "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n";
     let text = render_markdown_text(md);
-    // Headings no longer show ## prefix - just styled text like Claude Code
     let expected = Text::from_iter([
         Line::from("Heading 1".bold().underlined()),
         Line::default(),
@@ -61,7 +60,6 @@ fn headings() {
 #[test]
 fn blockquote_single() {
     let text = render_markdown_text("> Blockquote");
-    // Blockquotes no longer show > prefix - just indented dim/italic text like Claude Code
     let expected = Text::from(Line::from_iter(["  ", "Blockquote"]).dim().italic());
     assert_eq!(text, expected);
 }
@@ -659,14 +657,14 @@ fn code_block_with_language_is_highlighted() {
     // history_cell.rs intentionally doesn't apply it to preserve syntax highlighting colors.
     let expected = Text::from_iter([Line::from_iter([
         "".into(),
-        "fn".fg(Color::Rgb(187, 154, 247)).bold(),
+        "fn".blue().bold(),
         " ".into(),
-        "main".fg(Color::Rgb(122, 162, 247)),
-        "(".fg(Color::Rgb(192, 202, 245)).dim(),
-        ")".fg(Color::Rgb(192, 202, 245)).dim(),
+        "main".yellow(),
+        "(".white().dim(),
+        ")".white().dim(),
         " ".into(),
-        "{".fg(Color::Rgb(192, 202, 245)).dim(),
-        "}".fg(Color::Rgb(192, 202, 245)).dim(),
+        "{".white().dim(),
+        "}".white().dim(),
     ])
     .cyan()]);
     assert_eq!(text, expected);
@@ -695,9 +693,11 @@ fn code_block_logical_lines_preserves_syntax_highlighting() {
     let fn_span = spans.iter().find(|s| s.content == "fn");
     assert!(fn_span.is_some(), "should have 'fn' span");
     let fn_style = fn_span.unwrap().style;
-    assert_eq!(fn_style.fg, Some(Color::Rgb(187, 154, 247)), "fn should be purple");
+    assert_eq!(fn_style.fg, Some(Color::Blue), "fn should be blue");
     assert!(
-        fn_style.add_modifier.contains(ratatui::style::Modifier::BOLD),
+        fn_style
+            .add_modifier
+            .contains(ratatui::style::Modifier::BOLD),
         "fn should be bold"
     );
 
@@ -706,8 +706,8 @@ fn code_block_logical_lines_preserves_syntax_highlighting() {
     assert!(main_span.is_some(), "should have 'main' span");
     assert_eq!(
         main_span.unwrap().style.fg,
-        Some(Color::Rgb(122, 162, 247)),
-        "main should be blue"
+        Some(Color::Yellow),
+        "main should be yellow"
     );
 }
 

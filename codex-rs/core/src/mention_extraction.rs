@@ -1,7 +1,6 @@
 //! Extraction and parsing of @ mentions from user input
 //!
-//! File mentions are detected by parsing `@path` patterns from the raw text,
-//! following the same approach as Claude JS (backend-only regex parsing).
+//! File mentions are detected by parsing `@path` patterns from the raw text
 
 use std::path::Path;
 use std::path::PathBuf;

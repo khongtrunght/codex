@@ -19,6 +19,7 @@ use crate::render::line_utils::push_owned_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::InsetRenderable;
 use crate::render::renderable::Renderable;
+use crate::render::syntax_highlight::DefaultTheme;
 use crate::render::syntax_highlight::highlight_code_to_lines;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
@@ -31,6 +32,68 @@ enum DiffLineType {
     Insert,
     Delete,
     Context,
+}
+
+impl DiffLineType {
+    /// Background color for this diff line type.
+    #[allow(clippy::disallowed_methods)]
+    fn bg_color(self) -> Option<Color> {
+        match self {
+            Self::Insert => Some(Color::Indexed(22)),
+            Self::Delete => Some(Color::Indexed(52)),
+            Self::Context => None,
+        }
+    }
+
+    /// Foreground color override for this diff line type.
+    #[allow(clippy::disallowed_methods)]
+    fn fg_color(self) -> Option<Color> {
+        match self {
+            Self::Delete => Some(Color::Rgb(255, 255, 255)),
+            Self::Insert | Self::Context => None,
+        }
+    }
+
+    /// Foreground color for line numbers and sign characters.
+    /// Slightly brighter than the background for visual distinction.
+    #[allow(clippy::disallowed_methods)]
+    fn gutter_fg(self) -> Option<Color> {
+        match self {
+            Self::Insert => Some(Color::Indexed(34)),
+            Self::Delete => Some(Color::Indexed(124)),
+            Self::Context => None,
+        }
+    }
+
+    fn sign_char(self) -> char {
+        match self {
+            Self::Insert => '+',
+            Self::Delete => '-',
+            Self::Context => ' ',
+        }
+    }
+
+    /// Style for the line number (colored fg for insert/delete, dim for context).
+    #[allow(clippy::disallowed_methods)]
+    fn number_style(self) -> Style {
+        match self.gutter_fg() {
+            Some(fg) => Style::default().fg(fg),
+            None => style_gutter(),
+        }
+    }
+
+    /// Style for the sign character (+/-/space): gutter fg on diff background.
+    #[allow(clippy::disallowed_methods)]
+    fn sign_style(self) -> Style {
+        let mut s = Style::default();
+        if let Some(bg) = self.bg_color() {
+            s = s.bg(bg);
+        }
+        if let Some(fg) = self.gutter_fg() {
+            s = s.fg(fg);
+        }
+        s
+    }
 }
 
 pub struct DiffSummary {
@@ -573,22 +636,6 @@ fn style_gutter() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
-fn style_context() -> Style {
-    Style::default()
-}
-
-#[allow(clippy::disallowed_methods)]
-fn style_add() -> Style {
-    Style::default().bg(Color::Indexed(22))
-}
-
-#[allow(clippy::disallowed_methods)]
-fn style_del() -> Style {
-    Style::default()
-        .bg(Color::Indexed(52))
-        .fg(Color::Rgb(255, 255, 255))
-}
-
 /// Detect language from file path extension (for syntax highlighting).
 /// Returns language name compatible with syntax_highlight module.
 fn detect_language_from_path(path: &Path) -> Option<&'static str> {
@@ -647,33 +694,33 @@ fn highlight_lines(content: &[String], lang: Option<&str>) -> Vec<RtLine<'static
     };
 
     let joined = content.join("\n");
-    highlight_code_to_lines(&joined, lang)
+    highlight_code_to_lines(&joined, lang, &DefaultTheme)
 }
 
 /// Apply diff background color on top of a line, preserving existing styles.
-#[allow(clippy::disallowed_methods)]
 fn apply_diff_background(line: RtLine<'static>, diff_type: DiffLineType) -> RtLine<'static> {
-    let (bg_color, fg_color) = match diff_type {
-        DiffLineType::Insert => (Some(Color::Indexed(22)), None),
-        DiffLineType::Delete => (Some(Color::Indexed(52)), Some(Color::Rgb(255, 255, 255))),
-        DiffLineType::Context => (None, None),
-    };
+    let bg_color = diff_type.bg_color();
+    let fg_color = diff_type.fg_color();
 
-    let Some(bg_color) = bg_color else {
+    if bg_color.is_none() && fg_color.is_none() {
         return line;
-    };
+    }
 
+    // Only apply bg to the base style. fg is applied per-span so it doesn't
+    // leak to the sign char / line number added later in wrap_diff_line.
     let mut base_style = line.style;
-    if let Some(fg_color) = fg_color {
-        base_style = base_style.fg(fg_color);
+    if let Some(bg) = bg_color {
+        base_style = base_style.bg(bg);
     }
     let spans: Vec<RtSpan<'static>> = line
         .spans
         .into_iter()
         .map(|mut span| {
-            span.style = span.style.bg(bg_color);
-            if let Some(fg_color) = fg_color {
-                span.style = span.style.fg(fg_color);
+            if let Some(bg) = bg_color {
+                span.style = span.style.bg(bg);
+            }
+            if let Some(fg) = fg_color {
+                span.style = span.style.fg(fg);
             }
             span
         })
@@ -692,25 +739,17 @@ fn wrap_diff_line(
     let gutter_width = line_number_width.max(1);
     let gutter = format!("{line_number:>gutter_width$} ");
 
-    let line_style = match kind {
-        DiffLineType::Insert => style_add(),
-        DiffLineType::Delete => style_del(),
-        DiffLineType::Context => style_context(),
-    };
-    let sign_char = match kind {
-        DiffLineType::Insert => '+',
-        DiffLineType::Delete => '-',
-        DiffLineType::Context => ' ',
-    };
-
     let colored_line = apply_diff_background(line, kind);
     let base_style = colored_line.style;
     let mut spans: Vec<RtSpan<'static>> = Vec::with_capacity(colored_line.spans.len() + 1);
-    spans.push(RtSpan::styled(sign_char.to_string(), line_style));
+    spans.push(RtSpan::styled(
+        kind.sign_char().to_string(),
+        kind.sign_style(),
+    ));
     spans.extend(colored_line.spans);
     let line_with_sign = RtLine::from(spans).style(base_style);
 
-    let initial_indent = RtLine::from(vec![RtSpan::styled(gutter, style_gutter())]);
+    let initial_indent = RtLine::from(vec![RtSpan::styled(gutter, kind.number_style())]);
     let subsequent_indent = match kind {
         DiffLineType::Context => RtLine::from(vec![RtSpan::styled(
             format!("{:gutter_width$}  ", ""),
@@ -718,7 +757,7 @@ fn wrap_diff_line(
         )]),
         DiffLineType::Insert | DiffLineType::Delete => RtLine::from(vec![
             RtSpan::styled(format!("{:gutter_width$} ", ""), style_gutter()),
-            RtSpan::styled(" ".to_string(), line_style),
+            RtSpan::styled(" ".to_string(), kind.sign_style()),
         ]),
     };
 

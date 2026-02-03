@@ -33,6 +33,7 @@
 //! The underlying `Writer` can emit either (or both) depending on call site needs.
 
 use crate::render::line_utils::line_to_static;
+use crate::render::syntax_highlight::MarkdownTheme;
 use crate::render::syntax_highlight::highlight_code_to_lines;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
@@ -120,7 +121,6 @@ impl Default for MarkdownStyles {
             ordered_list_marker: Style::new().light_blue(),
             unordered_list_marker: Style::new(),
             link: Style::new().cyan().underlined(),
-            // Blockquotes: dim italic like Claude Code
             blockquote: Style::new().dim().italic(),
         }
     }
@@ -401,7 +401,6 @@ where
             HeadingLevel::H5 => self.styles.h5,
             HeadingLevel::H6 => self.styles.h6,
         };
-        // Don't show ## prefix - just styled text like Claude Code
         self.push_line(Line::default());
         self.push_inline_style(heading_style);
         self.needs_newline = false;
@@ -417,7 +416,6 @@ where
             self.push_blank_line();
             self.needs_newline = false;
         }
-        // Don't show > prefix - just indentation like Claude Code
         // The green styling is applied via line_style in flush_current_line
         self.indent_stack
             .push(IndentContext::blockquote(vec![Span::from("  ")]));
@@ -588,7 +586,7 @@ where
             // Trim trailing newline that markdown parser adds
             let code = code.trim_end_matches('\n');
             if !code.is_empty() {
-                let highlighted_lines = highlight_code_to_lines(code, &lang);
+                let highlighted_lines = highlight_code_to_lines(code, &lang, &MarkdownTheme);
                 for line in highlighted_lines {
                     self.push_line(line);
                     self.flush_current_line();

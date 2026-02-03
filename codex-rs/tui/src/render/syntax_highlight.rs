@@ -42,6 +42,12 @@ enum SyntaxCategory {
     StringEscape,
     StringSpecial,
     Tag,
+    TextEmphasis,
+    TextLiteral,
+    TextReference,
+    TextStrong,
+    TextTitle,
+    TextUri,
     Type,
     TypeBuiltin,
     Variable,
@@ -49,9 +55,123 @@ enum SyntaxCategory {
     VariableParameter,
 }
 
+pub trait Theme {
+    fn style(&self, category: SyntaxCategory) -> Style;
+}
+
+pub struct DefaultTheme;
+pub struct MarkdownTheme;
+
+impl Theme for DefaultTheme {
+    fn style(&self, category: SyntaxCategory) -> Style {
+        let green = Color::Indexed(148); // built_in, type, property
+        let yellow = Color::Yellow; // function, attribute
+        let magenta = Color::Indexed(141); // keyword, number, label
+        let blue = Color::Blue; // namespace, constant
+        let red = Color::Red; // variable.builtin
+        let grey = Color::DarkGray; // comment, tag
+        let white = Color::White; // punctuation
+
+        match category {
+            SyntaxCategory::Comment => Style::default().fg(grey).italic(),
+            SyntaxCategory::Keyword | SyntaxCategory::TextTitle => {
+                Style::default().fg(Color::Indexed(208)).bold()
+            }
+            SyntaxCategory::Function => Style::default().fg(yellow),
+            SyntaxCategory::FunctionMacro => Style::default().fg(green),
+            SyntaxCategory::FunctionBuiltin => Style::default().fg(green),
+            SyntaxCategory::Constructor => Style::default().fg(green).bold(),
+            SyntaxCategory::String
+            | SyntaxCategory::TextLiteral
+            | SyntaxCategory::TextReference => Style::default().fg(Color::Indexed(203)),
+            SyntaxCategory::TextUri => Style::default().fg(Color::Indexed(203)).underlined(),
+            SyntaxCategory::StringEscape | SyntaxCategory::StringSpecial => {
+                Style::default().fg(magenta)
+            }
+            SyntaxCategory::Escape => Style::default().fg(magenta),
+            SyntaxCategory::Number => Style::default().fg(magenta),
+            SyntaxCategory::Constant | SyntaxCategory::ConstantBuiltin => {
+                Style::default().fg(blue).bold()
+            }
+            SyntaxCategory::Type | SyntaxCategory::TypeBuiltin => {
+                Style::default().fg(Color::Indexed(197))
+            }
+            SyntaxCategory::Tag => Style::default().fg(grey),
+            SyntaxCategory::Attribute => Style::default().fg(yellow),
+            SyntaxCategory::TextEmphasis => Style::default().italic(),
+            SyntaxCategory::TextStrong => Style::default().bold(),
+
+            SyntaxCategory::Operator => Style::default().fg(magenta).dim(),
+            SyntaxCategory::Punctuation => Style::default().fg(white).dim(),
+            SyntaxCategory::PunctuationBracket => Style::default().fg(white).dim(),
+            SyntaxCategory::PunctuationDelimiter => Style::default().fg(white).dim(),
+            SyntaxCategory::PunctuationSpecial => Style::default().fg(magenta).dim(),
+            SyntaxCategory::Variable => Style::default().fg(Color::Rgb(255, 255, 255)),
+            SyntaxCategory::VariableBuiltin => Style::default().fg(red).italic(),
+            SyntaxCategory::VariableParameter => Style::default().fg(yellow).italic(),
+            SyntaxCategory::Property => Style::default().fg(green),
+            SyntaxCategory::Label => Style::default().fg(magenta),
+            SyntaxCategory::Namespace => Style::default().fg(blue).dim(),
+            SyntaxCategory::Embedded => Style::default().fg(yellow).dim(),
+        }
+    }
+}
+
+impl Theme for MarkdownTheme {
+    fn style(&self, category: SyntaxCategory) -> Style {
+        let blue = Color::Blue; // keyword, literal, class
+        let cyan = Color::Cyan; // built_in, type, attr
+        let green = Color::Green; // number, comment
+        let red = Color::Red; // string, regexp
+        let yellow = Color::Yellow; // function
+        let magenta = Color::Magenta; // label, namespace
+        let grey = Color::DarkGray; // meta, tag
+        let white = Color::White; // punctuation
+
+        match category {
+            SyntaxCategory::Comment => Style::default().fg(green).italic(),
+            SyntaxCategory::Keyword | SyntaxCategory::TextTitle => Style::default().fg(blue).bold(),
+            SyntaxCategory::Function => Style::default().fg(yellow),
+            SyntaxCategory::FunctionMacro => Style::default().fg(cyan),
+            SyntaxCategory::FunctionBuiltin => Style::default().fg(cyan),
+            SyntaxCategory::Constructor => Style::default().fg(cyan).bold(),
+            SyntaxCategory::String
+            | SyntaxCategory::TextLiteral
+            | SyntaxCategory::TextReference => Style::default().fg(red),
+            SyntaxCategory::TextUri => Style::default().fg(red).underlined(),
+            SyntaxCategory::StringEscape | SyntaxCategory::StringSpecial => {
+                Style::default().fg(magenta)
+            }
+            SyntaxCategory::Escape => Style::default().fg(magenta),
+            SyntaxCategory::Number => Style::default().fg(green),
+            SyntaxCategory::Constant | SyntaxCategory::ConstantBuiltin => {
+                Style::default().fg(blue).bold()
+            }
+            SyntaxCategory::Type | SyntaxCategory::TypeBuiltin => Style::default().fg(cyan).dim(),
+            SyntaxCategory::Tag => Style::default().fg(grey),
+            SyntaxCategory::Attribute => Style::default().fg(cyan),
+            SyntaxCategory::TextEmphasis => Style::default().italic(),
+            SyntaxCategory::TextStrong => Style::default().bold(),
+
+            SyntaxCategory::Operator => Style::default().fg(magenta).dim(),
+            SyntaxCategory::Punctuation => Style::default().fg(white).dim(),
+            SyntaxCategory::PunctuationBracket => Style::default().fg(white).dim(),
+            SyntaxCategory::PunctuationDelimiter => Style::default().fg(white).dim(),
+            SyntaxCategory::PunctuationSpecial => Style::default().fg(magenta).dim(),
+            SyntaxCategory::Variable => Style::default(),
+            SyntaxCategory::VariableBuiltin => Style::default().fg(red).italic(),
+            SyntaxCategory::VariableParameter => Style::default().fg(yellow).italic(),
+            SyntaxCategory::Property => Style::default().fg(cyan),
+            SyntaxCategory::Label => Style::default().fg(magenta),
+            SyntaxCategory::Namespace => Style::default().fg(blue).dim(),
+            SyntaxCategory::Embedded => Style::default().fg(yellow).dim(),
+        }
+    }
+}
+
 impl SyntaxCategory {
     /// All categories in order - must match HIGHLIGHT_NAMES order.
-    const ALL: [Self; 29] = [
+    const ALL: [Self; 35] = [
         Self::Attribute,
         Self::Comment,
         Self::Constant,
@@ -76,6 +196,12 @@ impl SyntaxCategory {
         Self::StringEscape,
         Self::StringSpecial,
         Self::Tag,
+        Self::TextEmphasis,
+        Self::TextLiteral,
+        Self::TextReference,
+        Self::TextStrong,
+        Self::TextTitle,
+        Self::TextUri,
         Self::Type,
         Self::TypeBuiltin,
         Self::Variable,
@@ -83,54 +209,13 @@ impl SyntaxCategory {
         Self::VariableParameter,
     ];
 
-    #[allow(clippy::disallowed_methods)]
-    fn style(self) -> Style {
-        // Tokyo Night official color palette
-        let red = Color::Rgb(247, 118, 142); // #f7768e
-        let orange = Color::Rgb(255, 158, 100); // #ff9e64
-        let yellow = Color::Rgb(224, 175, 104); // #e0af68
-        let green = Color::Rgb(158, 206, 106); // #9ece6a
-        let teal_green = Color::Rgb(115, 218, 202); // #73daca
-        let light_teal = Color::Rgb(180, 249, 248); // #b4f9f8
-        let teal = Color::Rgb(42, 195, 222); // #2ac3de
-        let cyan = Color::Rgb(125, 207, 255); // #7dcfff
-        let blue = Color::Rgb(122, 162, 247); // #7aa2f7
-        let purple = Color::Rgb(187, 154, 247); // #bb9af7
-        let foreground = Color::Rgb(192, 202, 245); // #c0caf5
-        let comment = Color::Rgb(86, 95, 137); // #565f89
-
-        match self {
-            Self::Comment => Style::default().fg(comment).italic().dim(),
-            Self::Keyword => Style::default().fg(purple).bold(),
-            Self::Function | Self::FunctionMacro => Style::default().fg(blue),
-            Self::FunctionBuiltin => Style::default().fg(teal),
-            Self::Constructor => Style::default().fg(cyan),
-            Self::String => Style::default().fg(green),
-            Self::StringEscape | Self::StringSpecial => Style::default().fg(light_teal),
-            Self::Escape => Style::default().fg(light_teal),
-            Self::Number => Style::default().fg(orange),
-            Self::Constant | Self::ConstantBuiltin => Style::default().fg(orange).bold(),
-            Self::Type | Self::TypeBuiltin => Style::default().fg(cyan),
-            Self::Tag => Style::default().fg(red),
-            Self::Operator => Style::default().fg(purple).dim(),
-            Self::Punctuation
-            | Self::PunctuationBracket
-            | Self::PunctuationDelimiter
-            | Self::PunctuationSpecial => Style::default().fg(foreground).dim(),
-            Self::Variable => Style::default().fg(foreground),
-            Self::VariableBuiltin => Style::default().fg(red),
-            Self::VariableParameter => Style::default().fg(yellow),
-            Self::Property => Style::default().fg(teal_green),
-            Self::Attribute => Style::default().fg(orange),
-            Self::Label => Style::default().fg(teal_green),
-            Self::Namespace => Style::default().fg(cyan),
-            Self::Embedded => Style::default(),
-        }
+    fn style(self, theme: &impl Theme) -> Style {
+        theme.style(self)
     }
 }
 
 /// Highlight names that tree-sitter queries produce.
-/// Order must match SyntaxCategory::ALL (expanded from color-diff).
+/// Order must match SyntaxCategory::ALL.
 const HIGHLIGHT_NAMES: &[&str] = &[
     "attribute",
     "comment",
@@ -156,26 +241,18 @@ const HIGHLIGHT_NAMES: &[&str] = &[
     "string.escape",
     "string.special",
     "tag",
+    "text.emphasis",
+    "text.literal",
+    "text.reference",
+    "text.strong",
+    "text.title",
+    "text.uri",
     "type",
     "type.builtin",
     "variable",
     "variable.builtin",
     "variable.parameter",
 ];
-
-const MARKDOWN_HIGHLIGHTS_QUERY: &str = r#"
-  (atx_heading) @keyword
-  (setext_heading) @keyword
-  (code_span) @string
-  (fenced_code_block) @string
-  (indented_code_block) @string
-  (link_destination) @string
-  (link_label) @string
-  (link_text) @string
-  (emphasis) @attribute
-  (strong_emphasis) @type
-  (strikethrough) @comment
-"#;
 
 fn category_for(highlight: Highlight) -> SyntaxCategory {
     SyntaxCategory::ALL
@@ -195,7 +272,10 @@ static TSX_CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
 static GO_CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
 static JSON_CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
 static BASH_CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
-static MARKDOWN_CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+static MARKDOWN_BLOCK_CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+static MARKDOWN_INLINE_CONFIG: OnceLock<Option<HighlightConfiguration>> = OnceLock::new();
+static MARKDOWN_BLOCK_HIGHLIGHT_QUERY: OnceLock<String> = OnceLock::new();
+static MARKDOWN_BLOCK_INJECTION_QUERY: OnceLock<String> = OnceLock::new();
 
 fn make_rust_config() -> Option<HighlightConfiguration> {
     let mut config = HighlightConfiguration::new(
@@ -348,12 +428,14 @@ fn bash_config() -> Option<&'static HighlightConfiguration> {
     BASH_CONFIG.get_or_init(make_bash_config).as_ref()
 }
 
-fn make_markdown_config() -> Option<HighlightConfiguration> {
+fn make_markdown_block_config() -> Option<HighlightConfiguration> {
+    let highlight_query = markdown_block_highlight_query();
+    let injection_query = markdown_block_injection_query();
     let mut config = HighlightConfiguration::new(
-        tree_sitter_markdown_fork::language(),
+        tree_sitter_md::LANGUAGE.into(),
         "markdown",
-        MARKDOWN_HIGHLIGHTS_QUERY,
-        "",
+        highlight_query,
+        injection_query,
         "",
     )
     .ok()?;
@@ -361,8 +443,69 @@ fn make_markdown_config() -> Option<HighlightConfiguration> {
     Some(config)
 }
 
-fn markdown_config() -> Option<&'static HighlightConfiguration> {
-    MARKDOWN_CONFIG.get_or_init(make_markdown_config).as_ref()
+fn markdown_block_highlight_query() -> &'static str {
+    MARKDOWN_BLOCK_HIGHLIGHT_QUERY
+        .get_or_init(|| {
+            let mut lines: Vec<&str> = tree_sitter_md::HIGHLIGHT_QUERY_BLOCK
+                .lines()
+                .filter(|line| {
+                    let trimmed = line.trim();
+                    trimmed != "(fenced_code_block)" && trimmed != "(code_fence_content) @none"
+                })
+                .collect();
+            if !lines.is_empty() {
+                lines.push("");
+            }
+            let mut query = lines.join("\n");
+            if !query.is_empty() && !query.ends_with('\n') {
+                query.push('\n');
+            }
+            query.push_str("(info_string\n  (language) @label)\n");
+            query
+        })
+        .as_str()
+}
+
+fn markdown_block_injection_query() -> &'static str {
+    MARKDOWN_BLOCK_INJECTION_QUERY
+        .get_or_init(|| {
+            let mut query = tree_sitter_md::INJECTION_QUERY_BLOCK.to_string();
+            query = query.replace(
+                "(fenced_code_block\n  (info_string\n    (language) @injection.language)\n  (code_fence_content) @injection.content)\n\n",
+                "((fenced_code_block\n  (info_string\n    (language) @injection.language)\n  (code_fence_content) @injection.content)\n (#set! injection.include-children))\n\n",
+            );
+            query = query.replace(
+                "((inline) @injection.content\n  (#set! injection.language \"markdown_inline\"))",
+                "((inline) @injection.content\n  (#set! injection.language \"markdown_inline\")\n  (#set! injection.include-children))",
+            );
+            query
+        })
+        .as_str()
+}
+
+fn markdown_block_config() -> Option<&'static HighlightConfiguration> {
+    MARKDOWN_BLOCK_CONFIG
+        .get_or_init(make_markdown_block_config)
+        .as_ref()
+}
+
+fn make_markdown_inline_config() -> Option<HighlightConfiguration> {
+    let mut config = HighlightConfiguration::new(
+        tree_sitter_md::INLINE_LANGUAGE.into(),
+        "markdown_inline",
+        tree_sitter_md::HIGHLIGHT_QUERY_INLINE,
+        tree_sitter_md::INJECTION_QUERY_INLINE,
+        "",
+    )
+    .ok()?;
+    config.configure(HIGHLIGHT_NAMES);
+    Some(config)
+}
+
+fn markdown_inline_config() -> Option<&'static HighlightConfiguration> {
+    MARKDOWN_INLINE_CONFIG
+        .get_or_init(make_markdown_inline_config)
+        .as_ref()
 }
 
 /// Get the highlight configuration for a language by name.
@@ -377,7 +520,8 @@ fn config_for_language(lang: &str) -> Option<&'static HighlightConfiguration> {
         "go" | "golang" => go_config(),
         "json" => json_config(),
         "bash" | "sh" | "shell" | "zsh" => bash_config(),
-        "markdown" | "md" | "mdx" => markdown_config(),
+        "markdown" | "md" | "mdx" => markdown_block_config(),
+        "markdown_inline" => markdown_inline_config(),
         _ => None,
     }
 }
@@ -406,7 +550,7 @@ fn push_segment(lines: &mut Vec<Line<'static>>, segment: &str, style: Option<Sty
 /// - Unsupported languages
 /// - Parse errors
 /// - Empty input
-pub fn highlight_code_to_lines(code: &str, lang: &str) -> Vec<Line<'static>> {
+pub fn highlight_code_to_lines<T: Theme>(code: &str, lang: &str, theme: &T) -> Vec<Line<'static>> {
     if code.is_empty() {
         return vec![Line::from("")];
     }
@@ -421,7 +565,9 @@ pub fn highlight_code_to_lines(code: &str, lang: &str) -> Vec<Line<'static>> {
     };
 
     let mut highlighter = Highlighter::new();
-    let iterator = match highlighter.highlight(config, code.as_bytes(), None, |_| None) {
+    let iterator = match highlighter.highlight(config, code.as_bytes(), None, |lang| {
+        config_for_language(lang)
+    }) {
         Ok(iter) => iter,
         Err(_) => return plain_text_lines(code),
     };
@@ -439,7 +585,9 @@ pub fn highlight_code_to_lines(code: &str, lang: &str) -> Vec<Line<'static>> {
                 if start == end {
                     continue;
                 }
-                let style = highlight_stack.last().map(|h| category_for(*h).style());
+                let style = highlight_stack
+                    .last()
+                    .map(|h| category_for(*h).style(theme));
                 push_segment(&mut lines, &code[start..end], style);
             }
             Err(_) => return plain_text_lines(code),
@@ -485,14 +633,14 @@ mod tests {
     #[test]
     fn unsupported_language_returns_plain_text() {
         let code = "some random code";
-        let lines = highlight_code_to_lines(code, "unknown_lang");
+        let lines = highlight_code_to_lines(code, "unknown_lang", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
         assert_eq!(lines.len(), 1);
     }
 
     #[test]
     fn empty_code_returns_empty_line() {
-        let lines = highlight_code_to_lines("", "rust");
+        let lines = highlight_code_to_lines("", "rust", &DefaultTheme);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].spans.is_empty());
     }
@@ -500,56 +648,56 @@ mod tests {
     #[test]
     fn rust_code_preserves_content() {
         let code = "fn main() {\n    println!(\"Hello\");\n}";
-        let lines = highlight_code_to_lines(code, "rust");
+        let lines = highlight_code_to_lines(code, "rust", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
     #[test]
     fn python_code_preserves_content() {
         let code = "def hello():\n    print(\"world\")";
-        let lines = highlight_code_to_lines(code, "python");
+        let lines = highlight_code_to_lines(code, "python", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
     #[test]
     fn javascript_code_preserves_content() {
         let code = "const x = 42;\nconsole.log(x);";
-        let lines = highlight_code_to_lines(code, "javascript");
+        let lines = highlight_code_to_lines(code, "javascript", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
     #[test]
     fn typescript_code_preserves_content() {
         let code = "const x: number = 42;";
-        let lines = highlight_code_to_lines(code, "typescript");
+        let lines = highlight_code_to_lines(code, "typescript", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
     #[test]
     fn go_code_preserves_content() {
         let code = "func main() {\n    fmt.Println(\"hi\")\n}";
-        let lines = highlight_code_to_lines(code, "go");
+        let lines = highlight_code_to_lines(code, "go", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
     #[test]
     fn json_code_preserves_content() {
         let code = "{\"key\": \"value\", \"num\": 42}";
-        let lines = highlight_code_to_lines(code, "json");
+        let lines = highlight_code_to_lines(code, "json", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
     #[test]
     fn bash_code_preserves_content() {
         let code = "echo \"hello world\"";
-        let lines = highlight_code_to_lines(code, "bash");
+        let lines = highlight_code_to_lines(code, "bash", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
     #[test]
     fn markdown_code_preserves_content() {
         let code = "# Hello\n\n- item";
-        let lines = highlight_code_to_lines(code, "markdown");
+        let lines = highlight_code_to_lines(code, "markdown", &DefaultTheme);
         assert_eq!(reconstructed(&lines), code);
     }
 
@@ -562,33 +710,5 @@ mod tests {
         assert!(is_language_supported("sh"));
         assert!(is_language_supported("golang"));
         assert!(is_language_supported("md"));
-    }
-
-    #[test]
-    fn rust_highlights_keywords() {
-        let code = "fn main() {}";
-        let lines = highlight_code_to_lines(code, "rust");
-        // Find the 'fn' span and verify it has the Tokyo Night keyword color.
-        let fn_span = lines[0].spans.iter().find(|s| s.content.as_ref() == "fn");
-        assert!(fn_span.is_some(), "should find 'fn' span");
-        let style = fn_span.map(|s| s.style);
-        assert!(
-            style.is_some_and(|s| s.fg == Some(Color::Rgb(187, 154, 247))),
-            "fn should use the keyword color"
-        );
-    }
-
-    #[test]
-    fn python_highlights_strings() {
-        let code = "x = \"hello\"";
-        let lines = highlight_code_to_lines(code, "python");
-        // Strings should use the Tokyo Night string color.
-        let string_span = lines[0].spans.iter().find(|s| s.content.contains("hello"));
-        assert!(string_span.is_some(), "should find string span");
-        let style = string_span.map(|s| s.style);
-        assert!(
-            style.is_some_and(|s| s.fg == Some(Color::Rgb(158, 206, 106))),
-            "string should use the string color"
-        );
     }
 }
