@@ -56,9 +56,6 @@ pub(crate) enum AppEvent {
         event: Event,
     },
 
-    /// Subscribe to a subagent thread and forward its events.
-    SubscribeSubAgentThread(ThreadId),
-
     /// Load a subagent's rollout history on resume.
     LoadSubAgentHistory {
         call_id: String,

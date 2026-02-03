@@ -940,9 +940,6 @@ impl App {
             AppEvent::SubAgentEvent { thread_id, event } => {
                 self.chat_widget.handle_subagent_event(thread_id, event);
             }
-            AppEvent::SubscribeSubAgentThread(thread_id) => {
-                self.subscribe_to_subagent_thread(thread_id);
-            }
             AppEvent::LoadSubAgentHistory { call_id, thread_id } => {
                 self.load_subagent_history(call_id, thread_id);
             }
@@ -1566,12 +1563,22 @@ impl App {
                         break;
                     }
                 };
-                match event.msg {
-                    EventMsg::ExecApprovalRequest(_) | EventMsg::ApplyPatchApprovalRequest(_) => {
-                        app_event_tx.send(AppEvent::ExternalApprovalRequest { thread_id, event });
-                    }
-                    _ => {}
+                // Route approval requests through the external approval path so they
+                // work for both collab and subagent threads.
+                if matches!(
+                    event.msg,
+                    EventMsg::ExecApprovalRequest(_) | EventMsg::ApplyPatchApprovalRequest(_)
+                ) {
+                    app_event_tx.send(AppEvent::ExternalApprovalRequest {
+                        thread_id,
+                        event: event.clone(),
+                    });
                 }
+                // Forward every event as a SubAgentEvent so the chatwidget can
+                // record tool calls and other activity. This is the single
+                // consumer for this thread's event channel, avoiding the MPMC
+                // competitive-consumption problem that would drop events.
+                app_event_tx.send(AppEvent::SubAgentEvent { thread_id, event });
             }
         });
         Ok(())
@@ -1597,35 +1604,6 @@ impl App {
 
     pub(crate) fn token_usage(&self) -> codex_core::protocol::TokenUsage {
         self.chat_widget.token_usage()
-    }
-
-    /// Subscribe to a subagent thread and forward its events to the ChatWidget.
-    fn subscribe_to_subagent_thread(&self, thread_id: ThreadId) {
-        let server = Arc::clone(&self.server);
-        let app_event_tx = self.app_event_tx.clone();
-
-        tokio::spawn(async move {
-            match server.get_thread(thread_id).await {
-                Ok(thread) => {
-                    while let Ok(event) = thread.next_event().await {
-                        if matches!(
-                            event.msg,
-                            EventMsg::ExecApprovalRequest(_)
-                                | EventMsg::ApplyPatchApprovalRequest(_)
-                        ) {
-                            app_event_tx.send(AppEvent::ExternalApprovalRequest {
-                                thread_id,
-                                event: event.clone(),
-                            });
-                        }
-                        app_event_tx.send(AppEvent::SubAgentEvent { thread_id, event });
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to get subagent thread {thread_id}: {e}");
-                }
-            }
-        });
     }
 
     /// Load a subagent's rollout history on resume and populate the cell with events.

@@ -439,6 +439,9 @@ pub(crate) struct ChatWidget {
     subagents: HashMap<String, SubAgentCell>,
     /// Thread ID -> call_id mapping for O(1) event routing.
     thread_to_call_id: HashMap<ThreadId, String>,
+    /// Events received from the broadcast listener before the thread-to-call
+    /// mapping was established.  Flushed in `on_subagent_end`.
+    pending_subagent_events: HashMap<ThreadId, Vec<EventMsg>>,
     suppressed_exec_calls: HashSet<String>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     unified_exec_wait_streak: Option<UnifiedExecWaitStreak>,
@@ -1903,6 +1906,7 @@ impl ChatWidget {
             running_commands: HashMap::new(),
             subagents: HashMap::new(),
             thread_to_call_id: HashMap::new(),
+            pending_subagent_events: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             unified_exec_wait_streak: None,
@@ -2016,6 +2020,7 @@ impl ChatWidget {
             running_commands: HashMap::new(),
             subagents: HashMap::new(),
             thread_to_call_id: HashMap::new(),
+            pending_subagent_events: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             unified_exec_wait_streak: None,
@@ -2697,6 +2702,7 @@ impl ChatWidget {
         }
 
         self.thread_to_call_id.clear();
+        self.pending_subagent_events.clear();
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
@@ -2975,26 +2981,37 @@ impl ChatWidget {
             cell.set_thread_id(thread_id);
             self.thread_to_call_id.insert(thread_id, ev.call_id.clone());
 
+            // Flush any events that arrived via the broadcast listener before
+            // the thread-to-call mapping was established.
+            if let Some(buffered) = self.pending_subagent_events.remove(&thread_id) {
+                for event in buffered {
+                    cell.add_event(event);
+                }
+            }
+
             if from_replay {
                 self.app_event_tx.send(AppEvent::LoadSubAgentHistory {
                     call_id: ev.call_id.clone(),
                     thread_id,
                 });
-            } else {
-                self.app_event_tx
-                    .send(AppEvent::SubscribeSubAgentThread(thread_id));
             }
+            // For live sessions the broadcast listener in App::handle_thread_created
+            // is already forwarding events — no separate subscription needed.
         }
         self.request_redraw();
     }
 
     fn on_subagent_complete(&mut self, ev: SubAgentCompleteEvent, from_replay: bool) {
         if let Some(cell) = self.subagents.get_mut(&ev.call_id) {
+            // Flush any late-buffered events before marking complete.
+            if !from_replay
+                && let Some(buffered) = self.pending_subagent_events.remove(&ev.agent_thread_id)
+            {
+                for event in buffered {
+                    cell.add_event(event);
+                }
+            }
             cell.complete_with_status(&ev.status);
-        }
-
-        if !from_replay {
-            self.thread_to_call_id.remove(&ev.agent_thread_id);
         }
 
         if self.subagents.values().all(SubAgentCell::is_completed) {
@@ -3002,30 +3019,37 @@ impl ChatWidget {
             if let Some(grouped) = SubAgentCell::merge(cells) {
                 self.add_to_history(grouped);
             }
+            // All cells are in history — clean up all tracking state.
+            self.thread_to_call_id.clear();
+            self.pending_subagent_events.clear();
         }
         self.request_redraw();
     }
 
-    /// Handle an event from a subscribed subagent thread.
+    /// Handle an event from a subagent thread (forwarded by the broadcast listener).
     pub(crate) fn handle_subagent_event(&mut self, thread_id: ThreadId, event: Event) {
-        // Handle approval requests from subagents by routing them to the main approval UI.
-        // The target_thread is passed so the approval response gets routed back correctly.
-        match &event.msg {
-            EventMsg::ExecApprovalRequest(ev) => {
-                self.on_exec_approval_request(event.id.clone(), ev.clone(), Some(thread_id));
-            }
-            EventMsg::ApplyPatchApprovalRequest(ev) => {
-                self.on_apply_patch_approval_request(event.id.clone(), ev.clone(), Some(thread_id));
-            }
-            _ => {}
-        }
+        // NOTE: Approval requests are NOT handled here. They are already routed
+        // through AppEvent::ExternalApprovalRequest in handle_thread_created,
+        // which rewrites the event id for correct subagent routing. Handling
+        // them here as well would show duplicate approval prompts.
 
-        // Store the event in the cell for display purposes
+        // Route the event to the cell if the mapping is ready, otherwise buffer it.
+        // Events can arrive from the broadcast listener before on_subagent_end
+        // establishes the thread_to_call_id mapping.
         if let Some(call_id) = self.thread_to_call_id.get(&thread_id).cloned()
             && let Some(cell) = self.subagents.get_mut(&call_id)
         {
             cell.add_event(event.msg);
             self.request_redraw();
+        } else if !self.subagents.is_empty() {
+            // Only buffer when subagents are active — a subagent's thread
+            // may emit events before on_subagent_end establishes the mapping.
+            // When no subagents are active, this is a collab or unknown thread
+            // whose events don't need recording.
+            self.pending_subagent_events
+                .entry(thread_id)
+                .or_default()
+                .push(event.msg);
         }
     }
 

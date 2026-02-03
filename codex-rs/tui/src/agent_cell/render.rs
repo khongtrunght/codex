@@ -6,8 +6,9 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::HistoryCell;
 use crate::verbosity::DisplayVerbosity;
 use crate::verbosity::RenderContext;
-use codex_core::protocol::EventMsg;
-use codex_core::protocol::SubAgentBeginEvent;
+use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::SubAgentBeginEvent;
 use ratatui::prelude::*;
 
 /// Create a new SubAgentCell from a begin event.
@@ -69,60 +70,74 @@ struct PendingToolCall {
 /// Matches Begin/End events to show tool calls with their results.
 fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
     use std::collections::HashMap;
+    use std::collections::HashSet;
 
     let mut pending: HashMap<String, PendingToolCall> = HashMap::new();
     let mut tool_calls = Vec::new();
+    let mut seen_call_ids: HashSet<String> = HashSet::new();
 
     for event in raw_events {
         match event {
             // Begin events - register pending call
             EventMsg::ExecCommandBegin(begin) => {
-                let cmd = strip_bash_lc_and_escape(&begin.command);
-                pending.insert(
-                    begin.call_id.clone(),
-                    PendingToolCall {
-                        tool_name: "Shell".to_string(),
-                        args: cmd,
-                    },
-                );
+                if !seen_call_ids.contains(&begin.call_id) {
+                    seen_call_ids.insert(begin.call_id.clone());
+                    let cmd = strip_bash_lc_and_escape(&begin.command);
+                    pending.insert(
+                        begin.call_id.clone(),
+                        PendingToolCall {
+                            tool_name: "Shell".to_string(),
+                            args: cmd,
+                        },
+                    );
+                }
             }
             EventMsg::McpToolCallBegin(begin) => {
-                pending.insert(
-                    begin.call_id.clone(),
-                    PendingToolCall {
-                        tool_name: begin.invocation.tool.clone(),
-                        args: begin.invocation.server.clone(),
-                    },
-                );
+                if !seen_call_ids.contains(&begin.call_id) {
+                    seen_call_ids.insert(begin.call_id.clone());
+                    pending.insert(
+                        begin.call_id.clone(),
+                        PendingToolCall {
+                            tool_name: begin.invocation.tool.clone(),
+                            args: begin.invocation.server.clone(),
+                        },
+                    );
+                }
             }
             EventMsg::PatchApplyBegin(begin) => {
-                let paths: Vec<String> = begin
-                    .changes
-                    .keys()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect();
-                let args = if paths.len() == 1 {
-                    paths[0].clone()
-                } else {
-                    let file_count = paths.len();
-                    format!("{file_count} files")
-                };
-                pending.insert(
-                    begin.call_id.clone(),
-                    PendingToolCall {
-                        tool_name: "Write".to_string(),
-                        args,
-                    },
-                );
+                if !seen_call_ids.contains(&begin.call_id) {
+                    seen_call_ids.insert(begin.call_id.clone());
+                    let paths: Vec<String> = begin
+                        .changes
+                        .keys()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect();
+                    let args = if paths.len() == 1 {
+                        paths[0].clone()
+                    } else {
+                        let file_count = paths.len();
+                        format!("{file_count} files")
+                    };
+                    pending.insert(
+                        begin.call_id.clone(),
+                        PendingToolCall {
+                            tool_name: "Write".to_string(),
+                            args,
+                        },
+                    );
+                }
             }
             EventMsg::WebSearchBegin(begin) => {
-                pending.insert(
-                    begin.call_id.clone(),
-                    PendingToolCall {
-                        tool_name: "WebSearch".to_string(),
-                        args: String::new(),
-                    },
-                );
+                if !seen_call_ids.contains(&begin.call_id) {
+                    seen_call_ids.insert(begin.call_id.clone());
+                    pending.insert(
+                        begin.call_id.clone(),
+                        PendingToolCall {
+                            tool_name: "WebSearch".to_string(),
+                            args: String::new(),
+                        },
+                    );
+                }
             }
 
             // End events - match with pending and record result
@@ -206,6 +221,74 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                         args: call.args,
                         result: ToolCallResult::Success("Search completed".to_string()),
                     });
+                }
+            }
+
+            // Handle function_call and custom_tool_call from the API
+            EventMsg::RawResponseItem(raw) => {
+                match &raw.item {
+                    ResponseItem::FunctionCall {
+                        name,
+                        call_id,
+                        arguments,
+                        ..
+                    } => {
+                        // Only track if we haven't seen this call_id before (avoid duplicates)
+                        if !seen_call_ids.contains(call_id) {
+                            seen_call_ids.insert(call_id.clone());
+                            pending.insert(
+                                call_id.clone(),
+                                PendingToolCall {
+                                    tool_name: name.clone(),
+                                    args: arguments.clone(),
+                                },
+                            );
+                        }
+                    }
+                    ResponseItem::FunctionCallOutput { call_id, output } => {
+                        // Match with pending function call
+                        if let Some(call) = pending.remove(call_id) {
+                            let result = if output.success.unwrap_or(true) {
+                                ToolCallResult::Success(output.content.clone())
+                            } else {
+                                ToolCallResult::Error(output.content.clone())
+                            };
+                            tool_calls.push(ToolCallInfo {
+                                tool_name: call.tool_name,
+                                args: call.args,
+                                result,
+                            });
+                        }
+                    }
+                    ResponseItem::CustomToolCall {
+                        name,
+                        call_id,
+                        input,
+                        ..
+                    } => {
+                        // Only track if we haven't seen this call_id before (avoid duplicates)
+                        if !seen_call_ids.contains(call_id) {
+                            seen_call_ids.insert(call_id.clone());
+                            pending.insert(
+                                call_id.clone(),
+                                PendingToolCall {
+                                    tool_name: name.clone(),
+                                    args: input.clone(),
+                                },
+                            );
+                        }
+                    }
+                    ResponseItem::CustomToolCallOutput { call_id, output } => {
+                        // Match with pending custom tool call
+                        if let Some(call) = pending.remove(call_id) {
+                            tool_calls.push(ToolCallInfo {
+                                tool_name: call.tool_name,
+                                args: call.args,
+                                result: ToolCallResult::Success(output.clone()),
+                            });
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}
