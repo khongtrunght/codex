@@ -1,4 +1,4 @@
-//! Streaming markdown accumulator for `tui2`.
+//! Streaming markdown accumulator for the TUI.
 //!
 //! Streaming assistant output arrives as small text deltas. The UI wants to render "stable"
 //! transcript chunks during streaming without:

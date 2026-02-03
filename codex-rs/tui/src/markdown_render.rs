@@ -1,4 +1,4 @@
-//! Markdown rendering for `tui2`.
+//! Markdown rendering for the TUI.
 //!
 //! This module has two related but intentionally distinct responsibilities:
 //!

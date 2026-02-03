@@ -1,6 +1,6 @@
 //! Streaming state for newline-gated assistant output.
 //!
-//! The streaming pipeline in `tui2` is split into:
+//! The streaming pipeline is split into:
 //!
 //! - [`crate::markdown_stream::MarkdownStreamCollector`]: accumulates raw deltas and commits
 //!   completed *logical* markdown lines (width-agnostic).
