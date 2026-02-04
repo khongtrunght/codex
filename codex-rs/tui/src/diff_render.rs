@@ -84,9 +84,9 @@ impl DiffLineType {
 
     /// Style for the sign character (+/-/space): gutter fg on diff background.
     #[allow(clippy::disallowed_methods)]
-    fn sign_style(self) -> Style {
+    fn sign_style(self, use_bg: bool) -> Style {
         let mut s = Style::default();
-        if let Some(bg) = self.bg_color() {
+        if use_bg && let Some(bg) = self.bg_color() {
             s = s.bg(bg);
         }
         if let Some(fg) = self.gutter_fg() {
@@ -333,6 +333,7 @@ fn render_change_with_path(
                         highlighted_line,
                         width,
                         line_number_width,
+                        false,
                     ));
                 }
             } else {
@@ -344,6 +345,7 @@ fn render_change_with_path(
                         raw,
                         width,
                         line_number_width,
+                        false,
                     ));
                 }
             }
@@ -357,6 +359,7 @@ fn render_change_with_path(
                     raw,
                     width,
                     line_number_width,
+                    true,
                 ));
             }
         }
@@ -366,6 +369,7 @@ fn render_change_with_path(
 
                 // Calculate max line number for gutter width
                 let mut max_line_number = 0;
+                let mut has_delete = false;
                 for h in patch.hunks() {
                     let mut old_ln = h.old_range().start();
                     let mut new_ln = h.new_range().start();
@@ -377,6 +381,7 @@ fn render_change_with_path(
                             }
                             diffy::Line::Delete(_) => {
                                 max_line_number = max_line_number.max(old_ln);
+                                has_delete = true;
                                 old_ln += 1;
                             }
                             diffy::Line::Context(_) => {
@@ -388,6 +393,7 @@ fn render_change_with_path(
                     }
                 }
                 let line_number_width = line_number_width(max_line_number);
+                let insert_bg = has_delete;
 
                 // Render each hunk
                 let mut is_first_hunk = true;
@@ -401,10 +407,10 @@ fn render_change_with_path(
 
                     if let Some(lang) = lang {
                         // Use syntax highlighting per-hunk (color-diff pattern)
-                        render_hunk_with_syntax(h, lang, width, line_number_width, out);
+                        render_hunk_with_syntax(h, lang, width, line_number_width, insert_bg, out);
                     } else {
                         // Fall back to plain rendering
-                        render_hunk_plain(h, width, line_number_width, out);
+                        render_hunk_plain(h, width, line_number_width, insert_bg, out);
                     }
                 }
             }
@@ -418,6 +424,7 @@ fn render_hunk_with_syntax(
     lang: &str,
     width: usize,
     line_number_width: usize,
+    insert_bg: bool,
     out: &mut Vec<RtLine<'static>>,
 ) {
     // Reconstruct old and new content from hunk (color-diff pattern)
@@ -446,6 +453,7 @@ fn render_hunk_with_syntax(
                     highlighted_line,
                     width,
                     line_number_width,
+                    true,
                 ));
                 old_idx += 1;
                 new_idx += 1;
@@ -463,6 +471,7 @@ fn render_hunk_with_syntax(
                     highlighted_line,
                     width,
                     line_number_width,
+                    true,
                 ));
                 old_idx += 1;
                 old_ln += 1;
@@ -478,6 +487,7 @@ fn render_hunk_with_syntax(
                     highlighted_line,
                     width,
                     line_number_width,
+                    insert_bg,
                 ));
                 new_idx += 1;
                 new_ln += 1;
@@ -491,6 +501,7 @@ fn render_hunk_plain(
     hunk: &diffy::Hunk<str>,
     width: usize,
     line_number_width: usize,
+    insert_bg: bool,
     out: &mut Vec<RtLine<'static>>,
 ) {
     let mut old_ln = hunk.old_range().start();
@@ -506,6 +517,7 @@ fn render_hunk_plain(
                     s,
                     width,
                     line_number_width,
+                    insert_bg,
                 ));
                 new_ln += 1;
             }
@@ -517,6 +529,7 @@ fn render_hunk_plain(
                     s,
                     width,
                     line_number_width,
+                    true,
                 ));
                 old_ln += 1;
             }
@@ -528,6 +541,7 @@ fn render_hunk_plain(
                     s,
                     width,
                     line_number_width,
+                    true,
                 ));
                 old_ln += 1;
                 new_ln += 1;
@@ -596,6 +610,7 @@ fn push_wrapped_diff_line(
     text: &str,
     width: usize,
     line_number_width: usize,
+    use_bg: bool,
 ) -> Vec<RtLine<'static>> {
     wrap_diff_line(
         line_number,
@@ -603,6 +618,7 @@ fn push_wrapped_diff_line(
         RtLine::from(text.to_string()),
         width,
         line_number_width,
+        use_bg,
     )
 }
 
@@ -614,6 +630,7 @@ fn push_wrapped_diff_line_highlighted(
     highlighted_line: RtLine<'static>,
     width: usize,
     line_number_width: usize,
+    use_bg: bool,
 ) -> Vec<RtLine<'static>> {
     wrap_diff_line(
         line_number,
@@ -621,6 +638,7 @@ fn push_wrapped_diff_line_highlighted(
         highlighted_line,
         width,
         line_number_width,
+        use_bg,
     )
 }
 
@@ -698,8 +716,12 @@ fn highlight_lines(content: &[String], lang: Option<&str>) -> Vec<RtLine<'static
 }
 
 /// Apply diff background color on top of a line, preserving existing styles.
-fn apply_diff_background(line: RtLine<'static>, diff_type: DiffLineType) -> RtLine<'static> {
-    let bg_color = diff_type.bg_color();
+fn apply_diff_background(
+    line: RtLine<'static>,
+    diff_type: DiffLineType,
+    use_bg: bool,
+) -> RtLine<'static> {
+    let bg_color = if use_bg { diff_type.bg_color() } else { None };
     let fg_color = diff_type.fg_color();
 
     if bg_color.is_none() && fg_color.is_none() {
@@ -735,16 +757,17 @@ fn wrap_diff_line(
     line: RtLine<'static>,
     width: usize,
     line_number_width: usize,
+    use_bg: bool,
 ) -> Vec<RtLine<'static>> {
     let gutter_width = line_number_width.max(1);
     let gutter = format!("{line_number:>gutter_width$} ");
 
-    let colored_line = apply_diff_background(line, kind);
+    let colored_line = apply_diff_background(line, kind, use_bg);
     let base_style = colored_line.style;
     let mut spans: Vec<RtSpan<'static>> = Vec::with_capacity(colored_line.spans.len() + 1);
     spans.push(RtSpan::styled(
         kind.sign_char().to_string(),
-        kind.sign_style(),
+        kind.sign_style(use_bg),
     ));
     spans.extend(colored_line.spans);
     let line_with_sign = RtLine::from(spans).style(base_style);
@@ -757,7 +780,7 @@ fn wrap_diff_line(
         )]),
         DiffLineType::Insert | DiffLineType::Delete => RtLine::from(vec![
             RtSpan::styled(format!("{:gutter_width$} ", ""), style_gutter()),
-            RtSpan::styled(" ".to_string(), kind.sign_style()),
+            RtSpan::styled(" ".to_string(), kind.sign_style(use_bg)),
         ]),
     };
 
@@ -841,8 +864,14 @@ mod tests {
         let long_line = "this is a very long line that should wrap across multiple terminal columns and continue";
 
         // Call the wrapping function directly so we can precisely control the width
-        let lines =
-            push_wrapped_diff_line(1, DiffLineType::Insert, long_line, 80, line_number_width(1));
+        let lines = push_wrapped_diff_line(
+            1,
+            DiffLineType::Insert,
+            long_line,
+            80,
+            line_number_width(1),
+            false,
+        );
 
         // Render into a small terminal to capture the visual layout
         snapshot_lines("wrap_behavior_insert", lines, 90, 8);
