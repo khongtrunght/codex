@@ -8,4 +8,3 @@ expression: terminal.backend()
 "  ctrl + g to edit in external editor        esc esc to edit previous message   "
 "  ctrl + c to exit                           shift + tab to change mode         "
 "                                             ctrl + t to view transcript        "
-"  ctrl + o to toggle verbose                                                    "

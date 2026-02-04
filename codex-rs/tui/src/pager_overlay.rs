@@ -30,8 +30,6 @@ use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
 use crate::tui;
 use crate::tui::TuiEvent;
-use crate::verbosity::DisplayVerbosity;
-use crate::verbosity::RenderContext;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
@@ -54,11 +52,8 @@ pub(crate) enum Overlay {
 }
 
 impl Overlay {
-    pub(crate) fn new_transcript(
-        cells: Vec<Arc<dyn HistoryCell>>,
-        verbosity: DisplayVerbosity,
-    ) -> Self {
-        Self::Transcript(TranscriptOverlay::new(cells, verbosity))
+    pub(crate) fn new_transcript(cells: Vec<Arc<dyn HistoryCell>>) -> Self {
+        Self::Transcript(TranscriptOverlay::new(cells))
     }
 
     pub(crate) fn new_static_with_lines(lines: Vec<Line<'static>>, title: String) -> Self {
@@ -411,19 +406,17 @@ impl Renderable for CachedRenderable {
 struct CellRenderable {
     cell: Arc<dyn HistoryCell>,
     style: Style,
-    verbosity: DisplayVerbosity,
 }
 
 impl Renderable for CellRenderable {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let ctx = RenderContext::with_verbosity(area.width, self.verbosity);
-        let p = Paragraph::new(Text::from(self.cell.transcript_lines(ctx))).style(self.style);
+        let p =
+            Paragraph::new(Text::from(self.cell.transcript_lines(area.width))).style(self.style);
         p.render(area, buf);
     }
 
     fn desired_height(&self, width: u16) -> u16 {
-        self.cell
-            .desired_transcript_height(RenderContext::with_verbosity(width, self.verbosity))
+        self.cell.desired_transcript_height(width)
     }
 }
 
@@ -439,7 +432,6 @@ pub(crate) struct TranscriptOverlay {
     /// Cache key for the render-only live tail appended after committed cells.
     live_tail_key: Option<LiveTailKey>,
     is_done: bool,
-    verbosity: DisplayVerbosity,
 }
 
 /// Cache key for the active-cell "live tail" appended to the transcript overlay.
@@ -455,7 +447,6 @@ struct LiveTailKey {
     is_stream_continuation: bool,
     /// Optional animation tick to refresh spinners/progress indicators.
     animation_tick: Option<u64>,
-    verbosity: DisplayVerbosity,
 }
 
 impl TranscriptOverlay {
@@ -463,13 +454,10 @@ impl TranscriptOverlay {
     ///
     /// This overlay does not own the "active cell"; callers may optionally append a live tail via
     /// `sync_live_tail` during draws to reflect in-flight activity.
-    pub(crate) fn new(
-        transcript_cells: Vec<Arc<dyn HistoryCell>>,
-        verbosity: DisplayVerbosity,
-    ) -> Self {
+    pub(crate) fn new(transcript_cells: Vec<Arc<dyn HistoryCell>>) -> Self {
         Self {
             view: PagerView::new(
-                Self::render_cells(&transcript_cells, None, verbosity),
+                Self::render_cells(&transcript_cells, None),
                 "T R A N S C R I P T".to_string(),
                 usize::MAX,
             ),
@@ -477,14 +465,12 @@ impl TranscriptOverlay {
             highlight_cell: None,
             live_tail_key: None,
             is_done: false,
-            verbosity,
         }
     }
 
     fn render_cells(
         cells: &[Arc<dyn HistoryCell>],
         highlight_cell: Option<usize>,
-        verbosity: DisplayVerbosity,
     ) -> Vec<Box<dyn Renderable>> {
         cells
             .iter()
@@ -499,13 +485,11 @@ impl TranscriptOverlay {
                         } else {
                             user_message_style()
                         },
-                        verbosity,
                     })) as Box<dyn Renderable>
                 } else {
                     Box::new(CachedRenderable::new(CellRenderable {
                         cell: c.clone(),
                         style: Style::default(),
-                        verbosity,
                     })) as Box<dyn Renderable>
                 };
                 if !c.is_stream_continuation() && i > 0 {
@@ -535,8 +519,7 @@ impl TranscriptOverlay {
         let had_prior_cells = !self.cells.is_empty();
         let tail_renderable = self.take_live_tail_renderable();
         self.cells.push(cell);
-        self.view.renderables =
-            Self::render_cells(&self.cells, self.highlight_cell, self.verbosity);
+        self.view.renderables = Self::render_cells(&self.cells, self.highlight_cell);
         if let Some(tail) = tail_renderable {
             let tail = if !had_prior_cells
                 && self
@@ -580,7 +563,6 @@ impl TranscriptOverlay {
             revision: key.revision,
             is_stream_continuation: key.is_stream_continuation,
             animation_tick: key.animation_tick,
-            verbosity: key.verbosity,
         });
 
         if self.live_tail_key == next_key {
@@ -614,16 +596,6 @@ impl TranscriptOverlay {
         }
     }
 
-    pub(crate) fn set_verbosity(&mut self, verbosity: DisplayVerbosity) {
-        if self.verbosity == verbosity {
-            return;
-        }
-        self.verbosity = verbosity;
-        self.take_live_tail_renderable();
-        self.live_tail_key = None;
-        self.rebuild_renderables();
-    }
-
     /// Returns whether the underlying pager view is currently pinned to the bottom.
     ///
     /// The `App` draw loop uses this to decide whether to schedule animation frames for the live
@@ -634,8 +606,7 @@ impl TranscriptOverlay {
 
     fn rebuild_renderables(&mut self) {
         let tail_renderable = self.take_live_tail_renderable();
-        self.view.renderables =
-            Self::render_cells(&self.cells, self.highlight_cell, self.verbosity);
+        self.view.renderables = Self::render_cells(&self.cells, self.highlight_cell);
         if let Some(tail) = tail_renderable {
             self.view.renderables.push(tail);
         }
@@ -826,11 +797,11 @@ mod tests {
     }
 
     impl crate::history_cell::HistoryCell for TestCell {
-        fn display_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
+        fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
             self.lines.clone()
         }
 
-        fn transcript_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
+        fn transcript_lines(&self, _width: u16) -> Vec<Line<'static>> {
             self.lines.clone()
         }
     }
@@ -846,12 +817,9 @@ mod tests {
 
     #[test]
     fn edit_prev_hint_is_visible() {
-        let mut overlay = TranscriptOverlay::new(
-            vec![Arc::new(TestCell {
-                lines: vec![Line::from("hello")],
-            })],
-            DisplayVerbosity::default(),
-        );
+        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
+            lines: vec![Line::from("hello")],
+        })]);
 
         // Render into a wide buffer so the footer hints aren't truncated.
         let area = Rect::new(0, 0, 120, 10);
@@ -867,12 +835,9 @@ mod tests {
 
     #[test]
     fn edit_next_hint_is_visible_when_highlighted() {
-        let mut overlay = TranscriptOverlay::new(
-            vec![Arc::new(TestCell {
-                lines: vec![Line::from("hello")],
-            })],
-            DisplayVerbosity::default(),
-        );
+        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
+            lines: vec![Line::from("hello")],
+        })]);
         overlay.set_highlight_cell(Some(0));
 
         // Render into a wide buffer so the footer hints aren't truncated.
@@ -890,20 +855,17 @@ mod tests {
     #[test]
     fn transcript_overlay_snapshot_basic() {
         // Prepare a transcript overlay with a few lines
-        let mut overlay = TranscriptOverlay::new(
-            vec![
-                Arc::new(TestCell {
-                    lines: vec![Line::from("alpha")],
-                }),
-                Arc::new(TestCell {
-                    lines: vec![Line::from("beta")],
-                }),
-                Arc::new(TestCell {
-                    lines: vec![Line::from("gamma")],
-                }),
-            ],
-            DisplayVerbosity::default(),
-        );
+        let mut overlay = TranscriptOverlay::new(vec![
+            Arc::new(TestCell {
+                lines: vec![Line::from("alpha")],
+            }),
+            Arc::new(TestCell {
+                lines: vec![Line::from("beta")],
+            }),
+            Arc::new(TestCell {
+                lines: vec![Line::from("gamma")],
+            }),
+        ]);
         let mut term = Terminal::new(TestBackend::new(40, 10)).expect("term");
         term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
             .expect("draw");
@@ -912,19 +874,15 @@ mod tests {
 
     #[test]
     fn transcript_overlay_renders_live_tail() {
-        let mut overlay = TranscriptOverlay::new(
-            vec![Arc::new(TestCell {
-                lines: vec![Line::from("alpha")],
-            })],
-            DisplayVerbosity::default(),
-        );
+        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
+            lines: vec![Line::from("alpha")],
+        })]);
         overlay.sync_live_tail(
             40,
             Some(ActiveCellTranscriptKey {
                 revision: 1,
                 is_stream_continuation: false,
                 animation_tick: None,
-                verbosity: DisplayVerbosity::default(),
             }),
             |_| Some(vec![Line::from("tail")]),
         );
@@ -937,19 +895,15 @@ mod tests {
 
     #[test]
     fn transcript_overlay_sync_live_tail_is_noop_for_identical_key() {
-        let mut overlay = TranscriptOverlay::new(
-            vec![Arc::new(TestCell {
-                lines: vec![Line::from("alpha")],
-            })],
-            DisplayVerbosity::default(),
-        );
+        let mut overlay = TranscriptOverlay::new(vec![Arc::new(TestCell {
+            lines: vec![Line::from("alpha")],
+        })]);
 
         let calls = std::cell::Cell::new(0usize);
         let key = ActiveCellTranscriptKey {
             revision: 1,
             is_stream_continuation: false,
             animation_tick: None,
-            verbosity: DisplayVerbosity::default(),
         };
 
         overlay.sync_live_tail(40, Some(key), |_| {
@@ -1034,7 +988,7 @@ mod tests {
         let exec_cell: Arc<dyn HistoryCell> = Arc::new(exec_cell);
         cells.push(exec_cell);
 
-        let mut overlay = TranscriptOverlay::new(cells, DisplayVerbosity::default());
+        let mut overlay = TranscriptOverlay::new(cells);
         let area = Rect::new(0, 0, 80, 12);
         let mut buf = Buffer::empty(area);
 
@@ -1056,7 +1010,6 @@ mod tests {
                     }) as Arc<dyn HistoryCell>
                 })
                 .collect(),
-            DisplayVerbosity::default(),
         );
         let mut term = Terminal::new(TestBackend::new(40, 12)).expect("term");
         term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
@@ -1084,7 +1037,6 @@ mod tests {
                     }) as Arc<dyn HistoryCell>
                 })
                 .collect(),
-            DisplayVerbosity::default(),
         );
         let mut term = Terminal::new(TestBackend::new(40, 12)).expect("term");
         term.draw(|f| overlay.render(f.area(), f.buffer_mut()))
@@ -1148,7 +1100,6 @@ mod tests {
                     }) as Arc<dyn HistoryCell>
                 })
                 .collect(),
-            DisplayVerbosity::default(),
         );
         let area = Rect::new(0, 0, 40, 15);
 

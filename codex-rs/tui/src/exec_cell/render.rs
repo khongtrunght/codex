@@ -25,7 +25,7 @@ use textwrap::WordSplitter;
 use unicode_width::UnicodeWidthStr;
 
 pub(crate) const TOOL_CALL_MAX_LINES: usize = 5;
-/// Max lines shown in verbose mode (Ctrl+O toggle).
+/// Max lines shown in verbose transcript rendering.
 pub(crate) const TOOL_CALL_VERBOSE_MAX_LINES: usize = 100;
 const USER_SHELL_TOOL_CALL_MAX_LINES: usize = 50;
 const MAX_INTERACTION_PREVIEW_CHARS: usize = 80;
@@ -196,21 +196,21 @@ pub(crate) fn spinner(start_time: Option<Instant>, animations_enabled: bool) -> 
 }
 
 impl HistoryCell for ExecCell {
-    fn display_lines(&self, ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         if self.is_exploring_cell() {
-            self.exploring_display_lines(ctx.width)
+            self.exploring_display_lines(width)
         } else {
-            self.command_display_lines(ctx.width, ctx.verbosity.max_output_lines())
+            self.command_display_lines(width, TOOL_CALL_MAX_LINES)
         }
     }
 
-    fn desired_transcript_height(&self, ctx: crate::verbosity::RenderContext) -> u16 {
-        self.transcript_lines_impl(ctx.width, ctx.verbosity.max_output_lines())
+    fn desired_transcript_height(&self, width: u16) -> u16 {
+        self.transcript_lines_impl(width, TOOL_CALL_VERBOSE_MAX_LINES)
             .len() as u16
     }
 
-    fn transcript_lines(&self, ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
-        self.transcript_lines_impl(ctx.width, ctx.verbosity.max_output_lines())
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.transcript_lines_impl(width, TOOL_CALL_VERBOSE_MAX_LINES)
     }
 }
 
@@ -539,15 +539,18 @@ impl ExecCell {
                 if !call.is_unified_exec_interaction() {
                     let wrap_width = width.max(1) as usize;
                     let wrap_opts = RtOptions::new(wrap_width);
-                    let mut output_line_count = 0;
-                    for unwrapped in output.formatted_output.lines().map(ansi_escape_line) {
+                    for (output_line_count, unwrapped) in output
+                        .formatted_output
+                        .lines()
+                        .map(ansi_escape_line)
+                        .enumerate()
+                    {
                         if output_line_count >= max_output_lines {
                             lines.push(Line::from("...".dim()));
                             break;
                         }
                         let wrapped = word_wrap_line(&unwrapped, wrap_opts.clone());
                         push_owned_lines(&wrapped, &mut lines);
-                        output_line_count += 1;
                     }
                 }
                 let duration = call

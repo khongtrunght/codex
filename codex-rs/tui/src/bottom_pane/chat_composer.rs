@@ -105,6 +105,7 @@ use super::footer::toggle_shortcut_mode;
 use super::paste_burst::CharDecision;
 use super::paste_burst::PasteBurst;
 use super::skill_popup::SkillPopup;
+use super::slash_commands;
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::bottom_pane::prompt_args::expand_custom_prompt;
 use crate::bottom_pane::prompt_args::expand_if_numeric_with_positional_args;
@@ -116,7 +117,6 @@ use crate::render::Insets;
 use crate::render::RectExt;
 use crate::render::renderable::Renderable;
 use crate::slash_command::SlashCommand;
-use crate::slash_command::built_in_slash_commands;
 use crate::style::user_message_style;
 use codex_common::fuzzy_match::fuzzy_match;
 use codex_protocol::config_types::CollaborationMode;
@@ -1631,9 +1631,10 @@ impl ChatComposer {
         if let Some((name, _rest, _rest_offset)) = parse_slash_name(&text) {
             let treat_as_plain_text = input_starts_with_space || name.contains('/');
             if !treat_as_plain_text {
-                let is_builtin =
-                    Self::built_in_slash_commands_for_input(self.collaboration_modes_enabled)
-                        .any(|(command_name, _)| command_name == name);
+                let is_builtin = self
+                    .built_in_slash_commands_for_input()
+                    .iter()
+                    .any(|(command_name, _)| *command_name == name);
                 let prompt_prefix = format!("{PROMPTS_CMD_PREFIX}:");
                 let is_known_prompt = name
                     .strip_prefix(&prompt_prefix)
@@ -1790,9 +1791,10 @@ impl ChatComposer {
         let first_line = self.textarea.text().lines().next().unwrap_or("");
         if let Some((name, rest, _rest_offset)) = parse_slash_name(first_line)
             && rest.is_empty()
-            && let Some((_n, cmd)) =
-                Self::built_in_slash_commands_for_input(self.collaboration_modes_enabled)
-                    .find(|(n, _)| *n == name)
+            && let Some((_n, cmd)) = self
+                .built_in_slash_commands_for_input()
+                .into_iter()
+                .find(|(n, _)| *n == name)
         {
             self.textarea.set_text_clearing_elements("");
             Some(InputResult::Command(cmd))
@@ -1812,9 +1814,10 @@ impl ChatComposer {
             if let Some((name, rest, _rest_offset)) = parse_slash_name(&text)
                 && !rest.is_empty()
                 && !name.contains('/')
-                && let Some((_n, cmd)) =
-                    Self::built_in_slash_commands_for_input(self.collaboration_modes_enabled)
-                        .find(|(command_name, _)| *command_name == name)
+                && let Some((_n, cmd)) = self
+                    .built_in_slash_commands_for_input()
+                    .into_iter()
+                    .find(|(command_name, _)| *command_name == name)
                 && matches!(
                     cmd,
                     SlashCommand::Review | SlashCommand::Enhance | SlashCommand::Compact
@@ -2274,9 +2277,10 @@ impl ChatComposer {
             return rest_after_name.is_empty();
         }
 
-        let builtin_match =
-            Self::built_in_slash_commands_for_input(self.collaboration_modes_enabled)
-                .any(|(cmd_name, _)| fuzzy_match(cmd_name, name).is_some());
+        let builtin_match = self
+            .built_in_slash_commands_for_input()
+            .iter()
+            .any(|(cmd_name, _)| fuzzy_match(cmd_name, name).is_some());
 
         if builtin_match {
             return true;
@@ -2344,14 +2348,18 @@ impl ChatComposer {
         }
     }
 
-    fn built_in_slash_commands_for_input(
-        collaboration_modes_enabled: bool,
-    ) -> impl Iterator<Item = (&'static str, SlashCommand)> {
+    fn built_in_slash_commands_for_input(&self) -> Vec<(&'static str, SlashCommand)> {
         let allow_elevate_sandbox = windows_degraded_sandbox_active();
-        built_in_slash_commands()
-            .into_iter()
-            .filter(move |(_, cmd)| allow_elevate_sandbox || *cmd != SlashCommand::ElevateSandbox)
-            .filter(move |(_, cmd)| collaboration_modes_enabled || *cmd != SlashCommand::Collab)
+        let mut builtins = slash_commands::builtins_for_input(
+            self.collaboration_modes_enabled,
+            false,
+            false,
+            allow_elevate_sandbox,
+        );
+        if !self.skills_enabled() {
+            builtins.retain(|(_, cmd)| *cmd != SlashCommand::Skills);
+        }
+        builtins
     }
 
     pub(crate) fn set_custom_prompts(&mut self, prompts: Vec<CustomPrompt>) {
@@ -5368,7 +5376,7 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             if let AppEvent::InsertHistoryCell(cell) = event {
                 let message = cell
-                    .display_lines(crate::verbosity::RenderContext::new(80))
+                    .display_lines(80)
                     .into_iter()
                     .map(|line| line.to_string())
                     .collect::<Vec<_>>()
@@ -5416,7 +5424,7 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             if let AppEvent::InsertHistoryCell(cell) = event {
                 let message = cell
-                    .display_lines(crate::verbosity::RenderContext::new(80))
+                    .display_lines(80)
                     .into_iter()
                     .map(|line| line.to_string())
                     .collect::<Vec<_>>()

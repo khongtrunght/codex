@@ -560,14 +560,6 @@ impl App {
             paused_codex_events: VecDeque::new(),
         };
 
-        {
-            tui.clear_terminal_and_scrollback()?;
-            let size = tui.terminal.size()?;
-            let height = app.chat_widget.desired_height(size.width);
-            tui.terminal
-                .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, height));
-        }
-
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
         #[cfg(target_os = "windows")]
         {
@@ -862,11 +854,7 @@ impl App {
                     tui.frame_requester().schedule_frame();
                 }
                 self.transcript_cells.push(cell.clone());
-                let mut display =
-                    cell.display_lines(crate::verbosity::RenderContext::with_verbosity(
-                        tui.terminal.last_known_screen_size.width,
-                        self.chat_widget.verbosity(),
-                    ));
+                let mut display = cell.display_lines(tui.terminal.last_known_screen_size.width);
                 if !display.is_empty() {
                     // Only insert a separating blank line for new cells that are not
                     // part of an ongoing stream. Streaming continuations should not
@@ -906,22 +894,6 @@ impl App {
             }
             AppEvent::CommitTick => {
                 self.chat_widget.on_commit_tick();
-            }
-            AppEvent::ToggleVerbosity(verbosity) => {
-                if let Some(Overlay::Transcript(t)) = &mut self.overlay {
-                    t.set_verbosity(verbosity);
-                    tui.frame_requester().schedule_frame();
-                } else {
-                    tui.clear_terminal_and_scrollback()?;
-                    self.deferred_history_lines.clear();
-                    let size = tui.terminal.size()?;
-                    let height = self.chat_widget.desired_height(size.width);
-                    tui.terminal
-                        .set_viewport_area(ratatui::layout::Rect::new(0, 0, size.width, height));
-                    self.render_transcript_once(tui);
-                    self.has_emitted_history_lines = !self.transcript_cells.is_empty();
-                    tui.frame_requester().schedule_frame();
-                }
             }
             AppEvent::CodexEvent(event) => {
                 if !self.external_approval_routes.is_empty() {
@@ -1441,6 +1413,36 @@ impl App {
             AppEvent::OpenApprovalsPopup => {
                 self.chat_widget.open_approvals_popup();
             }
+            AppEvent::OpenSkillsList => {
+                self.chat_widget.open_skills_list();
+            }
+            AppEvent::OpenManageSkillsPopup => {
+                self.chat_widget.open_manage_skills_popup();
+            }
+            AppEvent::SetSkillEnabled { path, enabled } => {
+                let edits = [ConfigEdit::SetSkillConfig {
+                    path: path.clone(),
+                    enabled,
+                }];
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits(edits)
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        self.chat_widget.update_skill_enabled(path.clone(), enabled);
+                    }
+                    Err(err) => {
+                        let path_display = path.display();
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to update skill config for {path_display}: {err}"
+                        ));
+                    }
+                }
+            }
+            AppEvent::ManageSkillsClosed => {
+                self.chat_widget.handle_manage_skills_closed();
+            }
             AppEvent::OpenReviewBranchPicker(cwd) => {
                 self.chat_widget.show_review_branch_picker(&cwd).await;
             }
@@ -1733,10 +1735,7 @@ impl App {
             } => {
                 // Enter alternate screen and set viewport to full size.
                 let _ = tui.enter_alt_screen();
-                self.overlay = Some(Overlay::new_transcript(
-                    self.transcript_cells.clone(),
-                    self.chat_widget.verbosity(),
-                ));
+                self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
                 tui.frame_requester().schedule_frame();
             }
             KeyEvent {

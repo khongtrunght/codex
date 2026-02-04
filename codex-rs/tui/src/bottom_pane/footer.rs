@@ -239,7 +239,6 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let mut edit_previous = Line::from("");
     let mut quit = Line::from("");
     let mut show_transcript = Line::from("");
-    let mut toggle_verbose = Line::from("");
     let mut change_mode = Line::from("");
 
     for descriptor in SHORTCUTS {
@@ -255,7 +254,6 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
                 ShortcutId::EditPrevious => edit_previous = text,
                 ShortcutId::Quit => quit = text,
                 ShortcutId::ShowTranscript => show_transcript = text,
-                ShortcutId::ToggleVerbose => toggle_verbose = text,
                 ShortcutId::ChangeMode => change_mode = text,
             }
         }
@@ -277,7 +275,6 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     }
     ordered.push(Line::from(""));
     ordered.push(show_transcript);
-    ordered.push(toggle_verbose);
 
     build_columns(ordered)
 }
@@ -370,7 +367,6 @@ enum ShortcutId {
     EditPrevious,
     Quit,
     ShowTranscript,
-    ToggleVerbose,
     ChangeMode,
 }
 
@@ -544,15 +540,6 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
         }],
         prefix: "",
         label: " to view transcript",
-    },
-    ShortcutDescriptor {
-        id: ShortcutId::ToggleVerbose,
-        bindings: &[ShortcutBinding {
-            key: key_hint::ctrl(KeyCode::Char('o')),
-            condition: DisplayCondition::Always,
-        }],
-        prefix: "",
-        label: " to toggle verbose",
     },
     ShortcutDescriptor {
         id: ShortcutId::ChangeMode,

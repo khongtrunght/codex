@@ -14,14 +14,23 @@
 //! time inside the relevant history cell.
 
 use std::collections::VecDeque;
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::markdown_render::MarkdownLogicalLine;
 use crate::markdown_stream::MarkdownStreamCollector;
+pub(crate) mod chunking;
+pub(crate) mod commit_tick;
 pub(crate) mod controller;
+
+struct QueuedLine {
+    line: MarkdownLogicalLine,
+    enqueued_at: Instant,
+}
 
 pub(crate) struct StreamState {
     pub(crate) collector: MarkdownStreamCollector,
-    queued_lines: VecDeque<MarkdownLogicalLine>,
+    queued_lines: VecDeque<QueuedLine>,
     pub(crate) has_seen_delta: bool,
 }
 
@@ -42,18 +51,76 @@ impl StreamState {
     }
     /// Pop at most one queued logical line (for commit-tick animation).
     pub(crate) fn step(&mut self) -> Vec<MarkdownLogicalLine> {
-        self.queued_lines.pop_front().into_iter().collect()
+        self.queued_lines
+            .pop_front()
+            .map(|queued| queued.line)
+            .into_iter()
+            .collect()
+    }
+    /// Drain up to `max_lines` queued logical lines.
+    pub(crate) fn drain_n(&mut self, max_lines: usize) -> Vec<MarkdownLogicalLine> {
+        let end = max_lines.min(self.queued_lines.len());
+        self.queued_lines
+            .drain(..end)
+            .map(|queued| queued.line)
+            .collect()
     }
     /// Drain all queued logical lines (used on finalize).
     pub(crate) fn drain_all(&mut self) -> Vec<MarkdownLogicalLine> {
-        self.queued_lines.drain(..).collect()
+        self.queued_lines
+            .drain(..)
+            .map(|queued| queued.line)
+            .collect()
     }
     /// True when there is no queued output waiting to be emitted by commit ticks.
     pub(crate) fn is_idle(&self) -> bool {
         self.queued_lines.is_empty()
     }
+    /// Return the current queue depth.
+    pub(crate) fn queued_len(&self) -> usize {
+        self.queued_lines.len()
+    }
+    /// Return the age of the oldest queued line.
+    pub(crate) fn oldest_queued_age(&self, now: Instant) -> Option<Duration> {
+        self.queued_lines
+            .front()
+            .map(|queued| now.saturating_duration_since(queued.enqueued_at))
+    }
     /// Enqueue newly committed logical lines.
     pub(crate) fn enqueue(&mut self, lines: Vec<MarkdownLogicalLine>) {
-        self.queued_lines.extend(lines);
+        let now = Instant::now();
+        self.queued_lines
+            .extend(lines.into_iter().map(|line| QueuedLine {
+                line,
+                enqueued_at: now,
+            }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use ratatui::style::Style;
+    use ratatui::text::Line;
+
+    fn logical_line(text: &str) -> MarkdownLogicalLine {
+        MarkdownLogicalLine {
+            content: Line::from(text.to_string()),
+            initial_indent: Line::from(""),
+            subsequent_indent: Line::from(""),
+            line_style: Style::default(),
+            is_preformatted: false,
+        }
+    }
+
+    #[test]
+    fn drain_n_clamps_to_available_lines() {
+        let mut state = StreamState::new();
+        state.enqueue(vec![logical_line("one")]);
+
+        let drained = state.drain_n(8);
+        assert_eq!(drained.len(), 1);
+        assert!(state.is_idle());
     }
 }

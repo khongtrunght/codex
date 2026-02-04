@@ -4,8 +4,6 @@ use super::model::SubAgentStatus;
 use crate::exec_cell::spinner;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::HistoryCell;
-use crate::verbosity::DisplayVerbosity;
-use crate::verbosity::RenderContext;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SubAgentBeginEvent;
@@ -319,12 +317,12 @@ fn format_duration(duration: std::time::Duration) -> String {
 }
 
 impl HistoryCell for SubAgentCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.render_with_verbosity(ctx.width, ctx.verbosity == DisplayVerbosity::Verbose)
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_with_verbosity(width, false)
     }
 
-    fn transcript_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.display_lines(ctx)
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_with_verbosity(width, true)
     }
 
     fn transcript_animation_tick(&self) -> Option<u64> {
@@ -369,26 +367,18 @@ impl SubAgentCell {
             SubAgentStatus::Error(_) => "•".red().bold(),
         };
 
-        // Hint text for expand/collapse
-        let hint = if verbose {
-            "(ctrl+o to collapse)"
-        } else {
-            "(ctrl+o to expand)"
-        };
-
         // Truncate description to fit
         let desc_width = (width as usize).saturating_sub(30).max(20);
         let truncated_desc = truncate_to_n_chars(&agent.description, desc_width);
 
-        // Header: "• AgentType(Description) (ctrl+o to expand)"
+        // Header: "• AgentType(Description)"
         let header: Line<'static> = vec![
             status_icon,
             " ".into(),
             agent.agent_type.clone().bold(),
             "(".into(),
             truncated_desc.dim(),
-            ") ".into(),
-            hint.dim(),
+            ")".into(),
         ]
         .into();
         lines.push(header);
@@ -552,25 +542,18 @@ impl SubAgentCell {
             "•".green().bold()
         };
 
-        // Hint text
-        let hint = if verbose {
-            "(ctrl+o to collapse)"
-        } else {
-            "(ctrl+o to expand)"
-        };
-
         // Status text
         let status_text = if running_count > 0 {
             if running_count == total {
-                format!("Running {total} agents... {hint}")
+                format!("Running {total} agents...")
             } else {
-                format!("Running {running_count} of {total} agents... {hint}")
+                format!("Running {running_count} of {total} agents...")
             }
         } else if error_count > 0 {
             let completed = total - error_count;
-            format!("{total} agents: {completed} completed, {error_count} failed {hint}")
+            format!("{total} agents: {completed} completed, {error_count} failed")
         } else {
-            format!("{total} agents completed {hint}")
+            format!("{total} agents completed")
         };
 
         lines.push(Line::from(vec![bullet, " ".into(), status_text.into()]));

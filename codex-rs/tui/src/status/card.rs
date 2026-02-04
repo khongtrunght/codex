@@ -344,8 +344,7 @@ impl StatusHistoryCell {
 }
 
 impl HistoryCell for StatusHistoryCell {
-    fn display_lines(&self, ctx: crate::verbosity::RenderContext) -> Vec<Line<'static>> {
-        let width = ctx.width;
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(vec![
             Span::from(format!("{}>_ ", FieldFormatter::INDENT)).dim(),

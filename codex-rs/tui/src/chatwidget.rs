@@ -78,7 +78,6 @@ use codex_core::protocol::PatchApplyBeginEvent;
 use codex_core::protocol::RateLimitSnapshot;
 use codex_core::protocol::ReviewRequest;
 use codex_core::protocol::ReviewTarget;
-use codex_core::protocol::SkillsListEntry;
 use codex_core::protocol::StreamErrorEvent;
 use codex_core::protocol::SubAgentBeginEvent;
 use codex_core::protocol::SubAgentCompleteEvent;
@@ -96,7 +95,6 @@ use codex_core::protocol::ViewImageToolCallEvent;
 use codex_core::protocol::WarningEvent;
 use codex_core::protocol::WebSearchBeginEvent;
 use codex_core::protocol::WebSearchEndEvent;
-use codex_core::skills::model::SkillInterface;
 use codex_core::skills::model::SkillMetadata;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
@@ -176,8 +174,6 @@ use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
-use crate::verbosity::DisplayVerbosity;
-use crate::verbosity::RenderContext;
 mod interrupts;
 use self::interrupts::InterruptManager;
 mod agent;
@@ -185,6 +181,13 @@ use self::agent::spawn_agent;
 use self::agent::spawn_agent_from_existing;
 mod session_header;
 use self::session_header::SessionHeader;
+mod skills;
+use self::skills::SkillState;
+use self::skills::collect_tool_mentions;
+use self::skills::find_skill_mentions_with_tool_mentions;
+use crate::streaming::chunking::AdaptiveChunkingPolicy;
+use crate::streaming::commit_tick::CommitTickScope;
+use crate::streaming::commit_tick::run_commit_tick;
 use crate::streaming::controller::StreamController;
 use std::path::Path;
 
@@ -432,6 +435,7 @@ pub(crate) struct ChatWidget {
     rate_limit_warnings: RateLimitWarningState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
     rate_limit_poller: Option<JoinHandle<()>>,
+    adaptive_chunking: AdaptiveChunkingPolicy,
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
     running_commands: HashMap<String, RunningCommand>,
@@ -443,6 +447,8 @@ pub(crate) struct ChatWidget {
     /// mapping was established.  Flushed in `on_subagent_end`.
     pending_subagent_events: HashMap<ThreadId, Vec<EventMsg>>,
     suppressed_exec_calls: HashSet<String>,
+    skills_all: Vec<SkillState>,
+    skills_initial_state: Option<HashMap<PathBuf, bool>>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     unified_exec_wait_streak: Option<UnifiedExecWaitStreak>,
     task_complete_pending: bool,
@@ -504,7 +510,6 @@ pub(crate) struct ChatWidget {
     // show an empty divider. It is reset when the separator is emitted.
     had_work_activity: bool,
 
-    verbosity: DisplayVerbosity,
     last_rendered_width: std::cell::Cell<Option<usize>>,
     // Feedback sink for /feedback
     feedback: codex_feedback::CodexFeedback,
@@ -535,7 +540,6 @@ pub(crate) struct ActiveCellTranscriptKey {
     /// are unchanged, which is how shimmer/spinner visuals can animate in the overlay without any
     /// underlying data change.
     pub(crate) animation_tick: Option<u64>,
-    pub(crate) verbosity: DisplayVerbosity,
 }
 
 pub(crate) struct UserMessage {
@@ -698,6 +702,7 @@ impl ChatWidget {
         {
             self.add_boxed_history(cell);
         }
+        self.adaptive_chunking.reset();
     }
 
     /// Update the status indicator header and details.
@@ -765,11 +770,6 @@ impl ChatWidget {
 
     fn set_skills(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.bottom_pane.set_skills(skills);
-    }
-
-    fn set_skills_from_response(&mut self, response: &ListSkillsResponseEvent) {
-        let skills = skills_for_cwd(&self.config.cwd, &response.skills);
-        self.set_skills(Some(skills));
     }
 
     pub(crate) fn open_feedback_note(
@@ -865,6 +865,7 @@ impl ChatWidget {
 
     fn on_task_started(&mut self) {
         self.agent_turn_running = true;
+        self.adaptive_chunking.reset();
         self.bottom_pane.clear_quit_shortcut_hint();
         self.quit_shortcut_expires_at = None;
         self.quit_shortcut_key = None;
@@ -1027,6 +1028,7 @@ impl ChatWidget {
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
         self.clear_unified_exec_processes();
+        self.adaptive_chunking.reset();
         self.stream_controller = None;
         self.maybe_show_pending_rate_limit_prompt();
     }
@@ -1522,18 +1524,41 @@ impl ChatWidget {
         self.set_status(message, additional_details);
     }
 
-    /// Periodic tick to commit at most one queued line to history with a small delay,
-    /// animating the output.
+    /// Periodic tick for stream commits. In smooth mode this preserves one-line pacing, while
+    /// catch-up mode drains larger batches to reduce queue lag.
     pub(crate) fn on_commit_tick(&mut self) {
-        if let Some(controller) = self.stream_controller.as_mut() {
-            let (cell, is_idle) = controller.on_commit_tick();
-            if let Some(cell) = cell {
-                self.bottom_pane.hide_status_indicator();
-                self.add_boxed_history(cell);
-            }
-            if is_idle {
-                self.app_event_tx.send(AppEvent::StopCommitAnimation);
-            }
+        self.run_commit_tick();
+    }
+
+    /// Runs a regular periodic commit tick.
+    fn run_commit_tick(&mut self) {
+        self.run_commit_tick_with_scope(CommitTickScope::AnyMode);
+    }
+
+    /// Runs an opportunistic commit tick only if catch-up mode is active.
+    fn run_catch_up_commit_tick(&mut self) {
+        self.run_commit_tick_with_scope(CommitTickScope::CatchUpOnly);
+    }
+
+    /// Runs a commit tick for the current stream queue snapshot.
+    ///
+    /// `scope` controls whether this call may commit in smooth mode or only when catch-up
+    /// is currently active.
+    fn run_commit_tick_with_scope(&mut self, scope: CommitTickScope) {
+        let now = Instant::now();
+        let outcome = run_commit_tick(
+            &mut self.adaptive_chunking,
+            self.stream_controller.as_mut(),
+            scope,
+            now,
+        );
+        for cell in outcome.cells {
+            self.bottom_pane.hide_status_indicator();
+            self.add_boxed_history(cell);
+        }
+
+        if outcome.has_controller && outcome.all_idle {
+            self.app_event_tx.send(AppEvent::StopCommitAnimation);
         }
     }
 
@@ -1594,6 +1619,7 @@ impl ChatWidget {
             && controller.push(&delta)
         {
             self.app_event_tx.send(AppEvent::StartCommitAnimation);
+            self.run_catch_up_commit_tick();
         }
         self.request_redraw();
     }
@@ -1902,12 +1928,15 @@ impl ChatWidget {
             rate_limit_warnings: RateLimitWarningState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             rate_limit_poller: None,
+            adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
             running_commands: HashMap::new(),
             subagents: HashMap::new(),
             thread_to_call_id: HashMap::new(),
             pending_subagent_events: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
+            skills_all: Vec::new(),
+            skills_initial_state: None,
             last_unified_wait: None,
             unified_exec_wait_streak: None,
             task_complete_pending: false,
@@ -1931,7 +1960,6 @@ impl ChatWidget {
             pre_review_token_info: None,
             needs_final_message_separator: false,
             had_work_activity: false,
-            verbosity: DisplayVerbosity::default(),
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
@@ -2016,12 +2044,15 @@ impl ChatWidget {
             rate_limit_warnings: RateLimitWarningState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             rate_limit_poller: None,
+            adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
             running_commands: HashMap::new(),
             subagents: HashMap::new(),
             thread_to_call_id: HashMap::new(),
             pending_subagent_events: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
+            skills_all: Vec::new(),
+            skills_initial_state: None,
             last_unified_wait: None,
             unified_exec_wait_streak: None,
             task_complete_pending: false,
@@ -2045,7 +2076,6 @@ impl ChatWidget {
             pre_review_token_info: None,
             needs_final_message_separator: false,
             had_work_activity: false,
-            verbosity: DisplayVerbosity::default(),
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
@@ -2092,15 +2122,6 @@ impl ChatWidget {
                 self.bottom_pane.clear_quit_shortcut_hint();
                 self.quit_shortcut_expires_at = None;
                 self.quit_shortcut_key = None;
-            }
-            KeyEvent {
-                code: KeyCode::Char(c),
-                modifiers,
-                kind: KeyEventKind::Press,
-                ..
-            } if modifiers.contains(KeyModifiers::CONTROL) && c.eq_ignore_ascii_case(&'o') => {
-                self.toggle_verbosity();
-                return;
             }
             KeyEvent {
                 code: KeyCode::Char(c),
@@ -2397,7 +2418,7 @@ impl ChatWidget {
                 self.insert_str("@");
             }
             SlashCommand::Skills => {
-                self.insert_str("$");
+                self.open_skills_menu();
             }
             SlashCommand::Status => {
                 self.add_status_output();
@@ -2545,9 +2566,7 @@ impl ChatWidget {
                 .as_ref()
                 .is_some_and(|c| c.as_any().is::<history_cell::SessionHeaderHistoryCell>());
 
-        if !keep_placeholder_header_active
-            && !cell.display_lines(RenderContext::new(u16::MAX)).is_empty()
-        {
+        if !keep_placeholder_header_active && !cell.display_lines(u16::MAX).is_empty() {
             // Only break exec grouping if the cell renders visible lines.
             self.flush_active_cell();
             self.needs_final_message_separator = true;
@@ -2618,7 +2637,9 @@ impl ChatWidget {
         }
 
         if let Some(skills) = self.bottom_pane.skills() {
-            let skill_mentions = find_skill_mentions(&text, skills);
+            let mention_paths = HashMap::new();
+            let mentions = collect_tool_mentions(&text, &mention_paths);
+            let skill_mentions = find_skill_mentions_with_tool_mentions(&mentions, skills);
             for skill in skill_mentions {
                 items.push(UserInput::Skill {
                     name: skill.name.clone(),
@@ -3081,18 +3102,6 @@ impl ChatWidget {
 
     fn request_redraw(&mut self) {
         self.frame_requester.schedule_frame();
-    }
-
-    pub(crate) fn verbosity(&self) -> DisplayVerbosity {
-        self.verbosity
-    }
-
-    pub(crate) fn toggle_verbosity(&mut self) {
-        self.verbosity = self.verbosity.toggle();
-        self.bump_active_cell_revision();
-        self.request_redraw();
-        self.app_event_tx
-            .send(AppEvent::ToggleVerbosity(self.verbosity));
     }
 
     fn bump_active_cell_revision(&mut self) {
@@ -5016,7 +5025,6 @@ impl ChatWidget {
             revision: self.active_cell_revision,
             is_stream_continuation: cell.is_stream_continuation(),
             animation_tick: cell.transcript_animation_tick(),
-            verbosity: self.verbosity,
         })
     }
 
@@ -5028,8 +5036,7 @@ impl ChatWidget {
     /// mismatches between the main viewport and the transcript overlay.
     pub(crate) fn active_cell_transcript_lines(&self, width: u16) -> Option<Vec<Line<'static>>> {
         let cell = self.active_cell.as_ref()?;
-        let ctx = RenderContext::with_verbosity(width, self.verbosity);
-        let lines = cell.transcript_lines(ctx);
+        let lines = cell.transcript_lines(width);
         (!lines.is_empty()).then_some(lines)
     }
 
@@ -5059,11 +5066,8 @@ impl ChatWidget {
         if !self.subagents.is_empty() {
             flex.push(
                 0,
-                RenderableItem::Owned(Box::new(RunningSubagentsRenderable::new(
-                    &self.subagents,
-                    self.verbosity,
-                )))
-                .inset(Insets::tlbr(1, 0, 0, 0)),
+                RenderableItem::Owned(Box::new(RunningSubagentsRenderable::new(&self.subagents)))
+                    .inset(Insets::tlbr(1, 0, 0, 0)),
             );
         }
         flex.push(
@@ -5076,16 +5080,12 @@ impl ChatWidget {
 
 struct RunningSubagentsRenderable<'a> {
     cells: Vec<&'a agent_cell::SubAgentCell>,
-    verbosity: crate::verbosity::DisplayVerbosity,
 }
 
 impl<'a> RunningSubagentsRenderable<'a> {
-    fn new(
-        subagents: &'a HashMap<String, agent_cell::SubAgentCell>,
-        verbosity: crate::verbosity::DisplayVerbosity,
-    ) -> Self {
+    fn new(subagents: &'a HashMap<String, agent_cell::SubAgentCell>) -> Self {
         let cells: Vec<_> = subagents.values().collect();
-        Self { cells, verbosity }
+        Self { cells }
     }
 }
 
@@ -5094,13 +5094,12 @@ impl Renderable for RunningSubagentsRenderable<'_> {
         if self.cells.is_empty() || area.height == 0 {
             return;
         }
-        let ctx = crate::verbosity::RenderContext::with_verbosity(area.width, self.verbosity);
         let mut lines: Vec<Line<'static>> = Vec::new();
         for (i, cell) in self.cells.iter().enumerate() {
             if i > 0 {
                 lines.push(Line::default());
             }
-            lines.extend(cell.display_lines(ctx));
+            lines.extend(cell.display_lines(area.width));
         }
         Paragraph::new(Text::from(lines)).render(area, buf);
     }
@@ -5109,13 +5108,12 @@ impl Renderable for RunningSubagentsRenderable<'_> {
         if self.cells.is_empty() {
             return 0;
         }
-        let ctx = crate::verbosity::RenderContext::with_verbosity(width, self.verbosity);
         let mut height: u16 = 0;
         for (i, cell) in self.cells.iter().enumerate() {
             if i > 0 {
                 height = height.saturating_add(1);
             }
-            height = height.saturating_add(cell.desired_height(ctx));
+            height = height.saturating_add(cell.desired_height(width));
         }
         height
     }
@@ -5306,50 +5304,6 @@ pub(crate) fn show_review_commit_picker_with_entries(
         search_placeholder: Some("Type to search commits".to_string()),
         ..Default::default()
     });
-}
-
-fn skills_for_cwd(cwd: &Path, skills_entries: &[SkillsListEntry]) -> Vec<SkillMetadata> {
-    skills_entries
-        .iter()
-        .find(|entry| entry.cwd.as_path() == cwd)
-        .map(|entry| {
-            entry
-                .skills
-                .iter()
-                .map(|skill| SkillMetadata {
-                    name: skill.name.clone(),
-                    description: skill.description.clone(),
-                    short_description: skill.short_description.clone(),
-                    interface: skill.interface.clone().map(|interface| SkillInterface {
-                        display_name: interface.display_name,
-                        short_description: interface.short_description,
-                        icon_small: interface.icon_small,
-                        icon_large: interface.icon_large,
-                        brand_color: interface.brand_color,
-                        default_prompt: interface.default_prompt,
-                    }),
-                    path: skill.path.clone(),
-                    scope: skill.scope,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn find_skill_mentions(text: &str, skills: &[SkillMetadata]) -> Vec<SkillMetadata> {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut matches: Vec<SkillMetadata> = Vec::new();
-    for skill in skills {
-        if seen.contains(&skill.name) {
-            continue;
-        }
-        let needle = format!("${}", skill.name);
-        if text.contains(&needle) {
-            seen.insert(skill.name.clone());
-            matches.push(skill.clone());
-        }
-    }
-    matches
 }
 
 #[cfg(test)]

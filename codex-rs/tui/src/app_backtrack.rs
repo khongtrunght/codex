@@ -41,7 +41,6 @@ use color_eyre::eyre::Result;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
-use crossterm::event::KeyModifiers;
 
 /// Aggregates all backtrack-related state used by the App.
 #[derive(Default)]
@@ -102,18 +101,6 @@ impl App {
         tui: &mut tui::Tui,
         event: TuiEvent,
     ) -> Result<bool> {
-        if let TuiEvent::Key(KeyEvent {
-            code: KeyCode::Char(c),
-            modifiers,
-            kind: KeyEventKind::Press,
-            ..
-        }) = event
-            && modifiers.contains(KeyModifiers::CONTROL)
-            && c.eq_ignore_ascii_case(&'o')
-        {
-            self.chat_widget.toggle_verbosity();
-            return Ok(true);
-        }
         if self.backtrack.overlay_preview_active {
             match event {
                 TuiEvent::Key(KeyEvent {
@@ -227,10 +214,7 @@ impl App {
     /// Open transcript overlay (enters alternate screen and shows full transcript).
     pub(crate) fn open_transcript_overlay(&mut self, tui: &mut tui::Tui) {
         let _ = tui.enter_alt_screen();
-        self.overlay = Some(Overlay::new_transcript(
-            self.transcript_cells.clone(),
-            self.chat_widget.verbosity(),
-        ));
+        self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
         tui.frame_requester().schedule_frame();
     }
 
@@ -255,12 +239,8 @@ impl App {
     pub(crate) fn render_transcript_once(&mut self, tui: &mut tui::Tui) {
         if !self.transcript_cells.is_empty() {
             let width = tui.terminal.last_known_screen_size.width;
-            let ctx = crate::verbosity::RenderContext::with_verbosity(
-                width,
-                self.chat_widget.verbosity(),
-            );
             for cell in &self.transcript_cells {
-                tui.insert_history_lines(cell.display_lines(ctx));
+                tui.insert_history_lines(cell.display_lines(width));
             }
         }
     }
@@ -608,7 +588,7 @@ mod tests {
             .as_any()
             .downcast_ref::<AgentMessageCell>()
             .expect("agent cell");
-        let agent_lines = agent.display_lines(crate::verbosity::RenderContext::new(u16::MAX));
+        let agent_lines = agent.display_lines(u16::MAX);
         assert_eq!(agent_lines.len(), 1);
         let intro_text: String = agent_lines[0]
             .spans
@@ -645,7 +625,7 @@ mod tests {
             .as_any()
             .downcast_ref::<AgentMessageCell>()
             .expect("intro agent");
-        let intro_lines = agent_intro.display_lines(crate::verbosity::RenderContext::new(u16::MAX));
+        let intro_lines = agent_intro.display_lines(u16::MAX);
         let intro_text: String = intro_lines[0]
             .spans
             .iter()
@@ -663,8 +643,7 @@ mod tests {
             .as_any()
             .downcast_ref::<AgentMessageCell>()
             .expect("between agent");
-        let between_lines =
-            agent_between.display_lines(crate::verbosity::RenderContext::new(u16::MAX));
+        let between_lines = agent_between.display_lines(u16::MAX);
         let between_text: String = between_lines[0]
             .spans
             .iter()

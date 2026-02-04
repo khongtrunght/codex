@@ -6,10 +6,10 @@ use super::popup_consts::MAX_POPUP_ROWS;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::render_rows;
+use super::slash_commands;
 use crate::render::Insets;
 use crate::render::RectExt;
 use crate::slash_command::SlashCommand;
-use crate::slash_command::built_in_slash_commands;
 use codex_common::fuzzy_match::fuzzy_match;
 use codex_protocol::custom_prompts::CustomPrompt;
 use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
@@ -46,12 +46,15 @@ pub(crate) struct CommandPopupFlags {
 impl CommandPopup {
     pub(crate) fn new(mut prompts: Vec<CustomPrompt>, flags: CommandPopupFlags) -> Self {
         let allow_elevate_sandbox = windows_degraded_sandbox_active();
-        let builtins: Vec<(&'static str, SlashCommand)> = built_in_slash_commands()
-            .into_iter()
-            .filter(|(_, cmd)| flags.skills_enabled || *cmd != SlashCommand::Skills)
-            .filter(|(_, cmd)| allow_elevate_sandbox || *cmd != SlashCommand::ElevateSandbox)
-            .filter(|(_, cmd)| flags.collaboration_modes_enabled || *cmd != SlashCommand::Collab)
-            .collect();
+        let mut builtins = slash_commands::builtins_for_input(
+            flags.collaboration_modes_enabled,
+            false,
+            false,
+            allow_elevate_sandbox,
+        );
+        if !flags.skills_enabled {
+            builtins.retain(|(_, cmd)| *cmd != SlashCommand::Skills);
+        }
         // Exclude prompts that collide with builtin command names and sort by name.
         let exclude: HashSet<String> = builtins.iter().map(|(n, _)| (*n).to_string()).collect();
         prompts.retain(|p| !exclude.contains(&p.name));

@@ -16,6 +16,7 @@ use crate::diff_render::display_path_for;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::OutputLinesParams;
 use crate::exec_cell::TOOL_CALL_MAX_LINES;
+use crate::exec_cell::TOOL_CALL_VERBOSE_MAX_LINES;
 use crate::exec_cell::output_lines;
 use crate::exec_cell::spinner;
 use crate::exec_command::relativize_to_home;
@@ -33,7 +34,6 @@ use crate::text_formatting::truncate_text;
 use crate::tooltips;
 use crate::ui_consts::LIVE_PREFIX_COLS;
 use crate::update_action::UpdateAction;
-use crate::verbosity::RenderContext;
 use crate::version::CODEX_CLI_VERSION;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
@@ -82,22 +82,22 @@ use unicode_width::UnicodeWidthStr;
 /// `Vec<Line<'static>>` representation to make it easier to display in a
 /// scrollable list.
 pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>>;
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>>;
 
-    fn desired_height(&self, ctx: RenderContext) -> u16 {
-        Paragraph::new(Text::from(self.display_lines(ctx)))
+    fn desired_height(&self, width: u16) -> u16 {
+        Paragraph::new(Text::from(self.display_lines(width)))
             .wrap(Wrap { trim: false })
-            .line_count(ctx.width)
+            .line_count(width)
             .try_into()
             .unwrap_or(0)
     }
 
-    fn transcript_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.display_lines(ctx)
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.display_lines(width)
     }
 
-    fn desired_transcript_height(&self, ctx: RenderContext) -> u16 {
-        let lines = self.transcript_lines(ctx);
+    fn desired_transcript_height(&self, width: u16) -> u16 {
+        let lines = self.transcript_lines(width);
         // Workaround for ratatui bug: if there's only one line and it's whitespace-only, ratatui gives 2 lines.
         if let [line] = &lines[..]
             && line
@@ -110,7 +110,7 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
         Paragraph::new(Text::from(lines))
             .wrap(Wrap { trim: false })
-            .line_count(ctx.width)
+            .line_count(width)
             .try_into()
             .unwrap_or(0)
     }
@@ -136,7 +136,7 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
 
 impl Renderable for Box<dyn HistoryCell> {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        let lines = self.display_lines(RenderContext::new(area.width));
+        let lines = self.display_lines(area.width);
         let y = if area.height == 0 {
             0
         } else {
@@ -148,7 +148,7 @@ impl Renderable for Box<dyn HistoryCell> {
             .render(area, buf);
     }
     fn desired_height(&self, width: u16) -> u16 {
-        HistoryCell::desired_height(self.as_ref(), RenderContext::new(width))
+        HistoryCell::desired_height(self.as_ref(), width)
     }
 }
 
@@ -237,8 +237,7 @@ fn build_user_message_lines_with_elements(
 }
 
 impl HistoryCell for UserHistoryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        let width = ctx.width;
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         let wrap_width = width
@@ -324,28 +323,28 @@ impl ReasoningSummaryCell {
 }
 
 impl HistoryCell for ReasoningSummaryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         if self.transcript_only {
             Vec::new()
         } else {
-            self.lines(ctx.width)
+            self.lines(width)
         }
     }
 
-    fn desired_height(&self, ctx: RenderContext) -> u16 {
+    fn desired_height(&self, width: u16) -> u16 {
         if self.transcript_only {
             0
         } else {
-            self.lines(ctx.width).len() as u16
+            self.lines(width).len() as u16
         }
     }
 
-    fn transcript_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.lines(ctx.width)
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.lines(width)
     }
 
-    fn desired_transcript_height(&self, ctx: RenderContext) -> u16 {
-        self.lines(ctx.width).len() as u16
+    fn desired_transcript_height(&self, width: u16) -> u16 {
+        self.lines(width).len() as u16
     }
 }
 
@@ -393,8 +392,7 @@ impl AgentMessageCell {
 }
 
 impl HistoryCell for AgentMessageCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        let width = ctx.width;
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         if width == 0 {
             return Vec::new();
         }
@@ -466,7 +464,7 @@ impl PlainHistoryCell {
 }
 
 impl HistoryCell for PlainHistoryCell {
-    fn display_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
         self.lines.clone()
     }
 }
@@ -489,7 +487,7 @@ impl UpdateAvailableHistoryCell {
 }
 
 impl HistoryCell for UpdateAvailableHistoryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         use ratatui_macros::line;
         use ratatui_macros::text;
         let update_instruction = if let Some(update_action) = self.update_action {
@@ -519,7 +517,7 @@ impl HistoryCell for UpdateAvailableHistoryCell {
 
         let inner_width = content
             .width()
-            .min(usize::from(ctx.width.saturating_sub(4)))
+            .min(usize::from(width.saturating_sub(4)))
             .max(1);
         with_border_with_inner_width(content.lines, inner_width)
     }
@@ -547,11 +545,11 @@ impl PrefixedWrappedHistoryCell {
 }
 
 impl HistoryCell for PrefixedWrappedHistoryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        if ctx.width == 0 {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
             return Vec::new();
         }
-        let opts = RtOptions::new(ctx.width.max(1) as usize)
+        let opts = RtOptions::new(width.max(1) as usize)
             .initial_indent(self.initial_prefix.clone())
             .subsequent_indent(self.subsequent_prefix.clone());
         let wrapped = word_wrap_lines(&self.text, opts);
@@ -560,8 +558,8 @@ impl HistoryCell for PrefixedWrappedHistoryCell {
         out
     }
 
-    fn desired_height(&self, ctx: RenderContext) -> u16 {
-        self.display_lines(ctx).len() as u16
+    fn desired_height(&self, width: u16) -> u16 {
+        self.display_lines(width).len() as u16
     }
 }
 
@@ -581,8 +579,7 @@ impl UnifiedExecInteractionCell {
 }
 
 impl HistoryCell for UnifiedExecInteractionCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        let width = ctx.width;
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         if width == 0 {
             return Vec::new();
         }
@@ -620,8 +617,8 @@ impl HistoryCell for UnifiedExecInteractionCell {
         out
     }
 
-    fn desired_height(&self, ctx: RenderContext) -> u16 {
-        self.display_lines(ctx).len() as u16
+    fn desired_height(&self, width: u16) -> u16 {
+        self.display_lines(width).len() as u16
     }
 }
 
@@ -644,8 +641,7 @@ impl UnifiedExecProcessesCell {
 }
 
 impl HistoryCell for UnifiedExecProcessesCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        let width = ctx.width;
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         if width == 0 {
             return Vec::new();
         }
@@ -722,8 +718,8 @@ impl HistoryCell for UnifiedExecProcessesCell {
         out
     }
 
-    fn desired_height(&self, ctx: RenderContext) -> u16 {
-        self.display_lines(ctx).len() as u16
+    fn desired_height(&self, width: u16) -> u16 {
+        self.display_lines(width).len() as u16
     }
 }
 
@@ -847,8 +843,8 @@ pub(crate) struct PatchHistoryCell {
 }
 
 impl HistoryCell for PatchHistoryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        create_diff_summary(&self.changes, &self.cwd, ctx.width as usize)
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        create_diff_summary(&self.changes, &self.cwd, width as usize)
     }
 }
 
@@ -857,7 +853,7 @@ struct CompletedMcpToolCallWithImageOutput {
     _image: DynamicImage,
 }
 impl HistoryCell for CompletedMcpToolCallWithImageOutput {
-    fn display_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
         vec!["tool result (image output)".into()]
     }
 }
@@ -950,10 +946,10 @@ impl TooltipHistoryCell {
 }
 
 impl HistoryCell for TooltipHistoryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let indent = "  ";
         let indent_width = UnicodeWidthStr::width(indent);
-        let wrap_width = usize::from(ctx.width.max(1))
+        let wrap_width = usize::from(width.max(1))
             .saturating_sub(indent_width)
             .max(1);
         let mut lines: Vec<Line<'static>> = Vec::new();
@@ -971,16 +967,16 @@ impl HistoryCell for TooltipHistoryCell {
 pub struct SessionInfoCell(CompositeHistoryCell);
 
 impl HistoryCell for SessionInfoCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.0.display_lines(ctx)
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.0.display_lines(width)
     }
 
-    fn desired_height(&self, ctx: RenderContext) -> u16 {
-        self.0.desired_height(ctx)
+    fn desired_height(&self, width: u16) -> u16 {
+        self.0.desired_height(width)
     }
 
-    fn transcript_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.0.transcript_lines(ctx)
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.0.transcript_lines(width)
     }
 }
 
@@ -1151,8 +1147,8 @@ impl SessionHeaderHistoryCell {
 }
 
 impl HistoryCell for SessionHeaderHistoryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        let Some(inner_width) = card_inner_width(ctx.width, SESSION_HEADER_MAX_INNER_WIDTH) else {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let Some(inner_width) = card_inner_width(width, SESSION_HEADER_MAX_INNER_WIDTH) else {
             return Vec::new();
         };
 
@@ -1222,11 +1218,11 @@ impl CompositeHistoryCell {
 }
 
 impl HistoryCell for CompositeHistoryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut out: Vec<Line<'static>> = Vec::new();
         let mut first = true;
         for part in &self.parts {
-            let mut lines = part.display_lines(ctx);
+            let mut lines = part.display_lines(width);
             if !lines.is_empty() {
                 if !first {
                     out.push(Line::from(""));
@@ -1321,8 +1317,7 @@ impl McpToolCallCell {
 }
 
 impl HistoryCell for McpToolCallCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        let width = ctx.width;
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         let status = self.success();
         let bullet = match status {
@@ -1370,7 +1365,7 @@ impl HistoryCell for McpToolCallCell {
                         for block in content {
                             let text = Self::render_content_block(
                                 block,
-                                ctx.verbosity.max_output_lines(),
+                                TOOL_CALL_MAX_LINES,
                                 detail_wrap_width,
                             );
                             for segment in text.split('\n') {
@@ -1389,7 +1384,101 @@ impl HistoryCell for McpToolCallCell {
                 Err(err) => {
                     let err_text = format_and_truncate_tool_result(
                         &format!("Error: {err}"),
-                        ctx.verbosity.max_output_lines(),
+                        TOOL_CALL_MAX_LINES,
+                        width as usize,
+                    );
+                    let err_line = Line::from(err_text.dim());
+                    let wrapped = word_wrap_line(
+                        &err_line,
+                        RtOptions::new(detail_wrap_width)
+                            .initial_indent("".into())
+                            .subsequent_indent("    ".into()),
+                    );
+                    detail_lines.extend(wrapped.iter().map(line_to_static));
+                }
+            }
+        }
+
+        if !detail_lines.is_empty() {
+            let initial_prefix: Span<'static> = if inline_invocation {
+                "  └ ".dim()
+            } else {
+                "    ".into()
+            };
+            lines.extend(prefix_lines(detail_lines, initial_prefix, "    ".into()));
+        }
+
+        lines
+    }
+
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let status = self.success();
+        let bullet = match status {
+            Some(true) => "•".green().bold(),
+            Some(false) => "•".red().bold(),
+            None => spinner(Some(self.start_time), self.animations_enabled),
+        };
+        let header_text = if status.is_some() {
+            "Called"
+        } else {
+            "Calling"
+        };
+
+        let invocation_line = line_to_static(&format_mcp_invocation(self.invocation.clone()));
+        let mut compact_spans = vec![bullet.clone(), " ".into(), header_text.bold(), " ".into()];
+        let mut compact_header = Line::from(compact_spans.clone());
+        let reserved = compact_header.width();
+
+        let inline_invocation =
+            invocation_line.width() <= (width as usize).saturating_sub(reserved);
+
+        if inline_invocation {
+            compact_header.extend(invocation_line.spans.clone());
+            lines.push(compact_header);
+        } else {
+            compact_spans.pop(); // drop trailing space for standalone header
+            lines.push(Line::from(compact_spans));
+
+            let opts = RtOptions::new((width as usize).saturating_sub(4))
+                .initial_indent("".into())
+                .subsequent_indent("    ".into());
+            let wrapped = word_wrap_line(&invocation_line, opts);
+            let body_lines: Vec<Line<'static>> = wrapped.iter().map(line_to_static).collect();
+            lines.extend(prefix_lines(body_lines, "  └ ".dim(), "    ".into()));
+        }
+
+        let mut detail_lines: Vec<Line<'static>> = Vec::new();
+        // Reserve four columns for the tree prefix ("  └ "/"    ") and ensure the wrapper still has at least one cell to work with.
+        let detail_wrap_width = (width as usize).saturating_sub(4).max(1);
+
+        if let Some(result) = &self.result {
+            match result {
+                Ok(mcp_types::CallToolResult { content, .. }) => {
+                    if !content.is_empty() {
+                        for block in content {
+                            let text = Self::render_content_block(
+                                block,
+                                TOOL_CALL_VERBOSE_MAX_LINES,
+                                detail_wrap_width,
+                            );
+                            for segment in text.split('\n') {
+                                let line = Line::from(segment.to_string().dim());
+                                let wrapped = word_wrap_line(
+                                    &line,
+                                    RtOptions::new(detail_wrap_width)
+                                        .initial_indent("".into())
+                                        .subsequent_indent("    ".into()),
+                                );
+                                detail_lines.extend(wrapped.iter().map(line_to_static));
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    let err_text = format_and_truncate_tool_result(
+                        &format!("Error: {err}"),
+                        TOOL_CALL_VERBOSE_MAX_LINES,
                         width as usize,
                     );
                     let err_line = Line::from(err_text.dim());
@@ -1496,11 +1585,11 @@ pub(crate) fn new_deprecation_notice(
 }
 
 impl HistoryCell for DeprecationNoticeCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(vec!["⚠ ".red().bold(), self.summary.clone().red()].into());
 
-        let wrap_width = ctx.width.saturating_sub(4).max(1) as usize;
+        let wrap_width = width.saturating_sub(4).max(1) as usize;
 
         if let Some(details) = &self.details {
             let line = textwrap::wrap(details, wrap_width)
@@ -1730,9 +1819,9 @@ pub(crate) struct PlanUpdateCell {
 }
 
 impl HistoryCell for PlanUpdateCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let render_note = |text: &str| -> Vec<Line<'static>> {
-            let wrap_width = ctx.width.saturating_sub(4).max(1) as usize;
+            let wrap_width = width.saturating_sub(4).max(1) as usize;
             textwrap::wrap(text, wrap_width)
                 .into_iter()
                 .map(|s| s.to_string().dim().italic().into())
@@ -1745,7 +1834,7 @@ impl HistoryCell for PlanUpdateCell {
                 StepStatus::InProgress => ("□ ", Style::default().cyan().bold()),
                 StepStatus::Pending => ("□ ", Style::default().dim()),
             };
-            let wrap_width = (ctx.width as usize)
+            let wrap_width = (width as usize)
                 .saturating_sub(4)
                 .saturating_sub(box_str.width())
                 .max(1);
@@ -1935,7 +2024,7 @@ impl MermaidHistoryCell {
 }
 
 impl HistoryCell for MermaidHistoryCell {
-    fn display_lines(&self, _ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
         let line_count = self.code.lines().count();
         let url = self.generate_mermaid_live_url();
 
@@ -1992,7 +2081,7 @@ impl FinalMessageSeparator {
     }
 }
 impl HistoryCell for FinalMessageSeparator {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         let elapsed_seconds = self
             .elapsed_seconds
             .map(super::status_indicator_widget::fmt_elapsed_compact);
@@ -2002,12 +2091,12 @@ impl HistoryCell for FinalMessageSeparator {
             vec![
                 Line::from_iter([
                     worked_for,
-                    "─".repeat((ctx.width as usize).saturating_sub(worked_for_width)),
+                    "─".repeat((width as usize).saturating_sub(worked_for_width)),
                 ])
                 .dim(),
             ]
         } else {
-            vec![Line::from_iter(["─".repeat(ctx.width as usize).dim()])]
+            vec![Line::from_iter(["─".repeat(width as usize).dim()])]
         }
     }
 }
@@ -2050,7 +2139,6 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
 
-    use crate::verbosity::RenderContext;
     use codex_core::protocol::ExecCommandSource;
     use mcp_types::CallToolResult;
     use mcp_types::ContentBlock;
@@ -2079,7 +2167,7 @@ mod tests {
     }
 
     fn render_transcript(cell: &dyn HistoryCell) -> Vec<String> {
-        render_lines(&cell.transcript_lines(RenderContext::new(u16::MAX)))
+        render_lines(&cell.transcript_lines(u16::MAX))
     }
 
     #[test]
@@ -2110,7 +2198,7 @@ mod tests {
     #[test]
     fn ps_output_empty_snapshot() {
         let cell = new_unified_exec_processes_output(Vec::new());
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(60))).join("\n");
+        let rendered = render_lines(&cell.display_lines(60)).join("\n");
         insta::assert_snapshot!(rendered);
     }
 
@@ -2120,7 +2208,7 @@ mod tests {
             "echo hello\nand then some extra text".to_string(),
             "rg \"foo\" src".to_string(),
         ]);
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(40))).join("\n");
+        let rendered = render_lines(&cell.display_lines(40)).join("\n");
         insta::assert_snapshot!(rendered);
     }
 
@@ -2129,7 +2217,7 @@ mod tests {
         let cell = new_unified_exec_processes_output(vec![String::from(
             "rg \"foo\" src --glob '**/*.rs' --max-count 1000 --no-ignore --hidden --follow --glob '!target/**'",
         )]);
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(36))).join("\n");
+        let rendered = render_lines(&cell.display_lines(36)).join("\n");
         insta::assert_snapshot!(rendered);
     }
 
@@ -2138,7 +2226,7 @@ mod tests {
         let cell = new_unified_exec_processes_output(
             (0..20).map(|idx| format!("command {idx}")).collect(),
         );
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(32))).join("\n");
+        let rendered = render_lines(&cell.display_lines(32)).join("\n");
         insta::assert_snapshot!(rendered);
     }
 
@@ -2229,7 +2317,7 @@ mod tests {
             HashMap::new(),
             &auth_statuses,
         );
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(120))).join("\n");
+        let rendered = render_lines(&cell.display_lines(120)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2237,11 +2325,8 @@ mod tests {
     #[test]
     fn empty_agent_message_cell_transcript() {
         let cell = AgentMessageCell::new(vec![Line::default()], false);
-        assert_eq!(
-            cell.transcript_lines(RenderContext::new(80)),
-            vec![Line::from("  ")]
-        );
-        assert_eq!(cell.desired_transcript_height(RenderContext::new(80)), 1);
+        assert_eq!(cell.transcript_lines(80), vec![Line::from("  ")]);
+        assert_eq!(cell.desired_transcript_height(80), 1);
     }
 
     #[test]
@@ -2254,7 +2339,7 @@ mod tests {
             " this time".bold(),
         ]);
         let cell = PrefixedWrappedHistoryCell::new(summary, "✔ ".green(), "  ");
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(24)));
+        let rendered = render_lines(&cell.display_lines(24));
         assert_eq!(
             rendered,
             vec![
@@ -2272,7 +2357,7 @@ mod tests {
         let cell = new_web_search_call(
             "example search query with several generic words to exercise wrapping".to_string(),
         );
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(64))).join("\n");
+        let rendered = render_lines(&cell.display_lines(64)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2282,7 +2367,7 @@ mod tests {
         let cell = new_web_search_call(
             "example search query with several generic words to exercise wrapping".to_string(),
         );
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(64)));
+        let rendered = render_lines(&cell.display_lines(64));
 
         assert_eq!(
             rendered,
@@ -2296,7 +2381,7 @@ mod tests {
     #[test]
     fn web_search_history_cell_short_query_does_not_wrap() {
         let cell = new_web_search_call("short query".to_string());
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(64)));
+        let rendered = render_lines(&cell.display_lines(64));
 
         assert_eq!(rendered, vec!["• Searched short query".to_string()]);
     }
@@ -2306,7 +2391,7 @@ mod tests {
         let cell = new_web_search_call(
             "example search query with several generic words to exercise wrapping".to_string(),
         );
-        let rendered = render_lines(&cell.transcript_lines(RenderContext::new(64))).join("\n");
+        let rendered = render_lines(&cell.transcript_lines(64)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2323,7 +2408,7 @@ mod tests {
         };
 
         let cell = new_active_mcp_tool_call("call-1".into(), invocation, true);
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(80))).join("\n");
+        let rendered = render_lines(&cell.display_lines(80)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2355,7 +2440,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(80))).join("\n");
+        let rendered = render_lines(&cell.display_lines(80)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2377,7 +2462,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(80))).join("\n");
+        let rendered = render_lines(&cell.display_lines(80)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2421,7 +2506,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(48))).join("\n");
+        let rendered = render_lines(&cell.display_lines(48)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2453,7 +2538,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(40))).join("\n");
+        let rendered = render_lines(&cell.display_lines(40)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2492,7 +2577,7 @@ mod tests {
                 .is_none()
         );
 
-        let rendered = render_lines(&cell.display_lines(RenderContext::new(120))).join("\n");
+        let rendered = render_lines(&cell.display_lines(120)).join("\n");
 
         insta::assert_snapshot!(rendered);
     }
@@ -2506,7 +2591,7 @@ mod tests {
             "test",
         );
 
-        let lines = render_lines(&cell.display_lines(RenderContext::new(80)));
+        let lines = render_lines(&cell.display_lines(80));
         let model_line = lines
             .into_iter()
             .find(|line| line.contains("model:"))
@@ -2576,7 +2661,7 @@ mod tests {
         // Mark call complete so markers are ✓
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
 
-        let lines = cell.display_lines(RenderContext::new(80));
+        let lines = cell.display_lines(80);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2633,7 +2718,7 @@ mod tests {
             .unwrap();
         cell.complete_call("c3", CommandOutput::default(), Duration::from_millis(1));
 
-        let lines = cell.display_lines(RenderContext::new(80));
+        let lines = cell.display_lines(80);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2670,7 +2755,7 @@ mod tests {
             true,
         );
         cell.complete_call("c1", CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(RenderContext::new(80));
+        let lines = cell.display_lines(80);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2698,7 +2783,7 @@ mod tests {
 
         // Small width to force wrapping on both lines
         let width: u16 = 28;
-        let lines = cell.display_lines(RenderContext::new(width));
+        let lines = cell.display_lines(width);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2721,7 +2806,7 @@ mod tests {
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
         // Wide enough that it fits inline
-        let lines = cell.display_lines(RenderContext::new(80));
+        let lines = cell.display_lines(80);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2744,7 +2829,7 @@ mod tests {
             true,
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(RenderContext::new(24));
+        let lines = cell.display_lines(24);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2767,7 +2852,7 @@ mod tests {
             true,
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(RenderContext::new(80));
+        let lines = cell.display_lines(80);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2791,7 +2876,7 @@ mod tests {
             true,
         );
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
-        let lines = cell.display_lines(RenderContext::new(28));
+        let lines = cell.display_lines(28);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2829,7 +2914,7 @@ mod tests {
         );
 
         let rendered = cell
-            .display_lines(RenderContext::new(80))
+            .display_lines(80)
             .iter()
             .map(|l| {
                 l.spans
@@ -2879,7 +2964,7 @@ mod tests {
         // Narrow width to force the command to render under the header line.
         let width: u16 = 28;
         let rendered = cell
-            .display_lines(RenderContext::new(width))
+            .display_lines(width)
             .iter()
             .map(|l| {
                 l.spans
@@ -2902,7 +2987,7 @@ mod tests {
 
         // Small width to force wrapping more clearly. Effective wrap width is width-2 due to the ▌ prefix and trailing space.
         let width: u16 = 12;
-        let lines = cell.display_lines(RenderContext::new(width));
+        let lines = cell.display_lines(width);
         let rendered = render_lines(&lines).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -2934,7 +3019,7 @@ mod tests {
 
         let cell = new_plan_update(update);
         // Narrow width to force wrapping for both the note and steps
-        let lines = cell.display_lines(RenderContext::new(32));
+        let lines = cell.display_lines(32);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2956,7 +3041,7 @@ mod tests {
         };
 
         let cell = new_plan_update(update);
-        let lines = cell.display_lines(RenderContext::new(40));
+        let lines = cell.display_lines(40);
         let rendered = render_lines(&lines).join("\n");
         insta::assert_snapshot!(rendered);
     }
@@ -2966,7 +3051,7 @@ mod tests {
             "**High level reasoning**\n\nDetailed reasoning goes here.".to_string(),
         );
 
-        let rendered_display = render_lines(&cell.display_lines(RenderContext::new(80)));
+        let rendered_display = render_lines(&cell.display_lines(80));
         assert_eq!(rendered_display, vec!["• Detailed reasoning goes here."]);
 
         let rendered_transcript = render_transcript(cell.as_ref());
@@ -2990,7 +3075,7 @@ mod tests {
             "**High level reasoning**\n\nDetailed reasoning goes here.".to_string(),
         );
 
-        let rendered_display = render_lines(&cell.display_lines(RenderContext::new(80)));
+        let rendered_display = render_lines(&cell.display_lines(80));
         assert_eq!(rendered_display, vec!["• Detailed reasoning goes here."]);
     }
 
@@ -3025,7 +3110,7 @@ mod tests {
             "**High level plan**\n\nWe should fix the bug next.".to_string(),
         );
 
-        let rendered_display = render_lines(&cell.display_lines(RenderContext::new(80)));
+        let rendered_display = render_lines(&cell.display_lines(80));
         assert_eq!(rendered_display, vec!["• We should fix the bug next."]);
 
         let rendered_transcript = render_transcript(cell.as_ref());
@@ -3038,7 +3123,7 @@ mod tests {
             "Feature flag `foo`".to_string(),
             Some("Use flag `bar` instead.".to_string()),
         );
-        let lines = cell.display_lines(RenderContext::new(80));
+        let lines = cell.display_lines(80);
         let rendered = render_lines(&lines);
         assert_eq!(
             rendered,

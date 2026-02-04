@@ -25,13 +25,18 @@ use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::find_thread_path_by_id_str;
 use codex_core::get_platform_sandbox;
+use codex_core::path_utils;
 use codex_core::protocol::AskForApproval;
 use codex_core::read_session_meta_line;
 use codex_core::terminal::Multiplexer;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::RolloutLine;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use cwd_prompt::CwdPromptAction;
 use std::fs::OpenOptions;
+use std::path::Path;
 use std::path::PathBuf;
 use tracing::error;
 use tracing_appender::non_blocking;
@@ -54,6 +59,7 @@ mod collaboration_modes;
 mod color;
 mod compact_boundary_cell;
 pub mod custom_terminal;
+mod cwd_prompt;
 mod diff_render;
 mod exec_cell;
 mod exec_command;
@@ -79,6 +85,7 @@ mod resume_picker;
 mod selection_list;
 mod session_log;
 mod shimmer;
+mod skills_helpers;
 mod slash_command;
 mod status;
 mod status_indicator_widget;
@@ -92,7 +99,6 @@ mod ui_consts;
 pub mod update_action;
 mod update_prompt;
 mod updates;
-mod verbosity;
 mod version;
 
 mod wrapping;
@@ -566,25 +572,27 @@ async fn run_ratatui_app(
         resume_picker::SessionSelection::StartFresh
     };
 
+    let current_cwd = config.cwd.clone();
+    let allow_prompt = cli.cwd.is_none();
+    let action_and_path = match &session_selection {
+        resume_picker::SessionSelection::Resume(path) => Some((CwdPromptAction::Resume, path)),
+        resume_picker::SessionSelection::Fork(path) => Some((CwdPromptAction::Fork, path)),
+        _ => None,
+    };
+    let fallback_cwd = match action_and_path {
+        Some((action, path)) => {
+            resolve_cwd_for_resume_or_fork(&mut tui, &current_cwd, path, action, allow_prompt)
+                .await?
+        }
+        None => None,
+    };
+
     let config = match &session_selection {
-        resume_picker::SessionSelection::Resume(path)
-        | resume_picker::SessionSelection::Fork(path) => {
-            let history_cwd = match read_session_meta_line(path).await {
-                Ok(meta_line) => Some(meta_line.meta.cwd),
-                Err(err) => {
-                    let rollout_path = path.display().to_string();
-                    tracing::warn!(
-                        %rollout_path,
-                        %err,
-                        "Failed to read session metadata from rollout"
-                    );
-                    None
-                }
-            };
+        resume_picker::SessionSelection::Resume(_) | resume_picker::SessionSelection::Fork(_) => {
             load_config_or_exit_with_fallback_cwd(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
-                history_cwd,
+                fallback_cwd,
             )
             .await
         }
@@ -622,6 +630,77 @@ async fn run_ratatui_app(
     session_log::log_session_end();
     // ignore error when collecting usage – report underlying error instead
     app_result
+}
+
+pub(crate) async fn read_session_cwd(path: &Path) -> Option<PathBuf> {
+    // Prefer the latest TurnContext cwd so resume/fork reflects the most recent
+    // session directory (for the changed-cwd prompt). The alternative would be
+    // mutating the SessionMeta line when the session cwd changes, but the rollout
+    // is an append-only JSONL log and rewriting the head would be error-prone.
+    // When rollouts move to SQLite, we can drop this scan.
+    if let Some(cwd) = parse_latest_turn_context_cwd(path).await {
+        return Some(cwd);
+    }
+    match read_session_meta_line(path).await {
+        Ok(meta_line) => Some(meta_line.meta.cwd),
+        Err(err) => {
+            let rollout_path = path.display().to_string();
+            tracing::warn!(
+                %rollout_path,
+                %err,
+                "Failed to read session metadata from rollout"
+            );
+            None
+        }
+    }
+}
+
+async fn parse_latest_turn_context_cwd(path: &Path) -> Option<PathBuf> {
+    let text = tokio::fs::read_to_string(path).await.ok()?;
+    for line in text.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(rollout_line) = serde_json::from_str::<RolloutLine>(trimmed) else {
+            continue;
+        };
+        if let RolloutItem::TurnContext(item) = rollout_line.item {
+            return Some(item.cwd);
+        }
+    }
+    None
+}
+
+pub(crate) fn cwds_differ(current_cwd: &Path, session_cwd: &Path) -> bool {
+    match (
+        path_utils::normalize_for_path_comparison(current_cwd),
+        path_utils::normalize_for_path_comparison(session_cwd),
+    ) {
+        (Ok(current), Ok(session)) => current != session,
+        _ => current_cwd != session_cwd,
+    }
+}
+
+pub(crate) async fn resolve_cwd_for_resume_or_fork(
+    tui: &mut Tui,
+    current_cwd: &Path,
+    path: &Path,
+    action: CwdPromptAction,
+    allow_prompt: bool,
+) -> color_eyre::Result<Option<PathBuf>> {
+    let Some(history_cwd) = read_session_cwd(path).await else {
+        return Ok(None);
+    };
+    if allow_prompt && cwds_differ(current_cwd, &history_cwd) {
+        let selection =
+            cwd_prompt::run_cwd_selection_prompt(tui, action, current_cwd, &history_cwd).await?;
+        return Ok(Some(match selection {
+            cwd_prompt::CwdSelection::Current => current_cwd.to_path_buf(),
+            cwd_prompt::CwdSelection::Session => history_cwd,
+        }));
+    }
+    Ok(Some(history_cwd))
 }
 
 #[expect(

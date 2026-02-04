@@ -22,6 +22,8 @@ use crate::history_cell::{self};
 use crate::markdown_render::MarkdownLogicalLine;
 
 use super::StreamState;
+use std::time::Duration;
+use std::time::Instant;
 
 /// Controller that manages newline-gated streaming, header emission, and
 /// commit animation across streams.
@@ -98,6 +100,25 @@ impl StreamController {
         (self.emit(step), self.state.is_idle())
     }
 
+    /// Advance the commit-tick animation by at most `max_lines` logical lines.
+    pub(crate) fn on_commit_tick_batch(
+        &mut self,
+        max_lines: usize,
+    ) -> (Option<Box<dyn HistoryCell>>, bool) {
+        let step = self.state.drain_n(max_lines.max(1));
+        (self.emit(step), self.state.is_idle())
+    }
+
+    /// Returns the current number of queued lines waiting to be displayed.
+    pub(crate) fn queued_lines(&self) -> usize {
+        self.state.queued_len()
+    }
+
+    /// Returns the age of the oldest queued line.
+    pub(crate) fn oldest_queued_age(&self, now: Instant) -> Option<Duration> {
+        self.state.oldest_queued_age(now)
+    }
+
     fn emit(&mut self, lines: Vec<MarkdownLogicalLine>) -> Option<Box<dyn HistoryCell>> {
         if lines.is_empty() {
             return None;
@@ -116,8 +137,6 @@ impl StreamController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::verbosity::RenderContext;
-
     fn lines_to_plain_strings(lines: &[ratatui::text::Line<'_>]) -> Vec<String> {
         lines
             .iter()
@@ -208,11 +227,11 @@ mod tests {
         ];
 
         // Simulate streaming with a commit tick attempt after each delta.
-        let ctx = RenderContext::new(u16::MAX);
+        let width = u16::MAX;
         for d in deltas.iter() {
             ctrl.push(d);
             while let (Some(cell), idle) = ctrl.on_commit_tick() {
-                lines.extend(cell.transcript_lines(ctx));
+                lines.extend(cell.transcript_lines(width));
                 if idle {
                     break;
                 }
@@ -220,7 +239,7 @@ mod tests {
         }
         // Finalize and flush remaining lines now.
         if let Some(cell) = ctrl.finalize() {
-            lines.extend(cell.transcript_lines(ctx));
+            lines.extend(cell.transcript_lines(width));
         }
 
         let streamed: Vec<_> = lines_to_plain_strings(&lines)

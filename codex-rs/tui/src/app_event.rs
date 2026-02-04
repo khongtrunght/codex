@@ -20,7 +20,6 @@ use codex_protocol::openai_models::ModelPreset;
 
 use crate::bottom_pane::ApprovalRequest;
 use crate::history_cell::HistoryCell;
-use crate::verbosity::DisplayVerbosity;
 
 use codex_core::features::Feature;
 use codex_core::protocol::AskForApproval;
@@ -122,9 +121,6 @@ pub(crate) enum AppEvent {
     StartCommitAnimation,
     StopCommitAnimation,
     CommitTick,
-
-    /// Update the transcript verbosity (Ctrl+O).
-    ToggleVerbosity(DisplayVerbosity),
 
     /// Update the current reasoning effort in the running app and widget.
     UpdateReasoningEffort(Option<ReasoningEffort>),
@@ -240,6 +236,21 @@ pub(crate) enum AppEvent {
 
     /// Re-open the approval presets popup.
     OpenApprovalsPopup,
+
+    /// Open the inline skill picker (list).
+    OpenSkillsList,
+
+    /// Open the manage-skills popup.
+    OpenManageSkillsPopup,
+
+    /// Persist a skill's enabled state and update the UI.
+    SetSkillEnabled {
+        path: PathBuf,
+        enabled: bool,
+    },
+
+    /// Handle the manage-skills popup closing.
+    ManageSkillsClosed,
 
     /// Open the branch picker option from the review popup.
     OpenReviewBranchPicker(PathBuf),

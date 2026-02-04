@@ -1,6 +1,4 @@
 use crate::history_cell::HistoryCell;
-use crate::verbosity::DisplayVerbosity;
-use crate::verbosity::RenderContext;
 use codex_core::protocol::RestoredFileInfo;
 use ratatui::prelude::*;
 use ratatui::style::Stylize;
@@ -8,14 +6,14 @@ use unicode_width::UnicodeWidthStr;
 
 /// Cell displaying a compaction boundary with restored files.
 /// ```text
-/// ═══════════════ Conversation compacted · ctrl+o for history ═══════════════
+/// ═══════════════ Conversation compacted ═══════════════
 /// L  Referenced file thoughts/shared/plans/2026-01-12-auto-compact-...md
 /// L  Read codex-rs/core/src/read_file_state.rs (337 lines)
 /// ```
 #[derive(Debug)]
 pub(crate) struct CompactBoundaryCell {
     restored_files: Vec<RestoredFileInfo>,
-    /// The compact summary text for display when user presses ctrl+o.
+    /// The compact summary text for transcript rendering.
     summary: Option<String>,
 }
 
@@ -29,8 +27,12 @@ impl CompactBoundaryCell {
 }
 
 impl HistoryCell for CompactBoundaryCell {
-    fn display_lines(&self, ctx: RenderContext) -> Vec<Line<'static>> {
-        self.render_boundary(ctx.width, ctx.verbosity == DisplayVerbosity::Verbose)
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_boundary(width, false)
+    }
+
+    fn transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        self.render_boundary(width, true)
     }
 }
 
@@ -40,9 +42,9 @@ impl CompactBoundaryCell {
 
         // Divider line with centered title
         let title = if verbose {
-            " Conversation compacted (showing summary) "
+            " Conversation compacted (summary) "
         } else {
-            " Conversation compacted · ctrl+o for history "
+            " Conversation compacted "
         };
         let title_width = title.width();
         let available_for_dividers = (width as usize).saturating_sub(title_width);
