@@ -2724,6 +2724,7 @@ impl ChatWidget {
 
         self.thread_to_call_id.clear();
         self.pending_subagent_events.clear();
+        self.bump_active_cell_revision();
     }
 
     pub(crate) fn handle_codex_event(&mut self, event: Event) {
@@ -2992,6 +2993,7 @@ impl ChatWidget {
         let call_id = ev.call_id.clone();
         let cell = agent_cell::new_subagent_cell(ev, self.config.animations);
         self.subagents.insert(call_id, cell);
+        self.bump_active_cell_revision();
         self.request_redraw();
     }
 
@@ -3019,6 +3021,7 @@ impl ChatWidget {
             // For live sessions the broadcast listener in App::handle_thread_created
             // is already forwarding events — no separate subscription needed.
         }
+        self.bump_active_cell_revision();
         self.request_redraw();
     }
 
@@ -3044,6 +3047,7 @@ impl ChatWidget {
             self.thread_to_call_id.clear();
             self.pending_subagent_events.clear();
         }
+        self.bump_active_cell_revision();
         self.request_redraw();
     }
 
@@ -3061,6 +3065,7 @@ impl ChatWidget {
             && let Some(cell) = self.subagents.get_mut(&call_id)
         {
             cell.add_event(event.msg);
+            self.bump_active_cell_revision();
             self.request_redraw();
         } else if !self.subagents.is_empty() {
             // Only buffer when subagents are active — a subagent's thread
@@ -3079,6 +3084,7 @@ impl ChatWidget {
             for event in events {
                 cell.add_event(event);
             }
+            self.bump_active_cell_revision();
             self.request_redraw();
         }
     }
@@ -5020,11 +5026,24 @@ impl ChatWidget {
     /// providing an appropriate animation tick), the overlay will keep showing a stale tail while
     /// the main viewport updates.
     pub(crate) fn active_cell_transcript_key(&self) -> Option<ActiveCellTranscriptKey> {
-        let cell = self.active_cell.as_ref()?;
+        let active_cell = self.active_cell.as_ref();
+        if active_cell.is_none() && self.subagents.is_empty() {
+            return None;
+        }
+        let active_tick = active_cell.and_then(|cell| cell.transcript_animation_tick());
+        let subagent_tick = self.subagent_animation_tick();
+        let animation_tick = match (active_tick, subagent_tick) {
+            (Some(active), Some(subagent)) => Some(active.max(subagent)),
+            (Some(active), None) => Some(active),
+            (None, Some(subagent)) => Some(subagent),
+            (None, None) => None,
+        };
         Some(ActiveCellTranscriptKey {
             revision: self.active_cell_revision,
-            is_stream_continuation: cell.is_stream_continuation(),
-            animation_tick: cell.transcript_animation_tick(),
+            is_stream_continuation: active_cell
+                .map(|cell| cell.is_stream_continuation())
+                .unwrap_or(false),
+            animation_tick,
         })
     }
 
@@ -5035,9 +5054,41 @@ impl ChatWidget {
     /// should pass the same width the overlay uses; using a different width will cause wrapping
     /// mismatches between the main viewport and the transcript overlay.
     pub(crate) fn active_cell_transcript_lines(&self, width: u16) -> Option<Vec<Line<'static>>> {
-        let cell = self.active_cell.as_ref()?;
-        let lines = cell.transcript_lines(width);
+        let mut lines = Vec::new();
+        if let Some(cell) = self.active_cell.as_ref() {
+            lines.extend(cell.transcript_lines(width));
+        }
+        let subagent_lines = self.subagent_transcript_lines(width);
+        if !subagent_lines.is_empty() {
+            if !lines.is_empty() {
+                lines.push(Line::default());
+            }
+            lines.extend(subagent_lines);
+        }
         (!lines.is_empty()).then_some(lines)
+    }
+
+    fn subagent_transcript_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if self.subagents.is_empty() {
+            return Vec::new();
+        }
+        let mut cells: Vec<_> = self.subagents.iter().collect();
+        cells.sort_by_key(|(call_id, _)| *call_id);
+        let mut lines = Vec::new();
+        for (idx, (_, cell)) in cells.iter().enumerate() {
+            if idx > 0 {
+                lines.push(Line::default());
+            }
+            lines.extend(cell.transcript_lines(width));
+        }
+        lines
+    }
+
+    fn subagent_animation_tick(&self) -> Option<u64> {
+        self.subagents
+            .values()
+            .filter_map(HistoryCell::transcript_animation_tick)
+            .max()
     }
 
     /// Return a reference to the widget's current config (includes any
