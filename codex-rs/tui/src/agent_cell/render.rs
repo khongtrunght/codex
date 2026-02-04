@@ -4,10 +4,13 @@ use super::model::SubAgentStatus;
 use crate::exec_cell::spinner;
 use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell::HistoryCell;
+use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::WebSearchAction;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::SubAgentBeginEvent;
 use ratatui::prelude::*;
+use textwrap::wrap;
 
 /// Create a new SubAgentCell from a begin event.
 pub(crate) fn new_subagent_cell(
@@ -39,9 +42,20 @@ enum ToolCallResult {
     Rejected(String), // For future: tool rejection handling
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolCallKind {
+    ExecCommand,
+    PatchApply,
+    WebSearch,
+    Mcp,
+    ApiFunction,
+    ApiCustom,
+}
+
 /// Extracted tool call info for rendering.
 #[derive(Debug, Clone)]
 struct ToolCallInfo {
+    kind: ToolCallKind,
     tool_name: String,
     args: String, // e.g., "echo \"Hello World\"" or file path
     result: ToolCallResult,
@@ -58,8 +72,235 @@ fn truncate_to_n_chars(s: &str, n: usize) -> String {
     }
 }
 
+fn wrap_plain_text_lines(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+    for line in text.split('\n') {
+        if line.is_empty() {
+            wrapped.push(String::new());
+            continue;
+        }
+        wrapped.extend(
+            wrap(line, width)
+                .into_iter()
+                .map(std::borrow::Cow::into_owned),
+        );
+    }
+    wrapped
+}
+
+fn push_wrapped_lines(lines: &mut Vec<Line<'static>>, prefix: &str, text: &str, width: u16) {
+    let available = width.saturating_sub(prefix.chars().count() as u16) as usize;
+    let prefix = prefix.to_string();
+    for line in wrap_plain_text_lines(text, available) {
+        lines.push(Line::from(vec![prefix.clone().dim(), line.into()]));
+    }
+}
+
+fn push_wrapped_lines_red(lines: &mut Vec<Line<'static>>, prefix: &str, text: &str, width: u16) {
+    let available = width.saturating_sub(prefix.chars().count() as u16) as usize;
+    let prefix = prefix.to_string();
+    for line in wrap_plain_text_lines(text, available) {
+        lines.push(Line::from(vec![prefix.clone().dim(), line.red()]));
+    }
+}
+
+fn push_camel_word(word: &str, out: &mut String) {
+    let mut chars = word.chars();
+    if let Some(first) = chars.next() {
+        out.push(first.to_ascii_uppercase());
+        for ch in chars {
+            out.push(ch.to_ascii_lowercase());
+        }
+    }
+}
+
+fn to_camel_case(input: &str) -> String {
+    if input.is_empty() {
+        return String::new();
+    }
+    let has_separator = input.chars().any(|c| matches!(c, '_' | '-' | ' ' | '.'));
+    let is_all_lower = input
+        .chars()
+        .all(|c| !c.is_ascii_alphabetic() || c.is_ascii_lowercase());
+    if !has_separator && !is_all_lower {
+        return input.to_string();
+    }
+
+    let mut out = String::new();
+    let mut current = String::new();
+
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() {
+            current.push(ch);
+        } else if !current.is_empty() {
+            push_camel_word(&current, &mut out);
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        push_camel_word(&current, &mut out);
+    }
+    out
+}
+
+fn tool_name_key(name: &str) -> String {
+    name.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+fn should_display_tool_call(call: &ToolCallInfo) -> bool {
+    match call.kind {
+        ToolCallKind::ExecCommand | ToolCallKind::PatchApply | ToolCallKind::WebSearch => true,
+        ToolCallKind::ApiFunction | ToolCallKind::ApiCustom => {
+            tool_name_key(&call.tool_name) == "readfile"
+        }
+        ToolCallKind::Mcp => false,
+    }
+}
+
+fn display_tool_name(tool_name: &str) -> String {
+    to_camel_case(tool_name)
+}
+
+fn tool_calls_header_text(total: usize, visible: usize) -> String {
+    if total == visible {
+        format!("Tool calls ({total})")
+    } else {
+        format!("Tool calls ({total} total, showing {visible})")
+    }
+}
+
+fn web_search_args(action: &WebSearchAction) -> String {
+    match action {
+        WebSearchAction::Search { query } => match query.as_deref() {
+            Some(query) if !query.is_empty() => format!("Search: {query}"),
+            _ => "Search".to_string(),
+        },
+        WebSearchAction::OpenPage { url } => match url.as_deref() {
+            Some(url) if !url.is_empty() => format!("OpenPage: {url}"),
+            _ => "OpenPage".to_string(),
+        },
+        WebSearchAction::FindInPage { url, pattern } => {
+            let url = url.as_deref().unwrap_or_default();
+            let pattern = pattern.as_deref().unwrap_or_default();
+            if !url.is_empty() && !pattern.is_empty() {
+                format!("FindInPage: {url} · {pattern}")
+            } else if !url.is_empty() {
+                format!("FindInPage: {url}")
+            } else if !pattern.is_empty() {
+                format!("FindInPage: {pattern}")
+            } else {
+                "FindInPage".to_string()
+            }
+        }
+        WebSearchAction::Other => "WebSearch".to_string(),
+    }
+}
+
+fn render_tool_call_block(
+    lines: &mut Vec<Line<'static>>,
+    item_prefix: &str,
+    detail_prefix: &str,
+    call: &ToolCallInfo,
+    width: u16,
+) {
+    let item_prefix = item_prefix.to_string();
+    let detail_prefix = detail_prefix.to_string();
+    let tool_name = display_tool_name(&call.tool_name);
+    let available =
+        (width as usize).saturating_sub(item_prefix.chars().count() + tool_name.len() + 2);
+    let detail_width = width
+        .saturating_sub(detail_prefix.chars().count() as u16)
+        .max(1) as usize;
+    let args_text = if call.args.is_empty() {
+        "(no args)".to_string()
+    } else {
+        call.args.clone()
+    };
+    let header_available = available.max(10);
+    let args_len = args_text.chars().count();
+    if args_len <= header_available {
+        lines.push(Line::from(vec![
+            item_prefix.dim(),
+            tool_name.bold(),
+            ": ".into(),
+            args_text.dim(),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            item_prefix.dim(),
+            tool_name.bold(),
+            ":".into(),
+        ]));
+        for line in wrap_plain_text_lines(&args_text, detail_width) {
+            lines.push(Line::from(vec![detail_prefix.clone().dim(), line.dim()]));
+        }
+    }
+
+    match &call.result {
+        ToolCallResult::Running => {
+            lines.push(Line::from(vec![
+                detail_prefix.dim(),
+                "Waiting…".dim().italic(),
+            ]));
+        }
+        ToolCallResult::Success(output) => {
+            if output.is_empty() {
+                lines.push(Line::from(vec![detail_prefix.dim(), "(no output)".dim()]));
+                return;
+            }
+            let mut output_lines = output.lines();
+            let first_line = output_lines.next().unwrap_or("");
+            let truncated = truncate_to_n_chars(first_line, detail_width);
+            let truncated_more = first_line.chars().count() > detail_width;
+            let has_more = output_lines.next().is_some();
+            lines.push(Line::from(vec![
+                detail_prefix.clone().dim(),
+                truncated.into(),
+            ]));
+            if has_more || truncated_more {
+                lines.push(Line::from(vec![detail_prefix.dim(), "...".dim()]));
+            }
+        }
+        ToolCallResult::Error(err) => {
+            if err.is_empty() {
+                lines.push(Line::from(vec![detail_prefix.dim(), "Error".red()]));
+                return;
+            }
+            let mut err_lines = err.lines();
+            let first_line = err_lines.next().unwrap_or("");
+            let truncated = truncate_to_n_chars(first_line, detail_width);
+            let truncated_more = first_line.chars().count() > detail_width;
+            let has_more = err_lines.next().is_some();
+            lines.push(Line::from(vec![
+                detail_prefix.clone().dim(),
+                truncated.red(),
+            ]));
+            if has_more || truncated_more {
+                lines.push(Line::from(vec![detail_prefix.dim(), "...".red()]));
+            }
+        }
+        ToolCallResult::Rejected(reason) => {
+            let msg = format!("Tool use rejected: {reason}");
+            let truncated = truncate_to_n_chars(&msg, detail_width);
+            let truncated_more = msg.chars().count() > detail_width;
+            lines.push(Line::from(vec![
+                detail_prefix.clone().dim(),
+                truncated.dim(),
+            ]));
+            if truncated_more {
+                lines.push(Line::from(vec![detail_prefix.dim(), "...".dim()]));
+            }
+        }
+    }
+}
+
 /// Pending tool call waiting for result.
 struct PendingToolCall {
+    kind: ToolCallKind,
     tool_name: String,
     args: String,
 }
@@ -73,9 +314,46 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
     let mut pending: HashMap<String, PendingToolCall> = HashMap::new();
     let mut tool_calls = Vec::new();
     let mut seen_call_ids: HashSet<String> = HashSet::new();
+    let mut web_search_fallback_counter = 0usize;
 
     for event in raw_events {
         match event {
+            EventMsg::ItemStarted(start) => {
+                if let TurnItem::WebSearch(item) = &start.item
+                    && !seen_call_ids.contains(&item.id)
+                {
+                    seen_call_ids.insert(item.id.clone());
+                    pending.insert(
+                        item.id.clone(),
+                        PendingToolCall {
+                            kind: ToolCallKind::WebSearch,
+                            tool_name: "web_search".to_string(),
+                            args: item.query.clone(),
+                        },
+                    );
+                }
+            }
+            EventMsg::ItemCompleted(done) => {
+                if let TurnItem::WebSearch(item) = &done.item {
+                    if let Some(mut call) = pending.remove(&item.id) {
+                        call.args = item.query.clone();
+                        tool_calls.push(ToolCallInfo {
+                            kind: call.kind,
+                            tool_name: call.tool_name,
+                            args: call.args,
+                            result: ToolCallResult::Success("Search completed".to_string()),
+                        });
+                    } else if !seen_call_ids.contains(&item.id) {
+                        seen_call_ids.insert(item.id.clone());
+                        tool_calls.push(ToolCallInfo {
+                            kind: ToolCallKind::WebSearch,
+                            tool_name: "web_search".to_string(),
+                            args: item.query.clone(),
+                            result: ToolCallResult::Success("Search completed".to_string()),
+                        });
+                    }
+                }
+            }
             // Begin events - register pending call
             EventMsg::ExecCommandBegin(begin) => {
                 if !seen_call_ids.contains(&begin.call_id) {
@@ -84,7 +362,8 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                     pending.insert(
                         begin.call_id.clone(),
                         PendingToolCall {
-                            tool_name: "Shell".to_string(),
+                            kind: ToolCallKind::ExecCommand,
+                            tool_name: "shell".to_string(),
                             args: cmd,
                         },
                     );
@@ -96,6 +375,7 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                     pending.insert(
                         begin.call_id.clone(),
                         PendingToolCall {
+                            kind: ToolCallKind::Mcp,
                             tool_name: begin.invocation.tool.clone(),
                             args: begin.invocation.server.clone(),
                         },
@@ -119,7 +399,8 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                     pending.insert(
                         begin.call_id.clone(),
                         PendingToolCall {
-                            tool_name: "Write".to_string(),
+                            kind: ToolCallKind::PatchApply,
+                            tool_name: "apply_patch".to_string(),
                             args,
                         },
                     );
@@ -131,7 +412,8 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                     pending.insert(
                         begin.call_id.clone(),
                         PendingToolCall {
-                            tool_name: "WebSearch".to_string(),
+                            kind: ToolCallKind::WebSearch,
+                            tool_name: "web_search".to_string(),
                             args: String::new(),
                         },
                     );
@@ -160,6 +442,7 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                         ToolCallResult::Error(error)
                     };
                     tool_calls.push(ToolCallInfo {
+                        kind: call.kind,
                         tool_name: call.tool_name,
                         args: call.args,
                         result,
@@ -179,6 +462,7 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                         Err(e) => ToolCallResult::Error(e.clone()),
                     };
                     tool_calls.push(ToolCallInfo {
+                        kind: call.kind,
                         tool_name: call.tool_name,
                         args: call.args,
                         result,
@@ -205,6 +489,7 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                         ToolCallResult::Error(error)
                     };
                     tool_calls.push(ToolCallInfo {
+                        kind: call.kind,
                         tool_name: call.tool_name,
                         args: call.args,
                         result,
@@ -215,87 +500,117 @@ fn extract_tool_calls(raw_events: &[EventMsg]) -> Vec<ToolCallInfo> {
                 if let Some(mut call) = pending.remove(&end.call_id) {
                     call.args = end.query.clone();
                     tool_calls.push(ToolCallInfo {
+                        kind: call.kind,
                         tool_name: call.tool_name,
                         args: call.args,
                         result: ToolCallResult::Success("Search completed".to_string()),
                     });
                 }
             }
-
-            // Handle function_call and custom_tool_call from the API
-            EventMsg::RawResponseItem(raw) => {
-                match &raw.item {
-                    ResponseItem::FunctionCall {
-                        name,
-                        call_id,
-                        arguments,
-                        ..
-                    } => {
-                        // Only track if we haven't seen this call_id before (avoid duplicates)
-                        if !seen_call_ids.contains(call_id) {
-                            seen_call_ids.insert(call_id.clone());
-                            pending.insert(
-                                call_id.clone(),
-                                PendingToolCall {
-                                    tool_name: name.clone(),
-                                    args: arguments.clone(),
-                                },
-                            );
-                        }
-                    }
-                    ResponseItem::FunctionCallOutput { call_id, output } => {
-                        // Match with pending function call
-                        if let Some(call) = pending.remove(call_id) {
-                            let result = if output.success.unwrap_or(true) {
-                                ToolCallResult::Success(output.content.clone())
-                            } else {
-                                ToolCallResult::Error(output.content.clone())
-                            };
-                            tool_calls.push(ToolCallInfo {
-                                tool_name: call.tool_name,
-                                args: call.args,
-                                result,
-                            });
-                        }
-                    }
-                    ResponseItem::CustomToolCall {
-                        name,
-                        call_id,
-                        input,
-                        ..
-                    } => {
-                        // Only track if we haven't seen this call_id before (avoid duplicates)
-                        if !seen_call_ids.contains(call_id) {
-                            seen_call_ids.insert(call_id.clone());
-                            pending.insert(
-                                call_id.clone(),
-                                PendingToolCall {
-                                    tool_name: name.clone(),
-                                    args: input.clone(),
-                                },
-                            );
-                        }
-                    }
-                    ResponseItem::CustomToolCallOutput { call_id, output } => {
-                        // Match with pending custom tool call
-                        if let Some(call) = pending.remove(call_id) {
-                            tool_calls.push(ToolCallInfo {
-                                tool_name: call.tool_name,
-                                args: call.args,
-                                result: ToolCallResult::Success(output.clone()),
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            }
             _ => {}
+        }
+    }
+
+    for event in raw_events {
+        if let EventMsg::RawResponseItem(raw) = event {
+            match &raw.item {
+                ResponseItem::FunctionCall {
+                    name,
+                    call_id,
+                    arguments,
+                    ..
+                } => {
+                    // Only track if we haven't seen this call_id before (avoid duplicates)
+                    if !seen_call_ids.contains(call_id) {
+                        seen_call_ids.insert(call_id.clone());
+                        pending.insert(
+                            call_id.clone(),
+                            PendingToolCall {
+                                kind: ToolCallKind::ApiFunction,
+                                tool_name: name.clone(),
+                                args: arguments.clone(),
+                            },
+                        );
+                    }
+                }
+                ResponseItem::CustomToolCall {
+                    name,
+                    call_id,
+                    input,
+                    ..
+                } => {
+                    // Only track if we haven't seen this call_id before (avoid duplicates)
+                    if !seen_call_ids.contains(call_id) {
+                        seen_call_ids.insert(call_id.clone());
+                        pending.insert(
+                            call_id.clone(),
+                            PendingToolCall {
+                                kind: ToolCallKind::ApiCustom,
+                                tool_name: name.clone(),
+                                args: input.clone(),
+                            },
+                        );
+                    }
+                }
+                ResponseItem::WebSearchCall { id, action, .. } => {
+                    let call_id = id.clone().unwrap_or_else(|| {
+                        web_search_fallback_counter += 1;
+                        format!("web_search_{web_search_fallback_counter}")
+                    });
+                    if !seen_call_ids.contains(&call_id) {
+                        seen_call_ids.insert(call_id.clone());
+                        tool_calls.push(ToolCallInfo {
+                            kind: ToolCallKind::WebSearch,
+                            tool_name: "web_search".to_string(),
+                            args: web_search_args(action),
+                            result: ToolCallResult::Success("Search completed".to_string()),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for event in raw_events {
+        if let EventMsg::RawResponseItem(raw) = event {
+            match &raw.item {
+                ResponseItem::FunctionCallOutput { call_id, output } => {
+                    // Match with pending function call
+                    if let Some(call) = pending.remove(call_id) {
+                        let result = if output.success.unwrap_or(true) {
+                            ToolCallResult::Success(output.content.clone())
+                        } else {
+                            ToolCallResult::Error(output.content.clone())
+                        };
+                        tool_calls.push(ToolCallInfo {
+                            kind: call.kind,
+                            tool_name: call.tool_name,
+                            args: call.args,
+                            result,
+                        });
+                    }
+                }
+                ResponseItem::CustomToolCallOutput { call_id, output } => {
+                    // Match with pending custom tool call
+                    if let Some(call) = pending.remove(call_id) {
+                        tool_calls.push(ToolCallInfo {
+                            kind: call.kind,
+                            tool_name: call.tool_name,
+                            args: call.args,
+                            result: ToolCallResult::Success(output.clone()),
+                        });
+                    }
+                }
+                _ => {}
+            }
         }
     }
 
     // Add any remaining pending calls as "Running"
     for (_, call) in pending {
         tool_calls.push(ToolCallInfo {
+            kind: call.kind,
             tool_name: call.tool_name,
             args: call.args,
             result: ToolCallResult::Running,
@@ -385,6 +700,11 @@ impl SubAgentCell {
 
         let tool_calls = extract_tool_calls(&agent.raw_events);
         let tool_count = tool_calls.len();
+        let visible_tool_calls: Vec<&ToolCallInfo> = tool_calls
+            .iter()
+            .filter(|call| should_display_tool_call(call))
+            .collect();
+        let visible_count = visible_tool_calls.len();
         let tool_word = if tool_count == 1 {
             "tool use"
         } else {
@@ -401,58 +721,21 @@ impl SubAgentCell {
             // Prompt section
             if let Some(prompt) = &agent.prompt {
                 lines.push(Line::from(vec!["  ├ ".dim(), "Prompt:".green().bold()]));
-                for line in prompt.lines().take(3) {
-                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(6));
-                    lines.push(Line::from(vec!["  │   ".dim(), truncated.into()]));
-                }
-                if prompt.lines().count() > 3 {
-                    lines.push(Line::from(vec!["  │   ".dim(), "...".dim()]));
-                }
+                push_wrapped_lines(&mut lines, "  │   ", prompt, width);
             }
 
             // Tool calls section with results
-            for call in &tool_calls {
-                let available = (width as usize).saturating_sub(8 + call.tool_name.len() + 2);
-                // Tool call header: "  ├ Shell(echo "Hello World")"
-                lines.push(Line::from(vec![
-                    "  ├ ".dim(),
-                    call.tool_name.clone().bold(),
-                    format!("({})", truncate_to_n_chars(&call.args, available)).into(),
-                ]));
-
-                // Tool result - first line gets "├", rest are indented
-                match &call.result {
-                    ToolCallResult::Running => {
-                        lines.push(Line::from(vec!["    ".into(), "Waiting…".dim().italic()]));
-                    }
-                    ToolCallResult::Success(output) => {
-                        let mut output_lines = output.lines().take(5);
-                        // First line with marker
-                        if let Some(first) = output_lines.next() {
-                            let truncated =
-                                truncate_to_n_chars(first, (width as usize).saturating_sub(6));
-                            lines.push(Line::from(vec!["  ├ ".dim(), truncated.into()]));
-                        }
-                        // Rest indented without marker
-                        for line in output_lines {
-                            let truncated =
-                                truncate_to_n_chars(line, (width as usize).saturating_sub(6));
-                            lines.push(Line::from(vec!["    ".into(), truncated.into()]));
-                        }
-                        if output.lines().count() > 5 {
-                            lines.push(Line::from(vec!["    ".into(), "...".dim()]));
-                        }
-                    }
-                    ToolCallResult::Error(err) => {
-                        let truncated =
-                            truncate_to_n_chars(err, (width as usize).saturating_sub(6));
-                        lines.push(Line::from(vec!["  ├ ".dim(), truncated.red()]));
-                    }
-                    ToolCallResult::Rejected(reason) => {
-                        let msg = format!("Tool use rejected: {reason}");
-                        let truncated =
-                            truncate_to_n_chars(&msg, (width as usize).saturating_sub(6));
-                        lines.push(Line::from(vec!["  ├ ".dim(), truncated.dim()]));
+            if tool_count > 0 {
+                let header_text = tool_calls_header_text(tool_count, visible_count);
+                lines.push(Line::from(vec!["  ├ ".dim(), header_text.cyan().bold()]));
+                if visible_tool_calls.is_empty() {
+                    lines.push(Line::from(vec![
+                        "  │   ".dim(),
+                        "No Shell/Apply Patch/Read File calls to show.".dim(),
+                    ]));
+                } else {
+                    for call in &visible_tool_calls {
+                        render_tool_call_block(&mut lines, "  │   ", "  │     ", call, width);
                     }
                 }
             }
@@ -461,19 +744,11 @@ impl SubAgentCell {
             match &agent.status {
                 SubAgentStatus::Completed(Some(response)) if !response.is_empty() => {
                     lines.push(Line::from(vec!["  ├ ".dim(), "Response:".green().bold()]));
-                    for line in response.lines().take(5) {
-                        let truncated =
-                            truncate_to_n_chars(line, (width as usize).saturating_sub(6));
-                        lines.push(Line::from(vec!["  │   ".dim(), truncated.into()]));
-                    }
-                    if response.lines().count() > 5 {
-                        lines.push(Line::from(vec!["  │   ".dim(), "...".dim()]));
-                    }
+                    push_wrapped_lines(&mut lines, "  │   ", response, width);
                 }
                 SubAgentStatus::Error(msg) => {
                     lines.push(Line::from(vec!["  ├ ".dim(), "Error:".red().bold()]));
-                    let truncated = truncate_to_n_chars(msg, (width as usize).saturating_sub(6));
-                    lines.push(Line::from(vec!["  │   ".dim(), truncated.red()]));
+                    push_wrapped_lines_red(&mut lines, "  │   ", msg, width);
                 }
                 _ => {}
             }
@@ -493,10 +768,14 @@ impl SubAgentCell {
             // COLLAPSED MODE: Show current tool (running) or Done stats
             let detail_line: Line<'static> = match &agent.status {
                 SubAgentStatus::Running => {
-                    let text = if let Some(last_call) = tool_calls.last() {
-                        let tool_name = &last_call.tool_name;
+                    let text = if let Some(last_call) = visible_tool_calls.last() {
+                        let tool_name = display_tool_name(&last_call.tool_name);
                         let args = truncate_to_n_chars(&last_call.args, 60);
-                        format!("{tool_name}({args})")
+                        if last_call.args.is_empty() {
+                            tool_name
+                        } else {
+                            format!("{tool_name}: {args}")
+                        }
                     } else {
                         "Running...".to_string()
                     };
@@ -645,97 +924,41 @@ impl SubAgentCell {
             ")".into(),
         ]));
 
+        let tool_calls = extract_tool_calls(&agent.raw_events);
+        let tool_count = tool_calls.len();
+        let visible_tool_calls: Vec<&ToolCallInfo> = tool_calls
+            .iter()
+            .filter(|call| should_display_tool_call(call))
+            .collect();
+        let visible_count = visible_tool_calls.len();
+        let section_prefix = format!("{continuation}├ ");
+        let content_prefix = format!("{continuation}│   ");
+        let detail_prefix = format!("{continuation}│     ");
+
         // Prompt section
         if let Some(prompt) = &agent.prompt {
             lines.push(Line::from(vec![
-                continuation.dim(),
-                "├ ".dim(),
+                section_prefix.clone().dim(),
                 "Prompt:".green().bold(),
             ]));
-            for line in prompt.lines().take(3) {
-                let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
-                lines.push(Line::from(vec![
-                    continuation.dim(),
-                    "│   ".dim(),
-                    truncated.into(),
-                ]));
-            }
-            if prompt.lines().count() > 3 {
-                lines.push(Line::from(vec![
-                    continuation.dim(),
-                    "│   ".dim(),
-                    "...".dim(),
-                ]));
-            }
+            push_wrapped_lines(lines, &content_prefix, prompt, width);
         }
 
         // Tool calls with results
-        let tool_calls = extract_tool_calls(&agent.raw_events);
-        for call in &tool_calls {
-            let available = (width as usize).saturating_sub(10 + call.tool_name.len());
-            // Tool call header
+        if tool_count > 0 {
+            let header_text = tool_calls_header_text(tool_count, visible_count);
             lines.push(Line::from(vec![
-                continuation.dim(),
-                "├ ".dim(),
-                call.tool_name.clone().bold(),
-                format!("({})", truncate_to_n_chars(&call.args, available)).into(),
+                section_prefix.clone().dim(),
+                header_text.cyan().bold(),
             ]));
-
-            // Tool result - first line gets "├", rest are indented
-            match &call.result {
-                ToolCallResult::Running => {
-                    lines.push(Line::from(vec![
-                        continuation.dim(),
-                        "  ".into(),
-                        "Waiting…".dim().italic(),
-                    ]));
-                }
-                ToolCallResult::Success(output) => {
-                    let mut output_lines = output.lines().take(3);
-                    // First line with marker
-                    if let Some(first) = output_lines.next() {
-                        let truncated =
-                            truncate_to_n_chars(first, (width as usize).saturating_sub(8));
-                        lines.push(Line::from(vec![
-                            continuation.dim(),
-                            "├ ".dim(),
-                            truncated.into(),
-                        ]));
-                    }
-                    // Rest indented without marker
-                    for line in output_lines {
-                        let truncated =
-                            truncate_to_n_chars(line, (width as usize).saturating_sub(8));
-                        lines.push(Line::from(vec![
-                            continuation.dim(),
-                            "  ".into(),
-                            truncated.into(),
-                        ]));
-                    }
-                    if output.lines().count() > 3 {
-                        lines.push(Line::from(vec![
-                            continuation.dim(),
-                            "  ".into(),
-                            "...".dim(),
-                        ]));
-                    }
-                }
-                ToolCallResult::Error(err) => {
-                    let truncated = truncate_to_n_chars(err, (width as usize).saturating_sub(8));
-                    lines.push(Line::from(vec![
-                        continuation.dim(),
-                        "├ ".dim(),
-                        truncated.red(),
-                    ]));
-                }
-                ToolCallResult::Rejected(reason) => {
-                    let msg = format!("Tool use rejected: {reason}");
-                    let truncated = truncate_to_n_chars(&msg, (width as usize).saturating_sub(8));
-                    lines.push(Line::from(vec![
-                        continuation.dim(),
-                        "├ ".dim(),
-                        truncated.dim(),
-                    ]));
+            if visible_tool_calls.is_empty() {
+                lines.push(Line::from(vec![
+                    content_prefix.clone().dim(),
+                    "No Shell/Apply Patch/Read File calls to show.".dim(),
+                ]));
+            } else {
+                for call in &visible_tool_calls {
+                    render_tool_call_block(lines, &content_prefix, &detail_prefix, call, width);
                 }
             }
         }
@@ -744,44 +967,22 @@ impl SubAgentCell {
         match &agent.status {
             SubAgentStatus::Completed(Some(response)) if !response.is_empty() => {
                 lines.push(Line::from(vec![
-                    continuation.dim(),
-                    "├ ".dim(),
+                    section_prefix.dim(),
                     "Response:".green().bold(),
                 ]));
-                for line in response.lines().take(3) {
-                    let truncated = truncate_to_n_chars(line, (width as usize).saturating_sub(8));
-                    lines.push(Line::from(vec![
-                        continuation.dim(),
-                        "│   ".dim(),
-                        truncated.into(),
-                    ]));
-                }
-                if response.lines().count() > 3 {
-                    lines.push(Line::from(vec![
-                        continuation.dim(),
-                        "│   ".dim(),
-                        "...".dim(),
-                    ]));
-                }
+                push_wrapped_lines(lines, &content_prefix, response, width);
             }
             SubAgentStatus::Error(msg) => {
                 lines.push(Line::from(vec![
-                    continuation.dim(),
-                    "├ ".dim(),
+                    section_prefix.dim(),
                     "Error:".red().bold(),
                 ]));
-                let truncated = truncate_to_n_chars(msg, (width as usize).saturating_sub(8));
-                lines.push(Line::from(vec![
-                    continuation.dim(),
-                    "│   ".dim(),
-                    truncated.red(),
-                ]));
+                push_wrapped_lines_red(lines, &content_prefix, msg, width);
             }
             _ => {}
         }
 
         // Status line
-        let tool_count = tool_calls.len();
         let tool_word = if tool_count == 1 {
             "tool use"
         } else {
