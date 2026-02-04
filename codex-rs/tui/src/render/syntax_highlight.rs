@@ -209,7 +209,7 @@ impl SyntaxCategory {
         Self::VariableParameter,
     ];
 
-    fn style(self, theme: &impl Theme) -> Style {
+    fn style(self, theme: &(impl Theme + ?Sized)) -> Style {
         theme.style(self)
     }
 }
@@ -550,7 +550,11 @@ fn push_segment(lines: &mut Vec<Line<'static>>, segment: &str, style: Option<Sty
 /// - Unsupported languages
 /// - Parse errors
 /// - Empty input
-pub fn highlight_code_to_lines<T: Theme>(code: &str, lang: &str, theme: &T) -> Vec<Line<'static>> {
+pub fn highlight_code_to_lines<T: Theme + ?Sized>(
+    code: &str,
+    lang: &str,
+    theme: &T,
+) -> Vec<Line<'static>> {
     if code.is_empty() {
         return vec![Line::from("")];
     }

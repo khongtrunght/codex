@@ -34,6 +34,7 @@
 
 use crate::render::line_utils::line_to_static;
 use crate::render::syntax_highlight::MarkdownTheme;
+use crate::render::syntax_highlight::Theme;
 use crate::render::syntax_highlight::highlight_code_to_lines;
 use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_line;
@@ -168,11 +169,19 @@ pub fn render_markdown_text(input: &str) -> Text<'static> {
 /// This is primarily used for non-streaming rendering where storing width-derived wrapping is
 /// acceptable or where the caller immediately consumes the output.
 pub(crate) fn render_markdown_text_with_width(input: &str, width: Option<usize>) -> Text<'static> {
+    render_markdown_text_with_width_and_theme(input, width, &MarkdownTheme)
+}
+
+pub(crate) fn render_markdown_text_with_width_and_theme(
+    input: &str,
+    width: Option<usize>,
+    theme: &dyn Theme,
+) -> Text<'static> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
     let parser = Parser::new_ext(input, options);
-    let mut w = Writer::new(parser, width, true, false);
+    let mut w = Writer::new(parser, width, true, false, theme);
     w.run();
     w.text
 }
@@ -186,7 +195,7 @@ pub(crate) fn render_markdown_logical_lines(input: &str) -> Vec<MarkdownLogicalL
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
     let parser = Parser::new_ext(input, options);
-    let mut w = Writer::new(parser, None, false, true);
+    let mut w = Writer::new(parser, None, false, true, &MarkdownTheme);
     w.run();
     w.logical_lines
 }
@@ -197,7 +206,7 @@ pub(crate) fn render_markdown_logical_lines(input: &str) -> Vec<MarkdownLogicalL
 ///
 /// The writer tracks markdown structure (paragraphs, lists, blockquotes, code blocks) and builds up
 /// a "current logical line". `flush_current_line` commits it to the selected output(s).
-struct Writer<'a, I>
+struct Writer<'a, 't, I>
 where
     I: Iterator<Item = Event<'a>>,
 {
@@ -228,17 +237,24 @@ where
     current_subsequent_indent: Vec<Span<'static>>,
     current_line_style: Style,
     current_line_in_code_block: bool,
+    code_theme: &'t dyn Theme,
 
     emit_text: bool,
     emit_logical_lines: bool,
     has_output_lines: bool,
 }
 
-impl<'a, I> Writer<'a, I>
+impl<'a, 't, I> Writer<'a, 't, I>
 where
     I: Iterator<Item = Event<'a>>,
 {
-    fn new(iter: I, wrap_width: Option<usize>, emit_text: bool, emit_logical_lines: bool) -> Self {
+    fn new(
+        iter: I,
+        wrap_width: Option<usize>,
+        emit_text: bool,
+        emit_logical_lines: bool,
+        code_theme: &'t dyn Theme,
+    ) -> Self {
         Self {
             iter,
             text: Text::default(),
@@ -266,6 +282,7 @@ where
             current_subsequent_indent: Vec::new(),
             current_line_style: Style::default(),
             current_line_in_code_block: false,
+            code_theme,
             emit_text,
             emit_logical_lines,
             has_output_lines: false,
@@ -586,7 +603,7 @@ where
             // Trim trailing newline that markdown parser adds
             let code = code.trim_end_matches('\n');
             if !code.is_empty() {
-                let highlighted_lines = highlight_code_to_lines(code, &lang, &MarkdownTheme);
+                let highlighted_lines = highlight_code_to_lines(code, &lang, self.code_theme);
                 for line in highlighted_lines {
                     self.push_line(line);
                     self.flush_current_line();

@@ -63,6 +63,7 @@ use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
 use codex_core::protocol::ExecCommandOutputDeltaEvent;
 use codex_core::protocol::ExecCommandSource;
+use codex_core::protocol::ExitPlanModeApprovalRequestEvent;
 use codex_core::protocol::ExitedReviewModeEvent;
 use codex_core::protocol::ListCustomPromptsResponseEvent;
 use codex_core::protocol::ListSkillsResponseEvent;
@@ -1238,6 +1239,14 @@ impl ChatWidget {
         );
     }
 
+    fn on_exit_plan_mode_approval_request(&mut self, ev: ExitPlanModeApprovalRequestEvent) {
+        let ev2 = ev.clone();
+        self.defer_or_handle(
+            |q| q.push_exit_plan_mode_approval(ev),
+            |s| s.handle_exit_plan_mode_approval_now(ev2),
+        );
+    }
+
     fn on_ask_user_question_request(&mut self, id: String, ev: AskUserQuestionRequestEvent) {
         self.flush_answer_stream_with_separator();
 
@@ -1754,6 +1763,22 @@ impl ChatWidget {
             server_name: ev.server_name,
             request_id: ev.id,
             message: ev.message,
+        };
+        self.bottom_pane
+            .push_approval_request(request, &self.config.features);
+        self.request_redraw();
+    }
+
+    pub(crate) fn handle_exit_plan_mode_approval_now(
+        &mut self,
+        ev: ExitPlanModeApprovalRequestEvent,
+    ) {
+        self.flush_answer_stream_with_separator();
+
+        let request = ApprovalRequest::ExitPlanMode {
+            turn_id: ev.turn_id,
+            plan: ev.plan,
+            plan_file_path: ev.plan_file_path,
         };
         self.bottom_pane
             .push_approval_request(request, &self.config.features);
@@ -2803,6 +2828,9 @@ impl ChatWidget {
             EventMsg::ElicitationRequest(ev) => {
                 self.on_elicitation_request(ev);
             }
+            EventMsg::ExitPlanModeApprovalRequest(ev) => {
+                self.on_exit_plan_mode_approval_request(ev);
+            }
             EventMsg::ExecCommandBegin(ev) => self.on_exec_command_begin(ev),
             EventMsg::TerminalInteraction(delta) => self.on_terminal_interaction(delta),
             EventMsg::ExecCommandOutputDelta(delta) => self.on_exec_command_output_delta(delta),
@@ -2880,8 +2908,7 @@ impl ChatWidget {
             | EventMsg::ItemCompleted(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::ReasoningContentDelta(_)
-            | EventMsg::ReasoningRawContentDelta(_)
-            | EventMsg::ExitPlanModeApprovalRequest(_) => {}
+            | EventMsg::ReasoningRawContentDelta(_) => {}
             EventMsg::AskUserQuestionRequest(ev) => {
                 self.on_ask_user_question_request(id.unwrap_or_default(), ev);
             }

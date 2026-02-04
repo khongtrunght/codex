@@ -17,12 +17,14 @@ use crate::history_cell;
 use crate::history_cell::HistoryCell;
 #[cfg(not(debug_assertions))]
 use crate::history_cell::UpdateAvailableHistoryCell;
+use crate::markdown_render::render_markdown_text_with_width_and_theme;
 use crate::model_migration::ModelMigrationOutcome;
 use crate::model_migration::migration_copy_for_models;
 use crate::model_migration::run_model_migration_prompt;
 use crate::pager_overlay::Overlay;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
+use crate::render::syntax_highlight::DefaultTheme;
 use crate::resume_picker::SessionSelection;
 use crate::tui;
 use crate::tui::TuiEvent;
@@ -58,6 +60,8 @@ use color_eyre::eyre::WrapErr;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
@@ -77,6 +81,48 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc::unbounded_channel;
 
 const EXTERNAL_EDITOR_HINT: &str = "Save and close external editor to continue.";
+
+struct ExitPlanModeOverlay {
+    plan: String,
+    plan_file_path: PathBuf,
+}
+
+impl ExitPlanModeOverlay {
+    fn new(plan: String, plan_file_path: PathBuf) -> Self {
+        Self {
+            plan,
+            plan_file_path,
+        }
+    }
+
+    fn build_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::from(vec![
+                "Plan file: ".into(),
+                self.plan_file_path.display().to_string().italic(),
+            ]),
+            Line::from(""),
+        ];
+        let wrap_width = (width > 0).then_some(width as usize);
+        let rendered =
+            render_markdown_text_with_width_and_theme(&self.plan, wrap_width, &DefaultTheme);
+        lines.extend(rendered.lines);
+        lines
+    }
+}
+
+impl Renderable for ExitPlanModeOverlay {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let paragraph = Paragraph::new(self.build_lines(area.width)).wrap(Wrap { trim: false });
+        paragraph.render(area, buf);
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        Paragraph::new(self.build_lines(width))
+            .wrap(Wrap { trim: false })
+            .line_count(width) as u16
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AppExitInfo {
@@ -1485,6 +1531,17 @@ impl App {
                     self.overlay = Some(Overlay::new_static_with_renderables(
                         vec![Box::new(paragraph)],
                         "E L I C I T A T I O N".to_string(),
+                    ));
+                }
+                ApprovalRequest::ExitPlanMode {
+                    plan,
+                    plan_file_path,
+                    ..
+                } => {
+                    let _ = tui.enter_alt_screen();
+                    self.overlay = Some(Overlay::new_static_with_renderables(
+                        vec![Box::new(ExitPlanModeOverlay::new(plan, plan_file_path))],
+                        "P L A N".to_string(),
                     ));
                 }
             },

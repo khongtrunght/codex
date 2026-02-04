@@ -13,13 +13,16 @@ use crate::exec_command::strip_bash_lc_and_escape;
 use crate::history_cell;
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
+use crate::markdown_render::render_markdown_text_with_width_and_theme;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
+use crate::render::syntax_highlight::DefaultTheme;
 use codex_core::features::Feature;
 use codex_core::features::Features;
 use codex_core::protocol::ElicitationAction;
 use codex_core::protocol::ExecPolicyAmendment;
+use codex_core::protocol::ExitPlanModeApprovalResponse;
 use codex_core::protocol::FileChange;
 use codex_core::protocol::Op;
 use codex_core::protocol::ReviewDecision;
@@ -60,6 +63,14 @@ pub(crate) enum ApprovalRequest {
         server_name: String,
         request_id: RequestId,
         message: String,
+    },
+    ExitPlanMode {
+        /// Turn ID for the pending approval
+        turn_id: String,
+        /// Plan content for review
+        plan: String,
+        /// Path to the plan file
+        plan_file_path: PathBuf,
     },
 }
 
@@ -127,6 +138,10 @@ impl ApprovalOverlay {
             ApprovalVariant::McpElicitation { server_name, .. } => (
                 elicitation_options(),
                 format!("{server_name} needs your approval."),
+            ),
+            ApprovalVariant::ExitPlanMode { .. } => (
+                exit_plan_mode_options(),
+                "Would you like to exit plan mode with this plan?".to_string(),
             ),
         };
 
@@ -199,6 +214,12 @@ impl ApprovalOverlay {
                 ) => {
                     self.handle_elicitation_decision(server_name, request_id, *decision);
                 }
+                (
+                    ApprovalVariant::ExitPlanMode { turn_id, .. },
+                    ApprovalDecision::ExitPlanMode(response),
+                ) => {
+                    self.handle_exit_plan_mode_decision(turn_id, response.clone());
+                }
                 _ => {}
             }
         }
@@ -258,6 +279,18 @@ impl ApprovalOverlay {
                 server_name: server_name.to_string(),
                 request_id: request_id.clone(),
                 decision,
+            }));
+    }
+
+    fn handle_exit_plan_mode_decision(
+        &self,
+        turn_id: &str,
+        response: ExitPlanModeApprovalResponse,
+    ) {
+        self.app_event_tx
+            .send(AppEvent::CodexOp(Op::ExitPlanModeApproval {
+                id: turn_id.to_string(),
+                response,
             }));
     }
 
@@ -339,6 +372,12 @@ impl BottomPaneView for ApprovalOverlay {
                         server_name,
                         request_id,
                         ElicitationAction::Cancel,
+                    );
+                }
+                ApprovalVariant::ExitPlanMode { turn_id, .. } => {
+                    self.handle_exit_plan_mode_decision(
+                        turn_id,
+                        ExitPlanModeApprovalResponse { approved: false },
                     );
                 }
             }
@@ -453,7 +492,65 @@ impl From<ApprovalRequest> for ApprovalRequestState {
                     header: Box::new(header),
                 }
             }
+            ApprovalRequest::ExitPlanMode {
+                turn_id,
+                plan,
+                plan_file_path,
+            } => Self {
+                variant: ApprovalVariant::ExitPlanMode { turn_id },
+                header: Box::new(ExitPlanModeHeader {
+                    plan,
+                    plan_file_path,
+                }),
+            },
         }
+    }
+}
+
+struct ExitPlanModeHeader {
+    plan: String,
+    plan_file_path: PathBuf,
+}
+
+impl ExitPlanModeHeader {
+    fn build_lines(&self, width: u16) -> Vec<Line<'static>> {
+        let mut lines = vec![
+            Line::from("Exit plan mode with the following plan:".bold()),
+            Line::from(""),
+            Line::from(vec![
+                "Plan file: ".into(),
+                self.plan_file_path.display().to_string().italic(),
+            ]),
+            Line::from(""),
+        ];
+
+        let wrap_width = (width > 0).then_some(width as usize);
+        let rendered =
+            render_markdown_text_with_width_and_theme(&self.plan, wrap_width, &DefaultTheme);
+        lines.extend(rendered.lines);
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            "Press ".dim(),
+            key_hint::ctrl(KeyCode::Char('a')).into(),
+            " to view the full plan".dim(),
+        ]));
+
+        lines
+    }
+}
+
+impl Renderable for ExitPlanModeHeader {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        let mut column = ColumnRenderable::new();
+        for line in self.build_lines(area.width) {
+            column.push(line);
+        }
+        column.render(area, buf);
+    }
+
+    fn desired_height(&self, width: u16) -> u16 {
+        self.build_lines(width).len() as u16
     }
 }
 
@@ -473,12 +570,16 @@ enum ApprovalVariant {
         server_name: String,
         request_id: RequestId,
     },
+    ExitPlanMode {
+        turn_id: String,
+    },
 }
 
 #[derive(Clone)]
 enum ApprovalDecision {
     Review(ReviewDecision),
     McpElicitation(ElicitationAction),
+    ExitPlanMode(ExitPlanModeApprovalResponse),
 }
 
 #[derive(Clone)]
@@ -582,6 +683,27 @@ fn elicitation_options() -> Vec<ApprovalOption> {
             decision: ApprovalDecision::McpElicitation(ElicitationAction::Cancel),
             display_shortcut: Some(key_hint::plain(KeyCode::Esc)),
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('c'))],
+        },
+    ]
+}
+
+fn exit_plan_mode_options() -> Vec<ApprovalOption> {
+    vec![
+        ApprovalOption {
+            label: "Yes, start executing".to_string(),
+            decision: ApprovalDecision::ExitPlanMode(ExitPlanModeApprovalResponse {
+                approved: true,
+            }),
+            display_shortcut: None,
+            additional_shortcuts: vec![key_hint::plain(KeyCode::Char('y'))],
+        },
+        ApprovalOption {
+            label: "No, continue planning".to_string(),
+            decision: ApprovalDecision::ExitPlanMode(ExitPlanModeApprovalResponse {
+                approved: false,
+            }),
+            display_shortcut: Some(key_hint::plain(KeyCode::Esc)),
+            additional_shortcuts: vec![key_hint::plain(KeyCode::Char('n'))],
         },
     ]
 }
@@ -777,5 +899,52 @@ mod tests {
             }
         }
         assert_eq!(decision, Some(ReviewDecision::Approved));
+    }
+
+    #[test]
+    fn exit_plan_mode_options_returns_correct_options() {
+        let options = exit_plan_mode_options();
+
+        assert_eq!(options.len(), 2);
+
+        if let ApprovalDecision::ExitPlanMode(response) = &options[0].decision {
+            assert!(response.approved);
+        } else {
+            panic!("expected ExitPlanMode decision for first option");
+        }
+
+        if let ApprovalDecision::ExitPlanMode(response) = &options[1].decision {
+            assert!(!response.approved);
+        } else {
+            panic!("expected ExitPlanMode decision for second option");
+        }
+    }
+
+    #[test]
+    fn exit_plan_mode_approval_emits_correct_op() {
+        let (tx, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx);
+
+        let request = ApprovalRequest::ExitPlanMode {
+            turn_id: "turn-123".to_string(),
+            plan: "Test plan".to_string(),
+            plan_file_path: PathBuf::from("/tmp/test.md"),
+        };
+
+        let mut view = ApprovalOverlay::new(request, tx, Features::with_defaults());
+
+        view.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+        let mut found_op = None;
+        while let Ok(ev) = rx.try_recv() {
+            if let AppEvent::CodexOp(Op::ExitPlanModeApproval { id, response }) = ev {
+                found_op = Some((id, response));
+                break;
+            }
+        }
+
+        let (id, response) = found_op.expect("expected ExitPlanModeApproval op");
+        assert_eq!(id, "turn-123");
+        assert!(response.approved);
     }
 }

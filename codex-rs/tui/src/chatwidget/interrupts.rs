@@ -4,6 +4,7 @@ use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::ExecApprovalRequestEvent;
 use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
+use codex_core::protocol::ExitPlanModeApprovalRequestEvent;
 use codex_core::protocol::McpToolCallBeginEvent;
 use codex_core::protocol::McpToolCallEndEvent;
 use codex_core::protocol::PatchApplyEndEvent;
@@ -17,6 +18,7 @@ pub(crate) enum QueuedInterrupt {
     ExecApproval(String, ExecApprovalRequestEvent, Option<ThreadId>),
     ApplyPatchApproval(String, ApplyPatchApprovalRequestEvent, Option<ThreadId>),
     Elicitation(ElicitationRequestEvent),
+    ExitPlanModeApproval(ExitPlanModeApprovalRequestEvent),
     ExecBegin(ExecCommandBeginEvent),
     ExecEnd(ExecCommandEndEvent),
     McpBegin(McpToolCallBeginEvent),
@@ -65,6 +67,11 @@ impl InterruptManager {
         self.queue.push_back(QueuedInterrupt::Elicitation(ev));
     }
 
+    pub(crate) fn push_exit_plan_mode_approval(&mut self, ev: ExitPlanModeApprovalRequestEvent) {
+        self.queue
+            .push_back(QueuedInterrupt::ExitPlanModeApproval(ev));
+    }
+
     pub(crate) fn push_exec_begin(&mut self, ev: ExecCommandBeginEvent) {
         self.queue.push_back(QueuedInterrupt::ExecBegin(ev));
     }
@@ -95,6 +102,9 @@ impl InterruptManager {
                     chat.handle_apply_patch_approval_now(id, ev, target_thread)
                 }
                 QueuedInterrupt::Elicitation(ev) => chat.handle_elicitation_request_now(ev),
+                QueuedInterrupt::ExitPlanModeApproval(ev) => {
+                    chat.handle_exit_plan_mode_approval_now(ev)
+                }
                 QueuedInterrupt::ExecBegin(ev) => chat.handle_exec_begin_now(ev),
                 QueuedInterrupt::ExecEnd(ev) => chat.handle_exec_end_now(ev),
                 QueuedInterrupt::McpBegin(ev) => chat.handle_mcp_begin_now(ev),
