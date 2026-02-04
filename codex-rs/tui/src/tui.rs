@@ -13,7 +13,6 @@ use std::sync::atomic::Ordering;
 
 use crossterm::Command;
 use crossterm::SynchronizedUpdate;
-use crossterm::cursor::MoveTo;
 use crossterm::event::DisableBracketedPaste;
 use crossterm::event::DisableFocusChange;
 use crossterm::event::EnableBracketedPaste;
@@ -22,8 +21,6 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyboardEnhancementFlags;
 use crossterm::event::PopKeyboardEnhancementFlags;
 use crossterm::event::PushKeyboardEnhancementFlags;
-use crossterm::terminal::Clear;
-use crossterm::terminal::ClearType;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
 use crossterm::terminal::supports_keyboard_enhancement;
@@ -33,7 +30,6 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::disable_raw_mode;
 use ratatui::crossterm::terminal::enable_raw_mode;
 use ratatui::layout::Offset;
-use ratatui::layout::Position;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use tokio::sync::broadcast;
@@ -457,19 +453,6 @@ impl Tui {
     pub fn insert_history_lines(&mut self, lines: Vec<Line<'static>>) {
         self.pending_history_lines.extend(lines);
         self.frame_requester().schedule_frame();
-    }
-
-    pub fn clear_terminal_and_scrollback(&mut self) -> Result<()> {
-        execute!(
-            self.terminal.backend_mut(),
-            Clear(ClearType::Purge),
-            Clear(ClearType::All),
-            MoveTo(0, 0)
-        )?;
-        self.pending_history_lines.clear();
-        self.terminal.set_cursor_position(Position::new(0, 0))?;
-        self.terminal.clear()?;
-        Ok(())
     }
 
     pub fn draw(

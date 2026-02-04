@@ -86,14 +86,6 @@ impl SubAgentCell {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_entries(entries: Vec<SubAgentEntry>, animations_enabled: bool) -> Self {
-        Self {
-            agents: entries,
-            animations_enabled,
-        }
-    }
-
     pub(crate) fn is_completed(&self) -> bool {
         self.agents.iter().all(SubAgentEntry::is_completed)
     }
@@ -132,11 +124,6 @@ impl SubAgentCell {
         if let Some(agent) = self.agents.first_mut() {
             agent.complete_with_status(status);
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn find_agent_mut(&mut self, call_id: &str) -> Option<&mut SubAgentEntry> {
-        self.agents.iter_mut().find(|a| a.call_id == call_id)
     }
 
     pub(crate) fn merge(cells: Vec<SubAgentCell>) -> Option<Self> {

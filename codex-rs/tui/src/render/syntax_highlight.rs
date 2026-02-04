@@ -17,7 +17,7 @@ use tree_sitter_highlight::Highlighter;
 /// Unified highlight categories that work across all languages.
 /// These map to tree-sitter highlight capture names (expanded from color-diff).
 #[derive(Copy, Clone, Debug)]
-enum SyntaxCategory {
+pub(crate) enum SyntaxCategory {
     Attribute,
     Comment,
     Constant,
@@ -607,7 +607,8 @@ fn plain_text_lines(code: &str) -> Vec<Line<'static>> {
 }
 
 /// Check if a language is supported for syntax highlighting.
-pub fn is_language_supported(lang: &str) -> bool {
+#[cfg(test)]
+fn is_language_supported(lang: &str) -> bool {
     config_for_language(lang).is_some()
 }
 
